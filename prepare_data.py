@@ -5,7 +5,7 @@ import os
 from tokenizer import BPETokenizer
 from collections import defaultdict
 
-VOCAB_SIZE = 500
+VOCAB_SIZE = 16000                         # was 500 for smoke test
 DOCUMENT_SEPARATOR = "\n\n###\n\n"
 BPE_SAMPLE_FROM_TINYSTORIES = 35_000_000   # 35MB
 BPE_SAMPLE_FROM_OASST = 15_000_000         # 15MB
@@ -38,10 +38,10 @@ def load_and_format_tinystories():
     # Use HuggingFace datasets to load TinyStories
     ds = load_dataset("roneneldan/TinyStories", split="train")
     # Join all stories with document separator
-    return DOCUMENT_SEPARATOR.join(
-        story["text"] for i, story in enumerate(ds) if i < 1000
-    )
-    # return DOCUMENT_SEPARATOR.join(story["text"] for story in ds)
+    # return DOCUMENT_SEPARATOR.join(
+    #     story["text"] for i, story in enumerate(ds) if i < 1000
+    # )
+    return DOCUMENT_SEPARATOR.join(story["text"] for story in ds)
 
 def load_and_format_oasst():
     # Load OASST1
