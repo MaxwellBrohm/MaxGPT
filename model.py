@@ -18,13 +18,14 @@ class MLP(nn.Module):
         return x
 
 class CausalSelfAttention(nn.Module):
-    def __init__(self, hidden_dim, num_heads, context_window):
+    def __init__(self, hidden_dim, num_heads, context_window, use_flash=True):
         super().__init__()
         assert hidden_dim % num_heads == 0, "hidden_dim must be divisible by num_heads"
         
         self.num_heads = num_heads
         self.head_dim = hidden_dim // num_heads     # e.g., 384 / 6 = 64
         self.hidden_dim = hidden_dim
+        self.use_flash = use_flash 
         
         # One linear layer that produces Q, K, V all at once
         # Input C, output 3C — then we'll split into Q, K, V
@@ -70,38 +71,33 @@ class CausalSelfAttention(nn.Module):
         # Divide by sqrt(head_dim) to stabilize gradients
         # (Without scaling, dot products grow large with head_dim, pushing
         # softmax into regions where gradients vanish)
-        scores = (q @ k.transpose(-2, -1)) / (self.head_dim ** 0.5)
-        
-        # Apply causal mask: set positions where mask is 0 to -infinity.
-        # After softmax, -infinity → 0 probability, so future tokens are ignored.
-        # The mask we registered is (T, T); slice to current T size in case
-        # input is shorter than context_window.
-        scores = scores.masked_fill(self.causal_mask[:T, :T] == 0, float("-inf"))
-        
-        # Softmax along the last dim (over all "key" positions for each query)
-        attn = F.softmax(scores, dim=-1)            # (B, num_heads, T, T)
-        
-        # Weighted sum of values
-        # (B, num_heads, T, T) @ (B, num_heads, T, head_dim)
-        # = (B, num_heads, T, head_dim)
-        out = attn @ v
-        
-        # Reshape back: (B, num_heads, T, head_dim) → (B, T, C)
-        # transpose(1, 2) is non-contiguous in memory, so we call .contiguous()
-        # before .view() to allow reshaping
+        # Branch: use Flash Attention OR manual computation
+        if self.use_flash:
+            # PyTorch's fused kernel — picks Flash Attention on Ampere+ GPUs,
+            # memory-efficient attention elsewhere. Handles scaling, causal mask,
+            # softmax, and Q@K@V in one fused operation
+            out = F.scaled_dot_product_attention(
+                q, k, v,
+                is_causal=True   # auto-applies causal mask, no need for our custom one
+            )
+        else:
+            # Manual attention (for presentations — shows what's actually happening)
+            scores = (q @ k.transpose(-2, -1)) / (self.head_dim ** 0.5)
+            scores = scores.masked_fill(self.causal_mask[:T, :T] == 0, float("-inf"))
+            attn = F.softmax(scores, dim=-1)
+            out = attn @ v
+
+        # Continue with existing reshape and output projection
         out = out.transpose(1, 2).contiguous().view(B, T, C)
-        
-        # Final output projection
-        out = self.out_proj(out)                    # (B, T, C)
-        
+        out = self.out_proj(out)
         return out
 
 class TransformerBlock(nn.Module):
-    def __init__(self, hidden_dim, num_heads, context_window):
+    def __init__(self, hidden_dim, num_heads, context_window, use_flash=True):
         super().__init__()
         # Pre-norm style: normalize BEFORE the sub-layer, not after
         self.ln1 = nn.LayerNorm(hidden_dim)
-        self.attn = CausalSelfAttention(hidden_dim, num_heads, context_window)
+        self.attn = CausalSelfAttention(hidden_dim, num_heads, context_window, use_flash=use_flash)
         self.ln2 = nn.LayerNorm(hidden_dim)
         self.mlp = MLP(hidden_dim)
     
@@ -113,7 +109,7 @@ class TransformerBlock(nn.Module):
         return x
 
 class Transformer(nn.Module):
-    def __init__(self, vocab_size, context_window, hidden_dim, num_heads, num_blocks):
+    def __init__(self, vocab_size, context_window, hidden_dim, num_heads, num_blocks, use_flash=True):
         super().__init__()
         
         self.context_window = context_window
@@ -127,7 +123,7 @@ class Transformer(nn.Module):
         
         # Stack of N transformer blocks
         self.blocks = nn.ModuleList([
-            TransformerBlock(hidden_dim, num_heads, context_window)
+            TransformerBlock(hidden_dim, num_heads, context_window, use_flash=use_flash)
             for _ in range(num_blocks)
         ])
         

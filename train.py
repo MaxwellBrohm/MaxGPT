@@ -44,7 +44,8 @@ def estimate_loss(model, config, device):
         batch_losses = []
         for _ in range(config.eval_iters):
             x, y = get_batch(split, config.batch_size, config.context_window, device)
-            _, loss = model(x, y)
+            with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                _, loss = model(x, y)
             batch_losses.append(loss.item())
         losses[split] = sum(batch_losses) / len(batch_losses)
     model.train()  # back to training mode
@@ -64,6 +65,7 @@ def main():
         hidden_dim=config.hidden_dim,
         num_heads=config.num_heads,
         num_blocks=config.num_blocks,
+        use_flash=config.use_flash_attention,
     )
     model = model.to(device)
     
@@ -95,8 +97,9 @@ def main():
         # Sample a batch
         x, y = get_batch("train", config.batch_size, config.context_window, device)
         
-        # Forward pass
-        _, loss = model(x, y)
+        # Forward pass with bf16 mixed precision
+        with torch.autocast(device_type=device, dtype=torch.bfloat16):
+            _, loss = model(x, y)
         
         # Backward pass
         # set_to_none=True is faster than the default (zero_grad sets to None instead of 0 tensors)
