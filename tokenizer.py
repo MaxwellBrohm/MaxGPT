@@ -1,4 +1,5 @@
 from collections import Counter
+from tqdm import tqdm
 import json
 
 class BPETokenizer:
@@ -37,9 +38,12 @@ class BPETokenizer:
             pair_positions.setdefault(pair, set()).add(i)
         
         num_merges = vocab_size - 256
+
+        print(f"Initial corpus: {n:,} tokens, {len(pair_counts):,} unique pairs")
+        print(f"Training {num_merges:,} merges...")
         
         # --- STEP 3: The merge loop ---
-        for merge_index in range(num_merges):
+        for merge_index in tqdm(range(num_merges), desc="Training BPE"):
             
             # 3a. Find max pair (and bail if no pairs left)
             if not pair_counts: 
@@ -107,7 +111,8 @@ class BPETokenizer:
             # 3j. Record the merge in tokenizer state
             self.merges[(a, b)] = new_id
             self.vocab[new_id] = self.vocab[a] + self.vocab[b]
-        
+
+        print(f"Done! Final vocab size: {len(self.vocab):,}")
         # All done. tokens, prev, next_, is_dead, pair_counts, pair_positions can be discarded.
     def encode(self, text: str) -> list[int]:
         # apply learned merges to new text    
