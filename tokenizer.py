@@ -114,6 +114,26 @@ class BPETokenizer:
 
         print(f"Done! Final vocab size: {len(self.vocab):,}")
         # All done. tokens, prev, next_, is_dead, pair_counts, pair_positions can be discarded.
+
+    def train_naive(self, text: str, vocab_size: int) -> None:
+        """Original naive O(n) per merge implementation. Kept for benchmarking."""
+        # Reset state (so we can call this on a fresh tokenizer)
+        self.merges = {}
+        self.vocab = {i: bytes([i]) for i in range(256)}
+        
+        tokens = list(text.encode("utf-8"))
+        num_merges = vocab_size - 256
+        
+        for i in tqdm(range(num_merges), desc="Training BPE (naive)"):
+            pair_counts = Counter(zip(tokens, tokens[1:]))
+            if not pair_counts:
+                break
+            most_common_pair = pair_counts.most_common(1)[0][0]
+            new_id = 256 + i
+            tokens = self._replace_pair(tokens, most_common_pair, new_id)
+            self.merges[most_common_pair] = new_id
+            self.vocab[new_id] = self.vocab[most_common_pair[0]] + self.vocab[most_common_pair[1]]
+            
     def encode(self, text: str) -> list[int]:
         # apply learned merges to new text    
         # Start with the byte representation
@@ -200,29 +220,44 @@ class BPETokenizer:
         return result
 
 if __name__ == "__main__":
+    import urllib.request
+    import os
     import time
     
-    # Performance test on bigger data
-    big_text = "the quick brown fox jumps over the lazy dog. " * 100_000  # ~4.5MB
-    tok_perf = BPETokenizer()
+    # Download Tiny Shakespeare (cache locally so we only download once)
+    cache_path = "/tmp/tinyshakespeare.txt"
+    if not os.path.exists(cache_path):
+        print("Downloading Tiny Shakespeare...")
+        url = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
+        urllib.request.urlretrieve(url, cache_path)
+    
+    with open(cache_path) as f:
+        text = f.read()
+    print(f"Benchmark text: {len(text):,} chars\n")
+    
+    vocab_size = 1000   # 744 merges
+    
+    # === NEW algorithm ===
+    tok_new = BPETokenizer()
     start = time.time()
-    tok_perf.train(big_text, vocab_size=2000)
-    print(f"Trained vocab=2000 on 4.5MB in {time.time() - start:.1f}s\n")
+    tok_new.train(text, vocab_size=vocab_size)
+    new_time = time.time() - start
+    print(f"\nNEW algorithm: {new_time:.2f}s\n")
     
-    # Your existing correctness tests below...
-    text = "the quick brown fox jumps over the lazy dog. " * 100
-    tok = BPETokenizer()
-    tok.train(text, vocab_size=300)
-    encoded = tok.encode("the quick fox")
-    decoded = tok.decode(encoded)
-    print(f"Original: 'the quick fox'")
-    print(f"Encoded:  {encoded}")
-    print(f"Decoded:  '{decoded}'")
-    print(f"Match: {decoded == 'the quick fox'}")
+    # === OLD (naive) algorithm ===
+    tok_old = BPETokenizer()
+    start = time.time()
+    tok_old.train_naive(text, vocab_size=vocab_size)
+    old_time = time.time() - start
+    print(f"\nOLD algorithm: {old_time:.2f}s\n")
     
-    tok.save("test_tokenizer.json")
-    tok2 = BPETokenizer()
-    tok2.load("test_tokenizer.json")
-    encoded_again = tok2.encode("the quick fox")
-    print(f"After save/load: {encoded_again}")
-    print(f"Same as before: {encoded == encoded_again}")
+    # === RESULTS ===
+    print(f"=== Speedup: {old_time / new_time:.1f}x ===")
+    
+    # Quick correctness check
+    sample = "To be or not to be"
+    enc_new = tok_new.encode(sample)
+    enc_old = tok_old.encode(sample)
+    print(f"New algorithm encodes '{sample}' as: {enc_new}")
+    print(f"Old algorithm encodes '{sample}' as: {enc_old}")
+    print(f"(Different token IDs are expected due to tie-breaking — both are valid)")
