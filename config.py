@@ -18,7 +18,7 @@ class Config:
     grad_clip: float = 1.0                # max gradient norm before clipping
     
     # Schedule
-    max_steps: int = 10000              # total training steps, was 2000 but was halved since each step now sees 4x more tokens
+    max_steps: int = 15000              # total training steps, was 20000 but was halved since each step now sees 4x more tokens and then brought back up to 15000 in order to allign with Chinchilla-optimal training
     warmup_steps: int = 200             # linear warmup at start
     eval_interval: int = 500            # how often to compute val loss
     eval_iters: int = 50                # how many batches to average for val loss
