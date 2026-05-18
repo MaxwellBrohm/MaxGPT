@@ -13,36 +13,102 @@ class BPETokenizer:
         # i.e., vocab[97] == b"a", vocab[98] == b"b", etc.
     
     def train(self, text: str, vocab_size: int) -> None:
-        # implement the algorithm above
-        # Convert input text into a list of byte integers (0..255)
+        # ============================================================
+        # OPTIMIZED BPE TRAINING
+        # Per-merge cost: O(occurrences of merged pair), not O(total tokens)
+        # ============================================================
+        
+        # --- STEP 1: Initialize tokens + linked list pointers ---
         tokens = list(text.encode("utf-8"))
+        n = len(tokens)
+        
+        # Doubly-linked list pointers so we can splice elements in O(1)
+        prev = [i - 1 for i in range(n)]      # prev[0] = -1 (sentinel: no prev)
+        next_ = [i + 1 for i in range(n)]     # next_[n-1] = n (sentinel: no next)
+        is_dead = [False] * n                 # tracks spliced-out positions
+        
+        # --- STEP 2: One-time O(n) pass to populate pair counts + positions ---
+        pair_counts = {}          # pair -> count
+        pair_positions = {}       # pair -> SET of positions (left index)
+        
+        for i in range(n - 1):
+            pair = (tokens[i], tokens[i+1])
+            pair_counts[pair] = pair_counts.get(pair, 0) + 1
+            pair_positions.setdefault(pair, set()).add(i)
         
         num_merges = vocab_size - 256
-            # because the first 256 IDs are already the byte vocab
         
-        for i in range(num_merges):
+        # --- STEP 3: The merge loop ---
+        for merge_index in range(num_merges):
             
-            # 1. Count every adjacent pair in tokens
-            pair_counts = Counter(zip(tokens, tokens[1:]))
-            if not pair_counts:
+            # 3a. Find max pair (and bail if no pairs left)
+            if not pair_counts: 
+                break
+            (a, b) = max(pair_counts, key=pair_counts.get)
+            if pair_counts[(a, b)] <= 0: 
                 break
             
-            # 2. Find the most common pair
-            most_common_pair = pair_counts.most_common(1)[0][0]
+            new_id = 256 + merge_index
             
-            # 3. Mint a new token ID for it
-            new_id = 256 + i
+            # 3b. Snapshot positions in sorted order, then process each
+            positions_to_process = sorted(pair_positions[(a, b)])
             
-            # 4. Replace every occurrence of that pair in tokens with new_id
-            tokens = self._replace_pair(tokens, most_common_pair, new_id)
+            for pos in positions_to_process:
+                
+                # 3c. Validity checks — skip dead or stale positions
+                if is_dead[pos]: 
+                    continue
+                
+                j = next_[pos]    # position of the right half of the pair
+                if j >= n or is_dead[j]: 
+                    continue
+                if tokens[pos] != a or tokens[j] != b: 
+                    continue
+                
+                # 3d. Find neighbors
+                left_idx = prev[pos]      # -1 if no left
+                right_idx = next_[j]      # n if no right
+                
+                # 3e. Update LEFT neighbor pair counts
+                # Before: (tokens[left_idx], a)  ->  After: (tokens[left_idx], new_id)
+                if left_idx >= 0:
+                    old_left = (tokens[left_idx], a)
+                    new_left = (tokens[left_idx], new_id)
+                    pair_counts[old_left] -= 1
+                    pair_positions[old_left].discard(left_idx)
+                    pair_counts[new_left] = pair_counts.get(new_left, 0) + 1
+                    pair_positions.setdefault(new_left, set()).add(left_idx)
+                
+                # 3f. Update RIGHT neighbor pair counts
+                # Before: (b, tokens[right_idx]) at position j
+                # After:  (new_id, tokens[right_idx]) at position pos
+                if right_idx < n:
+                    old_right = (b, tokens[right_idx])
+                    new_right = (new_id, tokens[right_idx])
+                    pair_counts[old_right] -= 1
+                    pair_positions[old_right].discard(j)
+                    pair_counts[new_right] = pair_counts.get(new_right, 0) + 1
+                    pair_positions.setdefault(new_right, set()).add(pos)
+                
+                # 3g. Decrement the merged pair's count for THIS position
+                pair_counts[(a, b)] -= 1
+                
+                # 3h. Splice — replace pos with new_id, remove j from the list
+                tokens[pos] = new_id
+                next_[pos] = right_idx
+                if right_idx < n:
+                    prev[right_idx] = pos
+                is_dead[j] = True
             
-            # 5. Record the merge for later use in encode()
-            self.merges[most_common_pair] = new_id
+            # 3i. Clean up: clear the merged pair's position set
+            pair_positions[(a, b)] = set()
+            pair_counts[(a, b)] = 0
             
-            # 6. Record the new vocab entry — the bytes are the concatenation
-            #    of the bytes of the two halves
-            self.vocab[new_id] = self.vocab[most_common_pair[0]] + self.vocab[most_common_pair[1]]
+            # 3j. Record the merge in tokenizer state
+            self.merges[(a, b)] = new_id
+            self.vocab[new_id] = self.vocab[a] + self.vocab[b]
         
+        # All done. tokens, prev, next_, is_dead, pair_counts, pair_positions can be discarded.
     def encode(self, text: str) -> list[int]:
         # apply learned merges to new text    
         # Start with the byte representation
@@ -129,25 +195,29 @@ class BPETokenizer:
         return result
 
 if __name__ == "__main__":
-    # Quick sanity test — feel free to write whatever test you want
+    import time
+    
+    # Performance test on bigger data
+    big_text = "the quick brown fox jumps over the lazy dog. " * 100_000  # ~4.5MB
+    tok_perf = BPETokenizer()
+    start = time.time()
+    tok_perf.train(big_text, vocab_size=2000)
+    print(f"Trained vocab=2000 on 4.5MB in {time.time() - start:.1f}s\n")
+    
+    # Your existing correctness tests below...
     text = "the quick brown fox jumps over the lazy dog. " * 100
     tok = BPETokenizer()
-    tok.train(text, vocab_size=300)  # 300 = 256 byte vocab + 44 merges
-    
+    tok.train(text, vocab_size=300)
     encoded = tok.encode("the quick fox")
     decoded = tok.decode(encoded)
-    
     print(f"Original: 'the quick fox'")
     print(f"Encoded:  {encoded}")
     print(f"Decoded:  '{decoded}'")
     print(f"Match: {decoded == 'the quick fox'}")
-
-    # After your existing test
+    
     tok.save("test_tokenizer.json")
-
     tok2 = BPETokenizer()
     tok2.load("test_tokenizer.json")
-
     encoded_again = tok2.encode("the quick fox")
     print(f"After save/load: {encoded_again}")
     print(f"Same as before: {encoded == encoded_again}")
