@@ -89,7 +89,6 @@ def main():
     tokenizer.train(tokenizer_sample, VOCAB_SIZE)
     
     tokenizer.save(os.path.join(OUTPUT_DIR, "tokenizer.json"))    #       before we can use the trained tokenizer in train.py later.
-    #       Stub it for now, we'll come back to it.
     
     # Combine the FULL corpus (now that tokenizer is trained, encode everything)
     full_corpus = tinystories_text + DOCUMENT_SEPARATOR + oasst_text
