@@ -10,9 +10,11 @@ DOCUMENT_SEPARATOR = "\n\n###\n\n"
 TRAIN_VAL_SPLIT = 0.9
 OUTPUT_DIR = "data"
 
-# Subsample TinyStories — the full 1.9B chars would dominate the corpus.
-# 1/6 keeps it as a meaningful chunk (~15% of final corpus) without drowning out the chat data.
-TINYSTORIES_FRACTION = 1 / 6
+# Subsample TinyStories. Set to 3/4 so the corpus reaches ~460M tokens total
+# (Chinchilla-optimal for our 23M-param model = 20 tokens/param). At this ratio
+# the final mix is roughly 45% TinyStories / 55% UltraChat / <1% OASST — chat-
+# majority for the conversational goal, with enough narrative for fluency.
+TINYSTORIES_FRACTION = 3 / 4
 
 # Tokenizer training sample sizes — balanced across the three datasets so the
 # BPE merges capture vocabulary from each style (narrative, real dialogue, synthetic chat)
