@@ -4,6 +4,17 @@ from config import Config
 from model import Transformer
 from data import get_batch
 
+# Force PyTorch to use Flash Attention or memory-efficient attention only.
+# The "math" backend is the slow O(T^2) fallback that hogs VRAM and was OOM-ing
+# our MaxGPT-2 model. With these flags, if neither efficient backend works on
+# this hardware, scaled_dot_product_attention will raise an error instead of
+# silently falling back to the memory-hungry version.
+if torch.cuda.is_available():
+    torch.backends.cuda.enable_flash_sdp(True)
+    torch.backends.cuda.enable_mem_efficient_sdp(True)
+    torch.backends.cuda.enable_math_sdp(False)
+    torch.backends.cuda.enable_cudnn_sdp(True)   # newer PyTorch — Hopper+ has its own kernel
+
 def get_device():
     """Pick the best available device."""
     if torch.cuda.is_available():
