@@ -110,7 +110,7 @@ def main():
             tokenizer=tokenizer,
             prompt=prompt,
             max_new_tokens=200,
-            temperature=0.5,
+            temperature=0.8,
             top_k=50,
             device=device,
         )
