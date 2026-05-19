@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.attention import sdpa_kernel, SDPBackend
 
 class MLP(nn.Module):
     def __init__(self, hidden_dim):
@@ -71,15 +72,21 @@ class CausalSelfAttention(nn.Module):
         # Divide by sqrt(head_dim) to stabilize gradients
         # (Without scaling, dot products grow large with head_dim, pushing
         # softmax into regions where gradients vanish)
-        # Branch: use Flash Attention OR manual computation
+        # Branch: use fused attention OR manual computation
         if self.use_flash:
-            # PyTorch's fused kernel — picks Flash Attention on Ampere+ GPUs,
-            # memory-efficient attention elsewhere. Handles scaling, causal mask,
-            # softmax, and Q@K@V in one fused operation
-            out = F.scaled_dot_product_attention(
-                q, k, v,
-                is_causal=True   # auto-applies causal mask, no need for our custom one
-            )
+            # On Blackwell (RTX 5070) with PyTorch 2.12+cu130, true Flash Attention
+            # isn't compiled into the wheel ("Torch was not compiled with flash attention").
+            # Without explicit backend selection, PyTorch silently falls back to the
+            # MATH implementation, which is O(T^2) memory and OOMs at our batch sizes.
+            #
+            # We force EFFICIENT_ATTENTION (xformers-style memory-efficient kernel) which
+            # gives O(T) memory like Flash, just slightly slower throughput. Still way
+            # faster + less memory than manual computation.
+            with sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION):
+                out = F.scaled_dot_product_attention(
+                    q, k, v,
+                    is_causal=True   # auto-applies causal mask, no need for our custom one
+                )
         else:
             # Manual attention (for presentations — shows what's actually happening)
             scores = (q @ k.transpose(-2, -1)) / (self.head_dim ** 0.5)
