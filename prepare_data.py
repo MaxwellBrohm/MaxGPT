@@ -79,17 +79,22 @@ def main():
     # Build a BALANCED sample for tokenizer training (the fix!)
     # Take 35MB from TinyStories + 15MB from OASST so the tokenizer
     # learns vocab from both styles, not just TinyStories
-    print("Training tokenizer on balanced sample...")
-    tokenizer_sample = (
-        tinystories_text[:BPE_SAMPLE_FROM_TINYSTORIES]
-        + DOCUMENT_SEPARATOR
-        + oasst_text[:BPE_SAMPLE_FROM_OASST]
-    )
+    tokenizer_path = os.path.join(OUTPUT_DIR, "tokenizer.json")
     tokenizer = BPETokenizer()
-    tokenizer.train(tokenizer_sample, VOCAB_SIZE)
-    
-    tokenizer.save(os.path.join(OUTPUT_DIR, "tokenizer.json"))    #       before we can use the trained tokenizer in train.py later.
-    
+
+    if os.path.exists(tokenizer_path):
+        print(f"Loading existing tokenizer from {tokenizer_path}")
+        tokenizer.load(tokenizer_path)
+    else:
+        print("Training tokenizer on balanced sample...")
+        tokenizer_sample = (
+            tinystories_text[:BPE_SAMPLE_FROM_TINYSTORIES]
+            + DOCUMENT_SEPARATOR
+            + oasst_text[:BPE_SAMPLE_FROM_OASST]
+        )
+        tokenizer.train(tokenizer_sample, VOCAB_SIZE)
+        tokenizer.save(tokenizer_path)
+        
     # Combine the FULL corpus (now that tokenizer is trained, encode everything)
     full_corpus = tinystories_text + DOCUMENT_SEPARATOR + oasst_text
     print(f"Full corpus: {len(full_corpus):,} chars")

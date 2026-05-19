@@ -135,32 +135,76 @@ class BPETokenizer:
             self.vocab[new_id] = self.vocab[most_common_pair[0]] + self.vocab[most_common_pair[1]]
             
     def encode(self, text: str) -> list[int]:
-        # apply learned merges to new text    
-        # Start with the byte representation
+        import heapq
+        
+        # Convert to bytes
         tokens = list(text.encode("utf-8"))
+        n = len(tokens)
         
-        # Apply learned merges, always picking the one learned EARLIEST 
-        # (i.e., lowest new_id in self.merges) that applies to the current tokens
+        if n < 2:
+            return tokens
         
-        while len(tokens) >= 2:
-            # Find all adjacent pairs currently in tokens
-            pairs = set(zip(tokens, tokens[1:]))
-            
-            # Of those, find the pair that's in self.merges with the LOWEST id
-            # (= was learned earliest during training)
-            # If no pair in `pairs` is in self.merges, we're done
-            
-            applicable = pairs & self.merges.keys()
-            if not applicable:
-                break
-            
-            best_pair = min(applicable, key=lambda p: self.merges[p])
-            
-            # Apply the merge (reuse the helper from training)
-            tokens = self._replace_pair(tokens, best_pair, self.merges[best_pair])
+        # Linked list state (same pattern as train)
+        prev = [i - 1 for i in range(n)]
+        next_ = [i + 1 for i in range(n)]
+        is_dead = [False] * n
         
-        return tokens
-    
+        # Build initial heap: for every position with an applicable merge,
+        # push (rank, position) where rank = the merge ID (= merge order learned)
+        heap = []
+        for i in range(n-1):
+            pair = (tokens[i], tokens[i+1])
+            if pair in self.merges:
+                heapq.heappush(heap, (self.merges[pair], i))
+        
+        # Process merges in order of rank
+        while heap:
+            rank, pos = heapq.heappop(heap)
+            
+            # === Validity checks ===
+            if is_dead[pos]: 
+                continue
+            j = next_[pos]
+            if j >= n or is_dead[j]: 
+                continue
+            
+            # Check the pair is STILL what we expected (might have changed since being pushed)
+            current_pair = (tokens[pos], tokens[j])
+            if current_pair not in self.merges or self.merges[current_pair] != rank:
+                continue
+            
+            new_id = rank   # rank IS the merge's new token ID
+            
+            # === Splice (same as training) ===
+            right_idx = next_[j]
+            tokens[pos] = new_id
+            next_[pos] = right_idx
+            if right_idx < n:
+                prev[right_idx] = pos
+            is_dead[j] = True
+            
+            # === Push new pairs created by this merge ===
+            # Left neighbor + this position
+            if prev[pos] >= 0:
+                left_pair = (tokens[prev[pos]], new_id)
+                if left_pair in self.merges:
+                    heapq.heappush(heap, (self.merges[left_pair], prev[pos]))
+            
+            # This position + right neighbor
+            if right_idx < n:
+                right_pair = (new_id, tokens[right_idx])
+                if right_pair in self.merges:
+                    heapq.heappush(heap, (self.merges[right_pair], pos))
+        
+        # === Walk the linked list to extract live tokens in order ===
+        result = []
+        i = 0
+        while i < n:
+            result.append(tokens[i])
+            i = next_[i]
+        
+        return result
+
     def decode(self, ids: list[int]) -> str:
         # ids → bytes → utf-8 string
         # Look up each ID's bytes, concatenate, decode as UTF-8
@@ -261,3 +305,21 @@ if __name__ == "__main__":
     print(f"New algorithm encodes '{sample}' as: {enc_new}")
     print(f"Old algorithm encodes '{sample}' as: {enc_old}")
     print(f"(Different token IDs are expected due to tie-breaking — both are valid)")
+    
+    text = "the quick brown fox jumps over the lazy dog. " * 100
+    tok = BPETokenizer()
+    tok.train(text, vocab_size=300)
+    
+    encoded = tok.encode("the quick fox")
+    decoded = tok.decode(encoded)
+    print(f"Encoded: {encoded}")
+    print(f"Decoded: '{decoded}'")
+    print(f"Match: {decoded == 'the quick fox'}")
+    
+    # Speed test on a bigger chunk
+    big_text = "the quick brown fox " * 50000  # ~1MB
+    start = time.time()
+    encoded = tok.encode(big_text)
+    elapsed = time.time() - start
+    print(f"Encoded {len(big_text):,} chars in {elapsed:.2f}s "
+          f"({len(big_text)/elapsed:,.0f} chars/sec)")
