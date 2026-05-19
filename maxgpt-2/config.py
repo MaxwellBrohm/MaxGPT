@@ -2,38 +2,47 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
-    # Architecture (MaxGPT-1)
+    # Architecture (MaxGPT-2 — ~110M params, ~4.5x bigger than MaxGPT-1)
+    # Scaled hidden_dim, blocks, heads, AND context window. Same vocab so the
+    # two models can be compared on identical tokenization.
     vocab_size: int = 16000
-    context_window: int = 256
-    hidden_dim: int = 384
-    num_heads: int = 6
-    num_blocks: int = 6
-    
+    context_window: int = 512        # was 256 — longer context for better multi-turn coherence
+    hidden_dim: int = 768            # was 384 — 2x wider
+    num_heads: int = 12              # was 6 — each head still has dim 64 (768/12)
+    num_blocks: int = 12             # was 6 — 2x deeper
+
     # Training hyperparameters
-    batch_size: int = 128                # number of sequences per step, was bumped from 32 to 128 after bf16+Flash freed VRAM
-    learning_rate: float = 4e-4           # AdamW base learning rate, was 3e-4 but was bumped slightly higher for the larger batch
-    weight_decay: float = 0.1             # AdamW weight decay
-    beta1: float = 0.9                    # AdamW beta1
-    beta2: float = 0.95                   # AdamW beta2 (modern LLM standard, not 0.999)
-    grad_clip: float = 1.0                # max gradient norm before clipping
-    
+    batch_size: int = 64             # was 128 — smaller because each step processes 2x longer
+                                     # sequences and the model is 4.5x bigger. Tokens-per-step is
+                                     # still 32K (64 * 512), same as MaxGPT-1's 128 * 256
+    learning_rate: float = 3e-4      # was 4e-4 — more conservative for larger model (Karpathy constant)
+    weight_decay: float = 0.1
+    beta1: float = 0.9
+    beta2: float = 0.95              # modern LLM standard (not the PyTorch default 0.999)
+    grad_clip: float = 1.0
+
     # Schedule
-    max_steps: int = 15000                # total training steps, was 20000 but was halved since each step now sees 4x more tokens and then brought back up to 15000 in order to allign with Chinchilla-optimal training
-    warmup_steps: int = 200             # linear warmup at start
-    eval_interval: int = 500            # how often to compute val loss
-    eval_iters: int = 50                # how many batches to average for val loss
-    log_interval: int = 50              # how often to print training loss
-    
+    max_steps: int = 30000           # was 15000 — 2x more steps. At 32K tokens/step that's ~960M
+                                     # token-passes, which is roughly 2 epochs over the 482M-token
+                                     # dataset. Slight overshoot of Chinchilla compute (460M optimal
+                                     # for a 23M model, ~2B for 100M) — but we reuse MaxGPT-1's data
+                                     # rather than re-prepping, so we accept being slightly data-bound.
+                                     # MaxGPT-3 will get more data + push past Chinchilla.
+    warmup_steps: int = 500          # was 200 — longer warmup helps larger model stabilize early
+    eval_interval: int = 500
+    eval_iters: int = 50
+    log_interval: int = 50
+
     # Checkpointing
-    checkpoint_interval: int = 2000     # save every N steps
+    checkpoint_interval: int = 3000  # was 2000 — fewer total checkpoints since training is longer
     checkpoint_dir: str = "checkpoints"
-    
+
     # Data
     data_dir: str = "data"
-    
-    # Device — auto-detect, but allow override
-    # Will be set by train.py based on what's available
+
+    # Device — auto-detect, but allow override (set by train.py)
     device: str = "auto"
 
     # toggle for Flash Attention vs manual attention
-    use_flash_attention: bool = True # switch to False to use the manual version (for presentations)
+    # switch to False to show the manual version during presentations
+    use_flash_attention: bool = True
