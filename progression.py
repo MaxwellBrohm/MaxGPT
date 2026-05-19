@@ -80,7 +80,9 @@ def load_model_from_checkpoint(checkpoint_path, config, device):
         num_blocks=config.num_blocks,
         use_flash=config.use_flash_attention,
     )
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    # weights_only=False because our checkpoints contain the Config dataclass
+    # (not just tensor weights). Safe because we created these files ourselves.
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state"])
     model = model.to(device)
     model.eval()

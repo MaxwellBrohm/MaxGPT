@@ -86,7 +86,9 @@ def main():
     )
     
     # Load trained weights
-    checkpoint = torch.load(config.checkpoint_dir + "/final.pt", map_location=device)
+    # weights_only=False because checkpoint contains the Config dataclass, not just weights.
+    # Safe because we created the file ourselves.
+    checkpoint = torch.load(config.checkpoint_dir + "/final.pt", map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state"])
     model = model.to(device)
     
