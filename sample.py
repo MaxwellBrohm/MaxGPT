@@ -111,7 +111,7 @@ def main():
             prompt=prompt,
             max_new_tokens=200,
             temperature=0.5,
-            top_k=20,
+            top_k=50,
             device=device,
         )
         
