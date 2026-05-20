@@ -93,7 +93,7 @@ def main():
     model = model.to(device)
     
     print(f"Loaded model from step {checkpoint['step']}")
-    print("Chat with MaxGPT-1. Type 'quit' to exit.\n")
+    print("Chat with MaxGPT-2. Type 'quit' to exit.\n")
     
     # Simple chat loop
     while True:
