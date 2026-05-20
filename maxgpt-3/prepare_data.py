@@ -53,8 +53,10 @@ BPE_SAMPLE_SIZES = {
 }
 
 # Multiprocessing config
-N_WORKERS = max(1, mp.cpu_count() - 2)   # leave a couple cores for the OS
-ENCODE_CHUNK_SIZE = 1_000_000           # 1MB per worker chunk
+# Each worker imports pandas/numpy/datasets (~300MB each), so too many workers
+# eats RAM fast. 8 workers gives ~8x speedup with ~2.5GB total worker overhead.
+N_WORKERS = 8
+ENCODE_CHUNK_SIZE = 500_000   # 500KB per worker chunk (was 1MB — reduces per-call memory)
 
 
 # ====================
@@ -269,24 +271,32 @@ def chunked(s, n):
         yield s[i:i + n]
 
 
-def encode_parallel(text, tokenizer_path, label):
-    """Encode a large text using N_WORKERS processes in parallel."""
+def encode_parallel_streaming(text, tokenizer_path, label, output_path):
+    """Encode a large text using N_WORKERS processes in parallel.
+    Streams tokens DIRECTLY TO DISK as each chunk completes — never holds the
+    full token list in memory. Critical for large datasets (Cosmopedia / UltraChat
+    can produce 1B+ tokens which would be 28GB+ as a Python list).
+    Returns the total token count."""
     chunks = list(chunked(text, ENCODE_CHUNK_SIZE))
     print(f"  Encoding {label} ({len(text):,} chars in {len(chunks)} chunks across {N_WORKERS} workers)...")
 
-    tokens = []
-    with mp.Pool(
-        processes=N_WORKERS,
-        initializer=_init_worker,
-        initargs=(tokenizer_path,),
-    ) as pool:
-        for chunk_tokens in tqdm(
-            pool.imap(_encode_chunk, chunks),
-            total=len(chunks),
-            desc=label,
-        ):
-            tokens.extend(chunk_tokens)
-    return tokens
+    total_tokens = 0
+    with open(output_path, "wb") as out_f:
+        with mp.Pool(
+            processes=N_WORKERS,
+            initializer=_init_worker,
+            initargs=(tokenizer_path,),
+        ) as pool:
+            for chunk_tokens in tqdm(
+                pool.imap(_encode_chunk, chunks),
+                total=len(chunks),
+                desc=label,
+            ):
+                # Convert to uint16 and write to disk immediately
+                np.array(chunk_tokens, dtype=np.uint16).tofile(out_f)
+                total_tokens += len(chunk_tokens)
+                # chunk_tokens goes out of scope here, freed by GC
+    return total_tokens
 
 
 # ====================
@@ -391,13 +401,12 @@ def main():
             continue
 
         print(f"\n--- {name} ---")
-        tokens = encode_parallel(text, tokenizer_path, name)
-        save_intermediate(tokens, name)
-        token_counts[name] = len(tokens)
-        print(f"  {name}: {len(tokens):,} tokens saved")
-        # Free the original text + token list now that they're saved to disk
+        # Stream tokens directly to disk — never builds the full token list in memory
+        n_tokens = encode_parallel_streaming(text, tokenizer_path, name, intermediate_path)
+        token_counts[name] = n_tokens
+        print(f"  {name}: {n_tokens:,} tokens saved")
+        # Free the original text now that it's encoded
         all_texts[name] = ""
-        del tokens
 
     total_tokens = sum(token_counts.values())
     print(f"\n=== Tokens per dataset ===")
