@@ -1,217 +1,446 @@
+"""
+MaxGPT-3 data preparation pipeline.
+
+7 datasets, ~5B total unique tokens, per-dataset 90/10 split,
+multiprocessing-accelerated encoding (~20x faster than single-threaded).
+
+Each dataset is loaded, formatted, encoded, and saved separately as an
+intermediate .bin file. After all 7 are processed, they're combined into
+the final train.bin / val.bin with proportional 90/10 split per dataset.
+
+Targets ~5B unique tokens for ~4 epochs over MaxGPT-3's 20B-pass training.
+"""
+
 from datasets import load_dataset
 from tqdm import tqdm
 import numpy as np
 import os
-from tokenizer import BPETokenizer
+import multiprocessing as mp
 from collections import defaultdict
+from tokenizer import BPETokenizer
 
+# ====================
+# CONFIG
+# ====================
 VOCAB_SIZE = 16000
 DOCUMENT_SEPARATOR = "\n\n###\n\n"
 TRAIN_VAL_SPLIT = 0.9
 OUTPUT_DIR = "data"
 
-# Subsample TinyStories. Set to 3/4 so the corpus reaches ~460M tokens total
-# (Chinchilla-optimal for our 23M-param model = 20 tokens/param). At this ratio
-# the final mix is roughly 45% TinyStories / 55% UltraChat / <1% OASST — chat-
-# majority for the conversational goal, with enough narrative for fluency.
-TINYSTORIES_FRACTION = 3 / 4
+# Per-dataset character targets. Roughly chosen so each dataset contributes
+# the planned proportion of total tokens (assuming ~5x compression on average).
+# TinyStories compresses ~7x because of its limited vocab; chat data ~3.5x.
+TARGET_CHARS = {
+    "tinystories":  1_900_000_000,   # full corpus, ~270M tokens
+    "oasst":          400_000_000,    # OASST1 + OASST2 combined, ~150M tokens
+    "ultrachat":    7_000_000_000,   # full UltraChat, ~2B tokens (the bulk of chat data)
+    "cosmopedia":   7_500_000_000,   # subset of 25B-token corpus, ~1.5B tokens
+    "openorca":     3_500_000_000,   # subset of 4M examples, ~700M tokens
+    "wildchat":     2_000_000_000,   # full WildChat-1M English subset, ~400M tokens
+    "hhrlhf":         500_000_000,    # full Anthropic HH-RLHF, ~100M tokens
+}
 
-# Tokenizer training sample sizes — balanced across the three datasets so the
-# BPE merges capture vocabulary from each style (narrative, real dialogue, synthetic chat)
-BPE_SAMPLE_FROM_TINYSTORIES = 25_000_000   # 25MB
-BPE_SAMPLE_FROM_OASST = 6_000_000          # ~6MB (all of OASST basically)
-BPE_SAMPLE_FROM_ULTRACHAT = 19_000_000     # 19MB
+# Tokenizer training sample sizes — balanced across all 7 datasets so BPE merges
+# capture vocabulary from each style. Total ~70MB sample.
+BPE_SAMPLE_SIZES = {
+    "tinystories":  20_000_000,   # 20MB
+    "oasst":         5_000_000,   # 5MB (all of OASST basically)
+    "ultrachat":    15_000_000,   # 15MB
+    "cosmopedia":   15_000_000,   # 15MB
+    "openorca":      8_000_000,   # 8MB
+    "wildchat":      5_000_000,   # 5MB
+    "hhrlhf":        2_000_000,   # 2MB
+}
+
+# Multiprocessing config
+N_WORKERS = max(1, mp.cpu_count() - 2)   # leave a couple cores for the OS
+ENCODE_CHUNK_SIZE = 1_000_000           # 1MB per worker chunk
+
+
+# ====================
+# DATASET LOADERS / FORMATTERS
+# ====================
 
 def format_oasst_conversation(tree_root, children_by_parent):
-    # Given a root prompt message + a dict of all messages keyed by ID,
-    # walk down the tree picking the best-ranked child at each step.
-    # Returns a single string in "USER: ... \nASSISTANT: ... \n" format.
-    
+    """Walk down the OASST tree picking best-ranked child at each step.
+    Returns 'USER: ... \nASSISTANT: ...' formatted text."""
     current = tree_root
     text_parts = []
-    
     while current is not None:
         role_label = "USER" if current["role"] == "prompter" else "ASSISTANT"
         text_parts.append(f"{role_label}: {current['text']}")
-        
-        # Find children of current message
         children = children_by_parent.get(current["message_id"], [])
         valid = [c for c in children if c["rank"] is not None]
         if valid:
             current = min(valid, key=lambda c: c["rank"])
         else:
             current = children[0] if children else None
-    
     return "\n".join(text_parts)
 
-def load_and_format_tinystories():
-    # Use HuggingFace datasets to load TinyStories
+
+def load_tinystories():
+    """Full TinyStories — narrative coherence at small scale."""
     ds = load_dataset("roneneldan/TinyStories", split="train")
-    # Join all stories with document separator
-    # return DOCUMENT_SEPARATOR.join(
-    #     story["text"] for i, story in enumerate(ds) if i < 1000
-    # )
-    return DOCUMENT_SEPARATOR.join(story["text"] for story in ds)
+    target = TARGET_CHARS["tinystories"]
+    parts = []
+    chars = 0
+    for example in tqdm(ds, desc="TinyStories"):
+        text = example["text"]
+        parts.append(text)
+        chars += len(text)
+        if chars >= target:
+            break
+    return DOCUMENT_SEPARATOR.join(parts)
 
-def load_and_format_oasst():
-    # Load OASST1
-    ds = load_dataset("OpenAssistant/oasst1", split="train")
 
-    # Filter to English only
-    ds = ds.filter(lambda row: row["lang"] == "en")
-
-    # Build lookup: message_id -> message
-    children_by_parent = defaultdict(list)
-    for m in ds:
-        children_by_parent[m["parent_id"]].append(m)
-
-    # Find root messages (parent_id is None)
-    roots = children_by_parent[None]
-
-    # Format each tree
+def load_oasst():
+    """OASST1 + OASST2 combined. Real human-assistant conversations."""
     formatted_conversations = []
-    for root in roots:
-        conversation_text = format_oasst_conversation(root, children_by_parent)
-        formatted_conversations.append(conversation_text)
+
+    for hf_name in ["OpenAssistant/oasst1", "OpenAssistant/oasst2"]:
+        try:
+            print(f"  Loading {hf_name}...")
+            ds = load_dataset(hf_name, split="train")
+            ds = ds.filter(lambda row: row.get("lang") == "en")
+
+            children_by_parent = defaultdict(list)
+            for m in ds:
+                children_by_parent[m["parent_id"]].append(m)
+            roots = children_by_parent[None]
+
+            for root in roots:
+                formatted_conversations.append(
+                    format_oasst_conversation(root, children_by_parent)
+                )
+        except Exception as e:
+            print(f"  Skipping {hf_name}: {e}")
 
     return DOCUMENT_SEPARATOR.join(formatted_conversations)
 
-def format_ultrachat_conversation(messages):
-    """
-    UltraChat stores each conversation as a list of {role, content} dicts.
-    Convert to the same USER:/ASSISTANT: format we use for OASST so the model
-    sees ONE consistent chat format across all conversational data.
-    """
+
+def load_ultrachat():
+    """Full UltraChat (stingning/ultrachat). 1.5M synthetic chat conversations.
+    Each row's 'data' field is a list of strings alternating user/assistant."""
+    ds = load_dataset("stingning/ultrachat", split="train", streaming=True)
+    target = TARGET_CHARS["ultrachat"]
     parts = []
-    for msg in messages:
-        role_label = "USER" if msg["role"] == "user" else "ASSISTANT"
-        parts.append(f"{role_label}: {msg['content']}")
-    return "\n".join(parts)
+    chars = 0
+    for example in tqdm(ds, desc="UltraChat"):
+        # Convert the list-of-turns to USER:/ASSISTANT: format
+        turns = example.get("data", [])
+        if not turns:
+            continue
+        formatted_turns = []
+        for i, turn in enumerate(turns):
+            role = "USER" if i % 2 == 0 else "ASSISTANT"
+            formatted_turns.append(f"{role}: {turn}")
+        text = "\n".join(formatted_turns)
+        parts.append(text)
+        chars += len(text)
+        if chars >= target:
+            break
+    return DOCUMENT_SEPARATOR.join(parts)
 
-def load_and_format_ultrachat():
-    # Load the curated 200K-conversation version (smaller + filtered version of
-    # full UltraChat — ~200K conversations, suitable for SFT). The "train_sft"
-    # split is the one HuggingFace recommends for instruction-tuning models.
-    ds = load_dataset("HuggingFaceH4/ultrachat_200k", split="train_sft")
 
-    formatted = []
-    for row in ds:
-        formatted.append(format_ultrachat_conversation(row["messages"]))
+def load_cosmopedia():
+    """Cosmopedia v2 — synthetic educational content. Subset of HuggingFaceTB/smollm-corpus."""
+    ds = load_dataset(
+        "HuggingFaceTB/smollm-corpus",
+        "cosmopedia-v2",
+        split="train",
+        streaming=True,
+    )
+    target = TARGET_CHARS["cosmopedia"]
+    parts = []
+    chars = 0
+    for example in tqdm(ds, desc="Cosmopedia"):
+        text = example.get("text", "")
+        if not text:
+            continue
+        parts.append(text)
+        chars += len(text)
+        if chars >= target:
+            break
+    return DOCUMENT_SEPARATOR.join(parts)
 
-    return DOCUMENT_SEPARATOR.join(formatted)
 
-def encode_in_chunks(text, tokenizer, label):
-    """Encode a text corpus chunk-by-chunk with a progress bar."""
-    print(f"\nEncoding {label}...")
+def load_openorca():
+    """OpenOrca — instruction-response pairs. 4M examples; we subsample."""
+    ds = load_dataset("Open-Orca/OpenOrca", split="train", streaming=True)
+    target = TARGET_CHARS["openorca"]
+    parts = []
+    chars = 0
+    for example in tqdm(ds, desc="OpenOrca"):
+        question = example.get("question", "")
+        response = example.get("response", "")
+        if not question or not response:
+            continue
+        text = f"USER: {question}\nASSISTANT: {response}"
+        parts.append(text)
+        chars += len(text)
+        if chars >= target:
+            break
+    return DOCUMENT_SEPARATOR.join(parts)
+
+
+def load_wildchat():
+    """WildChat-1M — real ChatGPT conversations (consented).
+    Each row has 'conversation' field (list of {role, content} dicts) + 'language'."""
+    ds = load_dataset("allenai/WildChat-1M", split="train", streaming=True)
+    target = TARGET_CHARS["wildchat"]
+    parts = []
+    chars = 0
+    for example in tqdm(ds, desc="WildChat"):
+        # Filter to English
+        if example.get("language") != "English":
+            continue
+        conv = example.get("conversation", [])
+        if not conv:
+            continue
+        formatted_turns = []
+        for msg in conv:
+            role = "USER" if msg.get("role") == "user" else "ASSISTANT"
+            content = msg.get("content", "")
+            if content:
+                formatted_turns.append(f"{role}: {content}")
+        text = "\n".join(formatted_turns)
+        parts.append(text)
+        chars += len(text)
+        if chars >= target:
+            break
+    return DOCUMENT_SEPARATOR.join(parts)
+
+
+def load_hhrlhf():
+    """Anthropic HH-RLHF helpful/harmless. Uses 'chosen' (the preferred response).
+    Format is '\n\nHuman: ...\n\nAssistant: ...' which we convert to USER:/ASSISTANT:."""
+    ds = load_dataset("Anthropic/hh-rlhf", split="train")
+    target = TARGET_CHARS["hhrlhf"]
+    parts = []
+    chars = 0
+    for example in tqdm(ds, desc="HH-RLHF"):
+        raw = example.get("chosen", "")
+        if not raw:
+            continue
+        # Convert "Human:" → "USER:" and "Assistant:" → "ASSISTANT:"
+        text = raw.replace("\n\nHuman:", "\nUSER:").replace("\n\nAssistant:", "\nASSISTANT:")
+        text = text.strip()
+        parts.append(text)
+        chars += len(text)
+        if chars >= target:
+            break
+    return DOCUMENT_SEPARATOR.join(parts)
+
+
+DATASET_LOADERS = {
+    "tinystories": load_tinystories,
+    "oasst":       load_oasst,
+    "ultrachat":   load_ultrachat,
+    "cosmopedia":  load_cosmopedia,
+    "openorca":    load_openorca,
+    "wildchat":    load_wildchat,
+    "hhrlhf":      load_hhrlhf,
+}
+
+
+# ====================
+# MULTIPROCESSING ENCODING
+# ====================
+# Each worker process loads its own tokenizer once via the initializer,
+# then receives chunks via imap and returns lists of token IDs.
+
+_worker_tokenizer = None
+
+def _init_worker(tokenizer_path):
+    """Initializer for each worker process — loads tokenizer once per worker."""
+    global _worker_tokenizer
+    _worker_tokenizer = BPETokenizer()
+    _worker_tokenizer.load(tokenizer_path)
+
+
+def _encode_chunk(chunk):
+    """Worker function — encodes a single chunk using the per-worker tokenizer."""
+    return _worker_tokenizer.encode(chunk)
+
+
+def chunked(s, n):
+    """Yield n-char chunks from string s."""
+    for i in range(0, len(s), n):
+        yield s[i:i + n]
+
+
+def encode_parallel(text, tokenizer_path, label):
+    """Encode a large text using N_WORKERS processes in parallel."""
+    chunks = list(chunked(text, ENCODE_CHUNK_SIZE))
+    print(f"  Encoding {label} ({len(text):,} chars in {len(chunks)} chunks across {N_WORKERS} workers)...")
+
     tokens = []
-    chunk_size = 1_000_000
-    total_chunks = max(1, (len(text) + chunk_size - 1) // chunk_size)
-    for chunk in tqdm(chunked(text, chunk_size), total=total_chunks, desc=label):
-        tokens.extend(tokenizer.encode(chunk))
+    with mp.Pool(
+        processes=N_WORKERS,
+        initializer=_init_worker,
+        initargs=(tokenizer_path,),
+    ) as pool:
+        for chunk_tokens in tqdm(
+            pool.imap(_encode_chunk, chunks),
+            total=len(chunks),
+            desc=label,
+        ):
+            tokens.extend(chunk_tokens)
     return tokens
 
+
+# ====================
+# HELPERS
+# ====================
+
 def split_90_10(tokens):
-    """Split a token list into train (first 90%) and val (last 10%)."""
+    """Split a token list into train (90%) and val (10%)."""
     idx = int(len(tokens) * TRAIN_VAL_SPLIT)
     return tokens[:idx], tokens[idx:]
 
+
+def save_intermediate(tokens, name):
+    """Save a per-dataset token bin to disk for later combining."""
+    path = os.path.join(OUTPUT_DIR, f"_intermediate_{name}.bin")
+    np.array(tokens, dtype=np.uint16).tofile(path)
+    return path
+
+
+def load_intermediate(name):
+    """Load a per-dataset token bin saved by save_intermediate."""
+    path = os.path.join(OUTPUT_DIR, f"_intermediate_{name}.bin")
+    return np.fromfile(path, dtype=np.uint16)
+
+
+# ====================
+# MAIN PIPELINE
+# ====================
+
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-    # === LOAD ALL THREE DATASETS ===
-    print("Loading TinyStories...")
-    tinystories_text = load_and_format_tinystories()
-    print(f"TinyStories (full): {len(tinystories_text):,} chars")
-
-    # Subsample TinyStories — full corpus is ~1.9B chars which would dominate
-    # the mix. Take only TINYSTORIES_FRACTION so it ends up as a meaningful
-    # but not overwhelming chunk (~15% of final corpus).
-    keep_chars = int(len(tinystories_text) * TINYSTORIES_FRACTION)
-    tinystories_text = tinystories_text[:keep_chars]
-    print(f"TinyStories (subsampled to {TINYSTORIES_FRACTION:.0%}): {len(tinystories_text):,} chars")
-
-    print("Loading OASST1...")
-    oasst_text = load_and_format_oasst()
-    print(f"OASST: {len(oasst_text):,} chars")
-
-    print("Loading UltraChat...")
-    ultrachat_text = load_and_format_ultrachat()
-    print(f"UltraChat: {len(ultrachat_text):,} chars")
-
-    total_chars = len(tinystories_text) + len(oasst_text) + len(ultrachat_text)
-    print(f"\nTotal corpus: {total_chars:,} chars")
-    print(f"  TinyStories: {len(tinystories_text)/total_chars:.1%}")
-    print(f"  OASST:       {len(oasst_text)/total_chars:.1%}")
-    print(f"  UltraChat:   {len(ultrachat_text)/total_chars:.1%}")
-
-    # === TOKENIZER (load if cached, else train on balanced 3-dataset sample) ===
     tokenizer_path = os.path.join(OUTPUT_DIR, "tokenizer.json")
-    tokenizer = BPETokenizer()
+
+    # =========================================================
+    # PHASE 1: Load + format all 7 datasets (keep in memory only
+    # long enough to train tokenizer + encode each one)
+    # =========================================================
+    all_texts = {}
+    print("\n" + "=" * 70 + "\nPHASE 1: Loading + formatting datasets\n" + "=" * 70)
+    for name, loader in DATASET_LOADERS.items():
+        print(f"\nLoading {name}...")
+        try:
+            all_texts[name] = loader()
+            print(f"  {name}: {len(all_texts[name]):,} chars")
+        except Exception as e:
+            print(f"  ERROR loading {name}: {e}")
+            print(f"  Skipping {name} — continuing with remaining datasets.")
+            all_texts[name] = ""
+
+    total_chars = sum(len(t) for t in all_texts.values())
+    print(f"\nTotal raw corpus: {total_chars:,} chars")
+    for name, text in all_texts.items():
+        if total_chars > 0:
+            print(f"  {name:12s}: {len(text):>14,} chars ({len(text)/total_chars:.1%})")
+
+    # =========================================================
+    # PHASE 2: Train tokenizer (or load if already cached)
+    # =========================================================
+    print("\n" + "=" * 70 + "\nPHASE 2: Tokenizer\n" + "=" * 70)
 
     if os.path.exists(tokenizer_path):
-        print(f"\nLoading existing tokenizer from {tokenizer_path}")
+        print(f"Loading existing tokenizer from {tokenizer_path}")
+        tokenizer = BPETokenizer()
         tokenizer.load(tokenizer_path)
     else:
-        print("\nTraining tokenizer on balanced sample from all 3 datasets...")
-        tokenizer_sample = (
-            tinystories_text[:BPE_SAMPLE_FROM_TINYSTORIES]
-            + DOCUMENT_SEPARATOR
-            + oasst_text[:BPE_SAMPLE_FROM_OASST]
-            + DOCUMENT_SEPARATOR
-            + ultrachat_text[:BPE_SAMPLE_FROM_ULTRACHAT]
-        )
-        print(f"Tokenizer training sample: {len(tokenizer_sample):,} chars")
+        print("Building balanced sample from all 7 datasets for tokenizer training...")
+        sample_parts = []
+        for name in DATASET_LOADERS:
+            text = all_texts.get(name, "")
+            n = min(BPE_SAMPLE_SIZES[name], len(text))
+            sample_parts.append(text[:n])
+        tokenizer_sample = (DOCUMENT_SEPARATOR + DOCUMENT_SEPARATOR).join(sample_parts)
+        print(f"Tokenizer sample: {len(tokenizer_sample):,} chars")
+
+        print("Training tokenizer (this takes ~30-60 min for 16K vocab)...")
+        tokenizer = BPETokenizer()
         tokenizer.train(tokenizer_sample, VOCAB_SIZE)
         tokenizer.save(tokenizer_path)
+        print(f"Saved tokenizer to {tokenizer_path}")
+        del tokenizer_sample
 
-    # === ENCODE EACH DATASET SEPARATELY ===
-    # Separately so we can split each 90/10 — ensures train AND val both have
-    # representative samples of ALL three sources (fixes the bug where OASST
-    # ended up entirely in val because it was concatenated at the end).
-    ts_tokens = encode_in_chunks(tinystories_text, tokenizer, "TinyStories")
-    oasst_tokens = encode_in_chunks(oasst_text, tokenizer, "OASST")
-    ultrachat_tokens = encode_in_chunks(ultrachat_text, tokenizer, "UltraChat")
+    # =========================================================
+    # PHASE 3: Encode each dataset in parallel, save intermediate bin files
+    # =========================================================
+    print("\n" + "=" * 70 + "\nPHASE 3: Parallel encoding (one dataset at a time)\n" + "=" * 70)
 
-    # Free the corpus strings — we're done with them and they're huge
-    del tinystories_text, oasst_text, ultrachat_text
+    token_counts = {}
+    for name in DATASET_LOADERS:
+        text = all_texts.get(name, "")
+        if not text:
+            print(f"\nSkipping {name} (no text loaded)")
+            continue
 
-    total_tokens = len(ts_tokens) + len(oasst_tokens) + len(ultrachat_tokens)
-    print(f"\n=== Token counts ===")
-    print(f"  TinyStories: {len(ts_tokens):>14,} ({len(ts_tokens)/total_tokens:.1%})")
-    print(f"  OASST:       {len(oasst_tokens):>14,} ({len(oasst_tokens)/total_tokens:.1%})")
-    print(f"  UltraChat:   {len(ultrachat_tokens):>14,} ({len(ultrachat_tokens)/total_tokens:.1%})")
-    print(f"  TOTAL:       {total_tokens:>14,}")
+        intermediate_path = os.path.join(OUTPUT_DIR, f"_intermediate_{name}.bin")
+        if os.path.exists(intermediate_path):
+            # Resume support — if we already encoded this dataset, skip re-encoding
+            existing = np.fromfile(intermediate_path, dtype=np.uint16)
+            print(f"\nSkipping {name} encoding — already done ({len(existing):,} tokens cached)")
+            token_counts[name] = len(existing)
+            # Free the text since we don't need it anymore
+            all_texts[name] = ""
+            continue
 
-    # === SPLIT EACH DATASET 90/10 (per-dataset, not on the combined stream) ===
-    # This guarantees both train.bin and val.bin contain proportional samples
-    # of ALL three datasets, not just the one that happened to come last.
-    ts_train, ts_val = split_90_10(ts_tokens)
-    oasst_train, oasst_val = split_90_10(oasst_tokens)
-    ultrachat_train, ultrachat_val = split_90_10(ultrachat_tokens)
+        print(f"\n--- {name} ---")
+        tokens = encode_parallel(text, tokenizer_path, name)
+        save_intermediate(tokens, name)
+        token_counts[name] = len(tokens)
+        print(f"  {name}: {len(tokens):,} tokens saved")
+        # Free the original text + token list now that they're saved to disk
+        all_texts[name] = ""
+        del tokens
 
-    # === CONCATENATE INTO FINAL TRAIN/VAL ===
-    train_tokens = ts_train + oasst_train + ultrachat_train
-    val_tokens = ts_val + oasst_val + ultrachat_val
+    total_tokens = sum(token_counts.values())
+    print(f"\n=== Tokens per dataset ===")
+    for name, count in token_counts.items():
+        if total_tokens > 0:
+            print(f"  {name:12s}: {count:>14,} ({count/total_tokens:.1%})")
+    print(f"  TOTAL       : {total_tokens:>14,}")
 
-    # Free intermediates
-    del ts_tokens, oasst_tokens, ultrachat_tokens
-    del ts_train, ts_val, oasst_train, oasst_val, ultrachat_train, ultrachat_val
+    # =========================================================
+    # PHASE 4: Per-dataset 90/10 split, then combine into final train/val bins
+    # =========================================================
+    print("\n" + "=" * 70 + "\nPHASE 4: Per-dataset 90/10 split + combine\n" + "=" * 70)
 
-    print(f"\n=== Final split ===")
-    print(f"  Train: {len(train_tokens):,} tokens")
-    print(f"  Val:   {len(val_tokens):,} tokens")
+    train_arrays = []
+    val_arrays = []
+    for name in DATASET_LOADERS:
+        if name not in token_counts:
+            continue
+        tokens = load_intermediate(name)
+        train_t, val_t = split_90_10(tokens.tolist())
+        train_arrays.append(np.array(train_t, dtype=np.uint16))
+        val_arrays.append(np.array(val_t, dtype=np.uint16))
+        del tokens, train_t, val_t
 
-    # === SAVE AS UINT16 BIN FILES ===
-    train_array = np.array(train_tokens, dtype=np.uint16)
-    val_array = np.array(val_tokens, dtype=np.uint16)
+    train_array = np.concatenate(train_arrays)
+    val_array = np.concatenate(val_arrays)
+    del train_arrays, val_arrays
+
     train_array.tofile(os.path.join(OUTPUT_DIR, "train.bin"))
     val_array.tofile(os.path.join(OUTPUT_DIR, "val.bin"))
 
-    print(f"\nSaved train.bin ({len(train_tokens):,} tokens) and val.bin ({len(val_tokens):,} tokens)")
+    print(f"\n=== Final ===")
+    print(f"  train.bin: {len(train_array):,} tokens")
+    print(f"  val.bin:   {len(val_array):,} tokens")
 
-def chunked(s, n):
-    for i in range(0, len(s), n):
-        yield s[i:i+n]
+    # Cleanup intermediates (comment this out if you want to keep them for debugging)
+    print("\nCleaning up intermediate files...")
+    for name in DATASET_LOADERS:
+        path = os.path.join(OUTPUT_DIR, f"_intermediate_{name}.bin")
+        if os.path.exists(path):
+            os.remove(path)
+    print("Done!")
+
 
 if __name__ == "__main__":
     main()
