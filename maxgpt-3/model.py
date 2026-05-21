@@ -74,15 +74,10 @@ class CausalSelfAttention(nn.Module):
         # softmax into regions where gradients vanish)
         # Branch: use fused attention OR manual computation
         if self.use_flash:
-            # On Blackwell (RTX 5070) with PyTorch 2.12+cu130, true Flash Attention
-            # isn't compiled into the wheel ("Torch was not compiled with flash attention").
-            # Without explicit backend selection, PyTorch silently falls back to the
-            # MATH implementation, which is O(T^2) memory and OOMs at our batch sizes.
-            #
-            # We force EFFICIENT_ATTENTION (xformers-style memory-efficient kernel) which
-            # gives O(T) memory like Flash, just slightly slower throughput. Still way
-            # faster + less memory than manual computation.
-            with sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION):
+            # Try Flash first, fall back to Efficient if unavailable. PyTorch picks
+            # the first kernel in the list that supports the current hardware/build.
+            # WSL2 Linux wheel → Flash. Windows wheel → falls back to Efficient.
+            with sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
                 out = F.scaled_dot_product_attention(
                     q, k, v,
                     is_causal=True   # auto-applies causal mask, no need for our custom one

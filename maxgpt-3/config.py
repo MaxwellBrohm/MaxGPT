@@ -7,13 +7,13 @@ class Config:
     # Same vocab + context family as MaxGPT-2 so all three models can share the
     # same evaluation prompts and tokenizer-style comparisons.
     vocab_size: int = 16000
-    context_window: int = 512        # same as MaxGPT-2
+    context_window: int = 1024        # same as MaxGPT-2
     hidden_dim: int = 1024           # was 768 in MaxGPT-2 (+33% wider)
     num_heads: int = 16              # was 12 — each head still has dim 64 (1024/16)
     num_blocks: int = 16             # was 12 — 33% deeper
 
     # Training hyperparameters
-    batch_size: int = 16             # SMOKE TEST FIRST! If VRAM stays under ~10GB, batch=16 is fine.
+    batch_size: int = 8             # SMOKE TEST FIRST! If VRAM stays under ~10GB, batch=16 is fine.
                                      # If it spills past 11GB or hits shared memory, drop to 8.
                                      # 235M is ~2x MaxGPT-2's static state, so memory will be tighter
                                      # even with EFFICIENT_ATTENTION. May need to fall back to 8.
