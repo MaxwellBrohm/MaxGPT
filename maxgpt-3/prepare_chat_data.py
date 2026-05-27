@@ -231,6 +231,8 @@ def split_90_10(tokens):
 # ====================
 
 def main():
+    import gc
+
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     tokenizer_path = os.path.join(OUTPUT_DIR, "tokenizer.json")
 
@@ -240,39 +242,42 @@ def main():
             "train the tokenizer — this script reuses it."
         )
 
-    # PHASE 1: Load + format all 5 chat datasets
-    all_texts = {}
-    print("\n" + "=" * 70 + "\nPHASE 1: Loading + formatting chat datasets\n" + "=" * 70)
-    for name, loader in DATASET_LOADERS.items():
-        print(f"\nLoading {name}...")
-        try:
-            all_texts[name] = loader()
-            print(f"  {name}: {len(all_texts[name]):,} chars")
-        except Exception as e:
-            print(f"  ERROR loading {name}: {e}")
-            all_texts[name] = ""
+    # PHASES 1+2 MERGED: process each dataset ONE AT A TIME to bound peak memory.
+    # Old code loaded ALL datasets at once (peak ~16-20GB string memory which OOM'd
+    # WSL even at 28GB). New code: for each dataset, load -> encode -> free -> next.
+    # Peak memory = max(single dataset) ≈ 7GB (UltraChat) + ~3GB workers ≈ 10-12GB.
+    print("\n" + "=" * 70 + "\nLoad + encode each dataset (one at a time, frees memory between)\n" + "=" * 70)
 
-    total_chars = sum(len(t) for t in all_texts.values())
-    print(f"\nTotal chat corpus: {total_chars:,} chars")
-
-    # PHASE 2: Encode each dataset in parallel, write to intermediate bin files
-    print("\n" + "=" * 70 + "\nPHASE 2: Parallel encoding\n" + "=" * 70)
     token_counts = {}
-    for name in DATASET_LOADERS:
-        text = all_texts.get(name, "")
-        if not text:
-            continue
+    for name, loader in DATASET_LOADERS.items():
         intermediate_path = os.path.join(OUTPUT_DIR, f"_chat_intermediate_{name}.bin")
+
+        # Resume support: if this dataset is already done, skip it
         if os.path.exists(intermediate_path):
             existing = np.fromfile(intermediate_path, dtype=np.uint16)
             print(f"\nSkipping {name} — cached ({len(existing):,} tokens)")
             token_counts[name] = len(existing)
-            all_texts[name] = ""
             continue
-        print(f"\n--- {name} ---")
+
+        print(f"\n=== Processing {name} ===")
+        try:
+            print(f"  Loading {name}...")
+            text = loader()
+            print(f"  {name}: {len(text):,} chars")
+        except Exception as e:
+            print(f"  ERROR loading {name}: {e}")
+            print(f"  Skipping {name} — continuing with remaining datasets.")
+            continue
+
+        # Encode (streams tokens directly to disk, never holds full token list in memory)
         n_tokens = encode_parallel_streaming(text, tokenizer_path, name, intermediate_path)
         token_counts[name] = n_tokens
-        all_texts[name] = ""
+        print(f"  {name}: {n_tokens:,} tokens saved")
+
+        # CRITICAL: free the text immediately + force garbage collection so the
+        # OS can actually reclaim the memory before we load the next dataset.
+        del text
+        gc.collect()
 
     total_tokens = sum(token_counts.values())
     print(f"\n=== Tokens per chat dataset ===")
