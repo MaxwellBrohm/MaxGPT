@@ -31,14 +31,20 @@ DOCUMENT_SEPARATOR = "\n\n###\n\n"
 TRAIN_VAL_SPLIT = 0.9
 OUTPUT_DIR = "data"
 
-# Per-dataset character targets. Same as prepare_data.py for these 5 datasets,
-# so the proportions stay consistent.
+# Per-dataset character targets. SHRUNK from prepare_data.py values to keep peak
+# memory bounded (was OOM'ing WSL: the join-at-end of each loader doubles memory
+# momentarily, so 7GB UltraChat → 14GB peak which exceeded our WSL allocation).
+#
+# For SFT we don't need huge data — modern papers use 50K-500K conversations
+# and we'll still have ~1.5B unique chat tokens after these reductions.
+# At batch=8 ctx=1024 that's ~180K steps for 1 epoch — plenty for SFT to teach
+# turn structure + response shaping.
 TARGET_CHARS = {
-    "oasst":          400_000_000,    # OASST1 + OASST2, ~3.6M tokens
-    "ultrachat":    7_000_000_000,    # full UltraChat, ~1.35B tokens
-    "openorca":     3_500_000_000,    # subset, ~823M tokens
-    "wildchat":     2_000_000_000,    # full English WildChat-1M, ~527M tokens
-    "hhrlhf":         500_000_000,    # full Anthropic HH-RLHF, ~32M tokens
+    "oasst":          400_000_000,    # unchanged (already small) — ~3.6M tokens
+    "ultrachat":    3_000_000_000,    # was 7B → ~600M tokens (still the bulk)
+    "openorca":     2_000_000_000,    # was 3.5B → ~470M tokens
+    "wildchat":     1_500_000_000,    # was 2B → ~400M tokens
+    "hhrlhf":         500_000_000,    # unchanged — ~32M tokens
 }
 
 # Multiprocessing config (same as prepare_data.py, learned-the-hard-way values)
