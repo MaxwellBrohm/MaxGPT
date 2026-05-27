@@ -41,21 +41,33 @@ val_data = np.memmap("data/chat_val.bin", dtype=np.uint16, mode="r")
 _tokenizer = BPETokenizer()
 _tokenizer.load("data/tokenizer.json")
 
-# Encode role marker patterns. We tried using "\nASSISTANT:" and "\nUSER:" with
-# a leading newline for unambiguous detection, but it failed: byte-level BPE
-# has NO pre-tokenization regex, so merges fire purely by global rank. The
-# tokenizer learned merges like (".", "\n"), ("?", "\n"), ("!", "\n") during
-# pre-training (these are very common in natural text). So in actual chat data,
-# "what is it?\nASSISTANT:" tokenizes as [..., <?\n_merged>, 504, 58, ...] —
-# the "\n" gets ABSORBED into a merge with the preceding punctuation character,
-# and the standalone [10, 504, 58] pattern from encoding "\nASSISTANT:" by
-# itself NEVER appears in the data. Result: 100% of tokens get masked.
+# Role marker BYTES — we search at the BYTE level after decoding tokens, which
+# is robust to ALL of BPE's merge-by-rank weirdness around marker boundaries.
 #
-# Fix: drop the "\n" prefix and just match on "ASSISTANT:" / "USER:". These
-# capitalized-name + colon patterns are essentially unique to role boundaries
-# in chat data — natural conversational text basically never contains them.
-ASSISTANT_MARKER = np.array(_tokenizer.encode("ASSISTANT:"), dtype=np.uint16)
-USER_MARKER = np.array(_tokenizer.encode("USER:"), dtype=np.uint16)
+# Why this is necessary (token-level matching kept failing):
+#   Byte-level BPE has no pre-tokenization regex — merges fire purely by global
+#   rank. So the same substring tokenizes DIFFERENTLY depending on surrounding
+#   bytes. Two merges in particular wreck token-level marker matching:
+#     1. Preceding "\n" gets eaten: ".\n", "?\n", "!\n", " \n" are common merges
+#        from pre-training, so the "\n" before "\nASSISTANT:" never survives as
+#        a standalone token in real data.
+#     2. Trailing ": " gets eaten: (":", " ") merges in most chat positions
+#        because "X: " is everywhere. So "ASSISTANT:" → [504, 58] standalone
+#        becomes [504, <": "_merged>, ...] in real data, and "USER:" → [8193]
+#        gets eaten into [<"USER: "_merged>, ...].
+#   debug_mask.py confirmed both: only 1/9 markers found at the token level even
+#   though the data visibly contains hundreds of role boundaries.
+#
+# Byte-level search bypasses both issues completely.
+ASSISTANT_MARKER_BYTES = b"ASSISTANT:"
+USER_MARKER_BYTES = b"USER:"
+
+# Pre-compute the byte length of every vocab token once at module load. Used to
+# derive per-chunk byte offsets via a vectorized cumsum (no Python loop).
+_VOCAB_BYTE_LEN = np.array(
+    [len(_tokenizer.vocab[i]) for i in range(len(_tokenizer.vocab))],
+    dtype=np.int64,
+)
 
 # How far to look back in the token stream when sampling a chunk, so we know
 # the role state at the chunk's start. 2000 tokens reliably catches at least
@@ -63,8 +75,7 @@ USER_MARKER = np.array(_tokenizer.encode("USER:"), dtype=np.uint16)
 LOOKBACK = 2000
 
 print(f"[finetune_data] Loaded tokenizer (vocab {len(_tokenizer.vocab):,})")
-print(f"[finetune_data] ASSISTANT marker = {len(ASSISTANT_MARKER)} tokens: {ASSISTANT_MARKER.tolist()}")
-print(f"[finetune_data] USER marker = {len(USER_MARKER)} tokens: {USER_MARKER.tolist()}")
+print(f"[finetune_data] Role markers (byte-level search): {ASSISTANT_MARKER_BYTES!r}, {USER_MARKER_BYTES!r}")
 print(f"[finetune_data] Lookback for state detection: {LOOKBACK} tokens")
 
 
@@ -72,66 +83,74 @@ print(f"[finetune_data] Lookback for state detection: {LOOKBACK} tokens")
 # MASK BUILDING
 # ====================
 
-def _find_pattern_positions(tokens: np.ndarray, pattern: np.ndarray) -> np.ndarray:
-    """Find all starting positions where `pattern` appears in `tokens`.
-    Vectorized — much faster than a Python loop over positions."""
-    n, m = len(tokens), len(pattern)
-    if m == 0 or n < m:
-        return np.array([], dtype=np.int64)
-    matches = np.ones(n - m + 1, dtype=bool)
-    for k in range(m):
-        matches &= (tokens[k : n - m + 1 + k] == pattern[k])
-    return np.where(matches)[0]
-
-
 def _build_loss_mask(tokens: np.ndarray, initial_state: bool = False) -> np.ndarray:
     """Build a 0/1 mask the same length as `tokens`:
        1 = assistant content (train on this)
        0 = user content, role markers, or pre-first-role region
 
-    Walk through pattern matches in order, toggling the assistant/user state at
-    each role marker. Region BETWEEN markers gets the mask value of the current
-    state. The marker tokens themselves are always 0 (we don't train on
-    "ASSISTANT:" being predicted — at inference we prompt it, not generate it).
+    Detection strategy: decode the chunk to raw bytes, find marker substrings
+    via bytes.find(), then map byte positions back to token indices via a
+    cumsum lookup. This is robust to BPE's merge-by-rank tokenization (which
+    makes token-level pattern matching unreliable — see the comment block at
+    module load for the full story).
     """
     n = len(tokens)
+    if n == 0:
+        return np.zeros(0, dtype=np.uint8)
+
     mask = np.zeros(n, dtype=np.uint8)
 
-    # Find every position of each marker
-    am_positions = _find_pattern_positions(tokens, ASSISTANT_MARKER)
-    um_positions = _find_pattern_positions(tokens, USER_MARKER)
+    # 1. Decode each token's bytes and stitch into a single byte stream
+    token_bytes_list = [_tokenizer.vocab[int(t)] for t in tokens]
+    full_bytes = b"".join(token_bytes_list)
 
-    # Build a sorted list of all boundary events:
-    # (position, role_after_marker, marker_length)
-    boundaries = []
-    am_len = len(ASSISTANT_MARKER)
-    um_len = len(USER_MARKER)
-    for p in am_positions:
-        boundaries.append((int(p), True, am_len))   # True = assistant
-    for p in um_positions:
-        boundaries.append((int(p), False, um_len))  # False = user
+    # 2. Per-token byte offsets via vectorized cumsum
+    #    byte_offsets[i] = byte position where token i begins
+    #    byte_offsets[n] = total byte length
+    byte_lens = _VOCAB_BYTE_LEN[tokens]
+    byte_offsets = np.concatenate(([0], np.cumsum(byte_lens))).astype(np.int64)
+
+    # 3. Find every marker occurrence at the BYTE level, then map back to tokens
+    boundaries = []  # (first_marker_token, role_after_marker, num_marker_tokens)
+    for marker_bytes, role_after in [
+        (ASSISTANT_MARKER_BYTES, True),
+        (USER_MARKER_BYTES, False),
+    ]:
+        m = len(marker_bytes)
+        start = 0
+        while True:
+            idx = full_bytes.find(marker_bytes, start)
+            if idx == -1:
+                break
+            # Map byte positions back to token indices:
+            #   tok_start = the token containing the FIRST byte of the marker
+            #   tok_end   = the token containing the LAST  byte of the marker
+            # Any token that overlaps the marker — even partially — is treated
+            # as a marker token (masked out). This is correct: a token spanning
+            # "X" + "ASSI" shouldn't be trained on as user content, nor should
+            # a token spanning ":" + " r" be trained on as assistant content.
+            tok_start = int(np.searchsorted(byte_offsets, idx, side="right")) - 1
+            tok_end = int(np.searchsorted(byte_offsets, idx + m - 1, side="right")) - 1
+            boundaries.append((tok_start, role_after, tok_end - tok_start + 1))
+            start = idx + m
+
     boundaries.sort(key=lambda b: b[0])
 
-    # Walk through boundaries, marking the regions between them
+    # 4. Walk boundaries left-to-right, filling regions based on current state
     in_assistant = initial_state
     cursor = 0
-    for pos, role_after, marker_len in boundaries:
-        # If the marker overlaps with an earlier marker we already passed, skip.
-        # (Shouldn't happen in practice — role markers can't overlap — but
-        # defensive coding.)
-        if pos < cursor:
+    for tok_pos, role_after, marker_tok_len in boundaries:
+        # Defensive: skip markers overlapping one we already passed (e.g. a
+        # boundary token shared with the previous marker's tail).
+        if tok_pos < cursor:
             continue
-
-        # Mark region [cursor, pos) based on CURRENT state (before this marker)
         if in_assistant:
-            mask[cursor:pos] = 1
-        # The marker positions [pos, pos + marker_len) stay 0 (don't train on markers)
-
-        # Update state to what's AFTER this marker
+            mask[cursor:tok_pos] = 1
+        # Marker tokens [tok_pos, tok_pos + marker_tok_len) stay 0
         in_assistant = role_after
-        cursor = pos + marker_len
+        cursor = tok_pos + marker_tok_len
 
-    # Mark the final region after the last boundary
+    # Trailing region after the last marker
     if in_assistant:
         mask[cursor:n] = 1
 
