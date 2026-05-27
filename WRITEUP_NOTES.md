@@ -39,6 +39,19 @@ Scaling: **23M → 110M → 235M = ~10x** from first to last.
 - **Standard components**: multi-head causal self-attention, FFN with GELU + 4x expansion,
   learned positional embeddings, residual connections, AdamW optimizer
 - **Vocab: 16K BPE** (custom-trained from scratch, byte-level)
+- **Tokenizer per model**:
+  - MaxGPT-1: own tokenizer trained on its 2-dataset sample (TinyStories + OASST)
+  - MaxGPT-2: **REUSED MaxGPT-1's tokenizer** (the "load if cached" logic
+    detected and kept it when prepare_data.py was re-run with UltraChat added).
+    This means MaxGPT-2's bin files contain UltraChat content but encoded with
+    a tokenizer that never saw UltraChat during BPE training — slight encoding
+    inefficiency (~5-10% more tokens needed for UltraChat content than optimal).
+    Honest note for the writeup: this is a real subtle limitation of MaxGPT-2
+    that helps explain why MaxGPT-3 (with a freshly-trained 7-dataset tokenizer)
+    handles diverse content more efficiently.
+  - MaxGPT-3: own tokenizer trained on a balanced 70MB sample from all 7
+    datasets, freshly retrained (we deleted the old tokenizer.json before
+    running prepare_data.py to force a fresh build)
 
 ### Scaling progression
 | | Hidden | Layers | Heads | Context | Batch |

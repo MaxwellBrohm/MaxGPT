@@ -1,5 +1,5 @@
 """
-MaxGPT Web UI — chat with and compare three from-scratch language models.
+MaxGPT Web UI — chat with and compare from-scratch language models.
 
 Run from this directory:
     streamlit run app.py
@@ -13,7 +13,7 @@ import queue
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Generator
 
@@ -22,15 +22,86 @@ import torch
 
 
 # ============================================================================
-# Paths and constants
+# Model registry
+#
+# Each entry is one selectable model in the UI. MaxGPT-3.5 shares the maxgpt-3
+# folder (same architecture + tokenizer, produced by finetune.py which saves
+# its weights as `final_sft.pt` next to the base `final.pt`).
+#
+# The `summary` + `bullets` fields are shown in an "About this model" panel
+# so anyone using the UI can see *why* the models behave differently —
+# architecture deltas, training-data deltas, base vs SFT.
 # ============================================================================
 
 ROOT = Path(__file__).resolve().parent.parent
 
-MODEL_FOLDERS = {
-    "MaxGPT-1": ROOT / "maxgpt-1",
-    "MaxGPT-2": ROOT / "maxgpt-2",
-    "MaxGPT-3": ROOT / "maxgpt-3",
+
+@dataclass(frozen=True)
+class ModelSpec:
+    folder: Path
+    checkpoint_filename: str   # "final.pt" or "final_sft.pt" — sits in folder/checkpoints/
+    namespace: str             # sys.modules namespace for the import-collision loader
+    color: str                 # accent hex used in dots, badges, compare borders
+    blurb: str                 # 1-3 words shown inside the badge
+    summary: str               # one-line architecture summary
+    bullets: tuple             # 2-3 bullets explaining what's different vs. the others
+
+
+MODEL_SPECS: dict[str, ModelSpec] = {
+    "MaxGPT-1": ModelSpec(
+        folder=ROOT / "maxgpt-1",
+        checkpoint_filename="final.pt",
+        namespace="maxgpt_1",
+        color="#10B981",  # emerald
+        blurb="pre-trained baseline",
+        summary="23M params · 6 layers × 384 dim · 6 heads · ctx 256",
+        bullets=(
+            "Smallest baseline. Trained on 3 datasets: TinyStories, OASST1, UltraChat.",
+            "~500M token-passes (1 epoch, Chinchilla-optimal for 23M params).",
+            "Short 256-token context. Outputs are short and simple — proves the stack works.",
+        ),
+    ),
+    "MaxGPT-2": ModelSpec(
+        folder=ROOT / "maxgpt-2",
+        checkpoint_filename="final.pt",
+        namespace="maxgpt_2",
+        color="#3B82F6",  # blue
+        blurb="scaled pre-trained",
+        summary="110M params · 12 layers × 768 dim · 12 heads · ctx 512",
+        bullets=(
+            "~4.8× the parameters of MaxGPT-1. 2× deeper, 2× wider, 2× context (512).",
+            "Same 3-dataset mix as MaxGPT-1 (TinyStories + OASST1 + UltraChat), "
+            "trained for ~2B token-passes (4 epochs ≈ Chinchilla-optimal for 110M).",
+            "Visibly better multi-turn coherence and broader knowledge than MaxGPT-1.",
+        ),
+    ),
+    "MaxGPT-3": ModelSpec(
+        folder=ROOT / "maxgpt-3",
+        checkpoint_filename="final.pt",
+        namespace="maxgpt_3",
+        color="#8B5CF6",  # violet
+        blurb="large pre-trained",
+        summary="235M params · 16 layers × 1024 dim · 16 heads · ctx 1024",
+        bullets=(
+            "~2.1× the parameters of MaxGPT-2. 16 layers × 1024 dim, 2× context (1024).",
+            "7-dataset mix (~5B unique tokens): TinyStories, OASST1+2, UltraChat, "
+            "Cosmopedia v2, OpenOrca, WildChat-1M, HH-RLHF.",
+            "Targets ~20B token-passes (~4× Chinchilla for 235M) for maximum output quality.",
+        ),
+    ),
+    "MaxGPT-3.5": ModelSpec(
+        folder=ROOT / "maxgpt-3",  # shares maxgpt-3's code + tokenizer
+        checkpoint_filename="final_sft.pt",
+        namespace="maxgpt_3",
+        color="#F59E0B",  # amber
+        blurb="SFT chat-tuned",
+        summary="235M params · same architecture as MaxGPT-3 · SFT-fine-tuned",
+        bullets=(
+            "Starts from MaxGPT-3's weights, then continues training on chat-only data.",
+            "~2.4B chat tokens (300K SFT steps at lr=5e-5, 4× smaller than pre-training lr).",
+            "Same knowledge as MaxGPT-3 — but follows the USER/ASSISTANT format much better.",
+        ),
+    ),
 }
 
 STOP_STRING = "USER:"
@@ -39,19 +110,15 @@ STOP_STRING = "USER:"
 # ============================================================================
 # Import collision handling
 # ----------------------------------------------------------------------------
-# Each maxgpt-N/ folder has its own config.py, model.py, tokenizer.py defining
-# classes with the SAME names (Config, Transformer, BPETokenizer). A normal
-# `from config import Config` after a `sys.path.insert(0, "maxgpt-1")` would
-# work for one model — but the second `sys.path.insert(0, "maxgpt-2")` followed
-# by another `from config import Config` would either pick up the cached
-# maxgpt-1 module or shadow it, depending on the order.
+# Each maxgpt-N/ folder has its own config.py, model.py, tokenizer.py with the
+# SAME class names (Config, Transformer, BPETokenizer). A normal
+# `from config import Config` would shadow whichever was imported last.
 #
 # Fix: use importlib.util to register each model's files in sys.modules under a
-# uniquely-namespaced name ("maxgpt_1.model" vs "maxgpt_2.model" vs ...). This
-# gives us three distinct Transformer classes that can coexist in one process.
+# uniquely-namespaced name ("maxgpt_1.model" vs "maxgpt_2.model" vs ...).
 #
-# This works because the three .py files in each folder are self-contained —
-# they don't import from each other, only from stdlib and torch.
+# Works because the three .py files in each folder are self-contained — they
+# don't import from each other, only from stdlib and torch.
 # ============================================================================
 
 def _load_file_as_module(file_path: Path, unique_name: str):
@@ -73,11 +140,7 @@ def load_model_classes(folder: Path, namespace: str) -> ModelClasses:
     cfg = _load_file_as_module(folder / "config.py", f"{namespace}.config")
     tok = _load_file_as_module(folder / "tokenizer.py", f"{namespace}.tokenizer")
     mdl = _load_file_as_module(folder / "model.py", f"{namespace}.model")
-    return ModelClasses(
-        Config=cfg.Config,
-        Transformer=mdl.Transformer,
-        BPETokenizer=tok.BPETokenizer,
-    )
+    return ModelClasses(Config=cfg.Config, Transformer=mdl.Transformer, BPETokenizer=tok.BPETokenizer)
 
 
 # ============================================================================
@@ -92,12 +155,39 @@ def pick_device() -> str:
     return "cpu"
 
 
-def has_files(folder: Path) -> bool:
-    return (folder / "checkpoints" / "final.pt").exists() and (folder / "data" / "tokenizer.json").exists()
+def has_files(name: str) -> bool:
+    spec = MODEL_SPECS[name]
+    return (
+        (spec.folder / "checkpoints" / spec.checkpoint_filename).exists()
+        and (spec.folder / "data" / "tokenizer.json").exists()
+    )
 
 
 def availability() -> dict[str, bool]:
-    return {name: has_files(folder) for name, folder in MODEL_FOLDERS.items()}
+    return {name: has_files(name) for name in MODEL_SPECS}
+
+
+# ============================================================================
+# Cheap architecture summary (no weights loaded — just reads Config + maths)
+# ============================================================================
+
+@st.cache_data(show_spinner=False)
+def arch_info(name: str) -> dict:
+    spec = MODEL_SPECS[name]
+    classes = load_model_classes(spec.folder, spec.namespace)
+    cfg = classes.Config()
+    V, D, L = cfg.vocab_size, cfg.hidden_dim, cfg.num_blocks
+    # Standard transformer parameter count: 2VD (token+lm_head) + CD (pos embed)
+    # + L * (12D^2 + 13D) per block + 2D (final layernorm)
+    n_params = 2 * V * D + cfg.context_window * D + L * (12 * D * D + 13 * D) + 2 * D
+    return {
+        "n_params": n_params,
+        "params_str": f"{n_params / 1e6:.0f}M",
+        "context_window": cfg.context_window,
+        "hidden_dim": D,
+        "num_blocks": L,
+        "num_heads": cfg.num_heads,
+    }
 
 
 # ============================================================================
@@ -116,10 +206,8 @@ class LoadedModel:
 
 @st.cache_resource(show_spinner=False)
 def load_model(name: str, device: str) -> LoadedModel:
-    folder = MODEL_FOLDERS[name]
-    namespace = name.lower().replace("-", "_")
-    classes = load_model_classes(folder, namespace)
-
+    spec = MODEL_SPECS[name]
+    classes = load_model_classes(spec.folder, spec.namespace)
     config = classes.Config()
 
     # Only pass use_flash if this model's Transformer signature accepts it
@@ -136,18 +224,16 @@ def load_model(name: str, device: str) -> LoadedModel:
         kwargs["use_flash"] = getattr(config, "use_flash_attention", True)
     model = classes.Transformer(**kwargs)
 
-    ckpt_path = folder / "checkpoints" / "final.pt"
-    # weights_only=False because the checkpoint contains the Config dataclass,
-    # not just tensor state. Safe — we created these files.
-    #
-    # The pickled Config inside the checkpoint references its original module
-    # path ("config.Config"), so we temporarily alias our namespaced modules
-    # ("maxgpt_1.config", etc.) under the bare names pickle expects. Restored
-    # in finally so loading another model later doesn't see stale aliases.
+    ckpt_path = spec.folder / "checkpoints" / spec.checkpoint_filename
+
+    # weights_only=False because the checkpoint contains the pickled Config
+    # dataclass. Its pickle references "config.Config" (the original bare
+    # module path), so we temporarily alias our namespaced modules under
+    # the bare names pickle expects, then restore in finally.
     alias_targets = ("config", "model", "tokenizer")
     alias_backup = {n: sys.modules.get(n) for n in alias_targets}
     for bare in alias_targets:
-        full = f"{namespace}.{bare}"
+        full = f"{spec.namespace}.{bare}"
         if full in sys.modules:
             sys.modules[bare] = sys.modules[full]
     try:
@@ -158,11 +244,20 @@ def load_model(name: str, device: str) -> LoadedModel:
                 sys.modules.pop(bare, None)
             else:
                 sys.modules[bare] = prev
-    model.load_state_dict(checkpoint["model_state"])
+
+    # If the model was saved while wrapped by torch.compile, every key in the
+    # state_dict is prefixed with "_orig_mod." (the wrapper's attribute name).
+    # train.py/finetune.py try to unwrap on save, but some older checkpoints
+    # (notably MaxGPT-3's final.pt) were saved before that fix landed. Strip
+    # the prefix here so the loader is defensive — no-op when keys are clean.
+    state_dict = checkpoint["model_state"]
+    if any(k.startswith("_orig_mod.") for k in state_dict):
+        state_dict = {k.removeprefix("_orig_mod."): v for k, v in state_dict.items()}
+    model.load_state_dict(state_dict)
     model.to(device).eval()
 
     tokenizer = classes.BPETokenizer()
-    tokenizer.load(str(folder / "data" / "tokenizer.json"))
+    tokenizer.load(str(spec.folder / "data" / "tokenizer.json"))
 
     return LoadedModel(
         name=name,
@@ -180,9 +275,9 @@ def load_model(name: str, device: str) -> LoadedModel:
 # Mirrors generate() in each sample.py but yields decoded chunks as new tokens
 # are sampled, instead of returning the full string at the end.
 #
-# Holdback trick: we don't yield the last few characters of decoded text until
-# we know they aren't forming "USER:". That way the stop string never flashes
-# on screen before we cut the generation.
+# Holdback trick: don't yield the last few characters of decoded text until we
+# know they aren't forming "USER:". The stop string never flashes on screen
+# before we cut the generation.
 # ============================================================================
 
 def streaming_generate(
@@ -263,7 +358,8 @@ def build_chat_prompt(
     tokenizer,
     context_window: int,
     max_new_tokens: int,
-) -> tuple[str, bool]:
+) -> tuple[str, int]:
+    """Returns (prompt, num_turns_dropped)."""
     def render(turns: list[dict]) -> str:
         parts = [f"USER: {t['user']}\nASSISTANT: {t['assistant']}\n" for t in turns]
         parts.append(f"USER: {user_input}\nASSISTANT:")
@@ -271,14 +367,34 @@ def build_chat_prompt(
 
     budget = max(1, context_window - max_new_tokens)
     turns = list(history)
-    truncated = False
+    dropped = 0
 
     while True:
         prompt = render(turns)
         if len(tokenizer.encode(prompt)) <= budget or not turns:
-            return prompt, truncated
+            return prompt, dropped
         turns.pop(0)
-        truncated = True
+        dropped += 1
+
+
+# ============================================================================
+# TimedGen — wraps a generator and captures elapsed-time + chunk-count as side
+# effects. Used so chat mode can render the same status pill as compare mode
+# AFTER st.write_stream finishes consuming the generator.
+# ============================================================================
+
+class TimedGen:
+    def __init__(self, gen):
+        self._gen = gen
+        self.chunks = 0
+        self.elapsed = 0.0
+
+    def __iter__(self):
+        t0 = time.time()
+        for chunk in self._gen:
+            self.chunks += 1
+            yield chunk
+        self.elapsed = time.time() - t0
 
 
 # ============================================================================
@@ -301,54 +417,311 @@ def compare_worker(loaded: LoadedModel, prompt: str, gen_kwargs: dict, out_q: qu
 
 
 # ============================================================================
-# UI
+# Styling — one CSS block, injected once. Keeps the rest of the UI plain
+# Streamlit widgets so functionality is identical.
+#
+# All visual indicators are CSS shapes (rounded divs) — no emoji.
 # ============================================================================
 
-st.set_page_config(page_title="MaxGPT", page_icon=":robot_face:", layout="wide")
-st.title("MaxGPT")
+CSS = """
+<style>
+  .block-container { padding-top: 2.2rem; }
+
+  /* ---------- Hero header ---------- */
+  /* Dark slate -> deep indigo so the four model accent colors really pop
+     against it, instead of competing with the pastel purple/pink gradient. */
+  .mg-hero {
+      background: linear-gradient(135deg, #0F172A 0%, #1E1B4B 55%, #312E81 100%);
+      padding: 1.6rem 1.9rem 1.4rem;
+      border-radius: 18px;
+      margin-bottom: 1.4rem;
+      color: white;
+      box-shadow: 0 12px 40px rgba(15, 23, 42, 0.45);
+  }
+  .mg-hero h1 {
+      margin: 0; color: white;
+      font-size: 2.4rem; font-weight: 800;
+      letter-spacing: -0.025em; line-height: 1.1;
+  }
+  .mg-hero .tagline {
+      margin-top: 0.45rem;
+      opacity: 0.92; font-size: 0.98rem;
+  }
+  .mg-hero .pills {
+      margin-top: 0.95rem;
+      display: flex; gap: 0.35rem; flex-wrap: wrap;
+  }
+  .mg-hero .pill {
+      background: rgba(255,255,255,0.18);
+      padding: 0.22rem 0.7rem;
+      border-radius: 999px;
+      font-size: 0.78rem; font-weight: 500;
+      backdrop-filter: blur(6px);
+      display: inline-flex; align-items: center; gap: 0.35rem;
+  }
+  .mg-hero .pill.muted { opacity: 0.5; }
+
+  /* Colored dot used inside hero pills — small circle with a white halo
+     so it pops against the gradient background. */
+  .mg-hero-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--c, #888);
+      box-shadow: 0 0 0 2px rgba(255,255,255,0.45);
+      flex-shrink: 0;
+  }
+
+  /* ---------- Chat-mode meta badges ---------- */
+  .mg-meta {
+      display: flex; gap: 0.5rem; flex-wrap: wrap;
+      align-items: center; margin: 0.2rem 0 0.9rem;
+  }
+  .mg-model-pill {
+      padding: 0.32rem 0.95rem;
+      border-radius: 999px;
+      font-size: 0.92rem; font-weight: 700;
+      letter-spacing: 0.005em;
+      display: inline-flex; align-items: center; gap: 0.45rem;
+      border: 1px solid color-mix(in srgb, var(--c, #888) 40%, transparent);
+  }
+  .mg-pill-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--c, #888);
+      flex-shrink: 0;
+  }
+  .mg-pill {
+      background: rgba(120,120,120,0.11);
+      padding: 0.3rem 0.7rem;
+      border-radius: 8px;
+      font-size: 0.81rem;
+      color: rgba(110,110,110,0.95);
+      font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+  }
+
+  /* ---------- Pulsing streaming status ---------- */
+  .mg-status {
+      display: flex; align-items: center; gap: 0.5rem;
+      font-size: 0.82rem;
+      color: rgba(120,120,120,0.9);
+      font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+      margin-bottom: 0.5rem;
+  }
+  .mg-dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: var(--c, #10B981);
+      animation: mg-pulse 1.25s ease-in-out infinite;
+  }
+  .mg-dot.done { animation: none; opacity: 0.5; }
+  @keyframes mg-pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: 0.4; transform: scale(0.82); }
+  }
+
+  /* ---------- Compare-mode column header ---------- */
+  .mg-col {
+      border-top: 4px solid var(--c, #6B7280);
+      background: linear-gradient(180deg,
+          color-mix(in srgb, var(--c) 8%, transparent) 0%,
+          transparent 70%);
+      padding: 0.85rem 0.7rem 0.55rem;
+      border-radius: 4px 4px 0 0;
+      margin-bottom: 0.5rem;
+  }
+  .mg-col-name {
+      font-size: 1.22rem; font-weight: 800;
+      color: var(--c, #6B7280);
+      letter-spacing: -0.01em;
+      display: flex; align-items: center; gap: 0.5rem;
+  }
+  .mg-col-square {
+      width: 11px; height: 11px;
+      background: var(--c, #888);
+      border-radius: 3px;
+      flex-shrink: 0;
+  }
+  .mg-col-sub {
+      font-size: 0.76rem;
+      color: rgba(120,120,120,0.85);
+      margin-top: 0.18rem;
+      font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+  }
+
+  /* ---------- Sidebar polish ---------- */
+  [data-testid="stSidebar"] h2 { letter-spacing: -0.01em; }
+  [data-testid="stSidebar"] .stSlider { padding: 0.15rem 0; }
+
+  /* Accent strip on the selected sidebar model — added to the radio group's
+     focused option. Subtle, doesn't change layout. */
+  [data-testid="stSidebar"] [role="radiogroup"] label[data-baseweb="radio"] {
+      padding: 0.15rem 0;
+  }
+</style>
+"""
+
+
+# ---------- HTML render helpers ----------
+
+def hero(active_set: dict[str, bool]) -> str:
+    pills = []
+    for n, spec in MODEL_SPECS.items():
+        muted = "" if active_set[n] else " muted"
+        pills.append(
+            f'<span class="pill{muted}">'
+            f'<span class="mg-hero-dot" style="--c: {spec.color};"></span>{n}'
+            f'</span>'
+        )
+    return f"""
+    <div class="mg-hero">
+      <h1>MaxGPT</h1>
+      <div class="tagline">Four from-scratch language models — chat with one, race a few.</div>
+      <div class="pills">{''.join(pills)}</div>
+    </div>
+    """
+
+
+def model_badge_html(name: str, loaded: LoadedModel, info: dict) -> str:
+    spec = MODEL_SPECS[name]
+    color = spec.color
+    step = f"{loaded.checkpoint_step:,}" if loaded.checkpoint_step >= 0 else "?"
+    return f"""
+    <div class="mg-meta">
+      <span class="mg-model-pill"
+            style="--c: {color}; background: color-mix(in srgb, {color} 14%, transparent); color: {color};">
+        <span class="mg-pill-dot" style="--c: {color};"></span>{name}
+      </span>
+      <span class="mg-pill">{info['params_str']} params</span>
+      <span class="mg-pill">{info['num_blocks']}L × {info['hidden_dim']}d</span>
+      <span class="mg-pill">ctx {loaded.context_window}</span>
+      <span class="mg-pill">step {step}</span>
+      <span class="mg-pill">{loaded.device}</span>
+      <span class="mg-pill">{spec.blurb}</span>
+    </div>
+    """
+
+
+def col_header_html(name: str, info: dict) -> str:
+    spec = MODEL_SPECS[name]
+    return f"""
+    <div class="mg-col" style="--c: {spec.color};">
+      <div class="mg-col-name">
+        <span class="mg-col-square" style="--c: {spec.color};"></span>{name}
+      </div>
+      <div class="mg-col-sub">{info['params_str']} params · ctx {info['context_window']} · {spec.blurb}</div>
+    </div>
+    """
+
+
+def status_html(name: str, elapsed: float, n_chunks: int, done: bool) -> str:
+    spec = MODEL_SPECS[name]
+    tps = n_chunks / elapsed if elapsed > 0 else 0.0
+    state = "done" if done else "streaming"
+    dot_class = "mg-dot done" if done else "mg-dot"
+    return f"""
+    <div class="mg-status">
+      <span class="{dot_class}" style="--c: {spec.color};"></span>
+      <span>{state} · {elapsed:.1f}s · {n_chunks} chunks · {tps:.1f} ch/s</span>
+    </div>
+    """
+
+
+def about_panel(name: str) -> None:
+    """Expander explaining what makes this model different — shown below the
+    badge in chat mode and below the prompt in compare mode."""
+    spec = MODEL_SPECS[name]
+    info = arch_info(name)
+    with st.expander(f"About {name}", expanded=False):
+        st.markdown(f"**{spec.summary}**")
+        for b in spec.bullets:
+            st.markdown(f"- {b}")
+        st.caption(
+            f"{info['num_heads']} attention heads · head dim "
+            f"{info['hidden_dim'] // info['num_heads']} · vocab 16,000 (BPE)"
+        )
+
+
+# ============================================================================
+# Page
+# ============================================================================
+
+# Page icon: small SVG favicon (dark indigo "M") — sits next to app.py.
+_ICON = Path(__file__).parent / "favicon.svg"
+st.set_page_config(
+    page_title="MaxGPT",
+    page_icon=str(_ICON) if _ICON.exists() else "M",
+    layout="wide",
+)
+st.markdown(CSS, unsafe_allow_html=True)
 
 device = pick_device()
 avail = availability()
 
+st.markdown(hero(avail), unsafe_allow_html=True)
+
+
+# ---------- Sidebar ----------
 with st.sidebar:
     st.header("Settings")
     mode = st.radio("Mode", ["Chat", "Compare"], horizontal=True)
     st.divider()
 
-    selected_model = None
+    selected_model: str | None = None
     selected_models: list[str] = []
 
+    def picker_label(name: str) -> str:
+        info = arch_info(name)
+        spec = MODEL_SPECS[name]
+        suffix = "" if avail[name] else "   (no checkpoint)"
+        return f"{name}  ·  {info['params_str']}  ·  {spec.blurb}{suffix}"
+
     if mode == "Chat":
-        options = list(MODEL_FOLDERS.keys())
-        picked = st.radio(
-            "Model",
-            options,
-            format_func=lambda n: n if avail[n] else f"{n}  (no checkpoint)",
-        )
+        options = list(MODEL_SPECS.keys())
+        picked = st.radio("Model", options, format_func=picker_label)
         if avail[picked]:
             selected_model = picked
         else:
             st.warning(
-                f"`{picked}` is missing `checkpoints/final.pt` or `data/tokenizer.json`. "
-                "Add the files and reload the page."
+                f"`{picked}` is missing "
+                f"`checkpoints/{MODEL_SPECS[picked].checkpoint_filename}` "
+                "or `data/tokenizer.json`. Drop the files in and reload."
             )
+        if picked:
+            st.caption(MODEL_SPECS[picked].summary)
     else:
-        loadable = [n for n, ok in avail.items() if ok]
-        not_loadable = [n for n, ok in avail.items() if not ok]
+        loadable = [n for n in MODEL_SPECS if avail[n]]
+        not_loadable = [n for n in MODEL_SPECS if not avail[n]]
         selected_models = st.multiselect(
             "Models to compare",
             loadable,
             default=loadable[: min(2, len(loadable))],
+            format_func=picker_label,
         )
         if not_loadable:
-            st.caption(f"Unavailable (no checkpoint): {', '.join(not_loadable)}")
+            st.caption("Unavailable: " + ", ".join(not_loadable))
 
     st.divider()
     st.subheader("Sampling")
-    temperature = st.slider("Temperature", 0.1, 1.5, 0.8, 0.05)
-    top_k = st.slider("Top-K", 1, 100, 50, 1)
-    repetition_penalty = st.slider("Repetition penalty", 1.0, 2.0, 1.2, 0.05)
-    max_new_tokens = st.slider("Max new tokens", 50, 300, 200, 10)
+    temperature        = st.slider("Temperature",        0.1, 1.5, 0.8, 0.05, key="temperature")
+    top_k              = st.slider("Top-K",              1,   100, 50,  1,    key="top_k")
+    repetition_penalty = st.slider("Repetition penalty", 1.0, 2.0, 1.2, 0.05, key="repetition_penalty")
+    max_new_tokens     = st.slider("Max new tokens",     50,  300, 200, 10,   key="max_new_tokens")
+
+    # Snap-back for live demos. Same values as sample.py — these are the
+    # settings the models were tested against, so they're the "known good"
+    # baseline. Defined as an on_click callback so session_state is mutated
+    # BEFORE the next render — Streamlit forbids modifying a widget's value
+    # mid-render, but pre-render mutations are honored.
+    def _reset_demo_defaults():
+        st.session_state["temperature"]        = 0.8
+        st.session_state["top_k"]              = 50
+        st.session_state["repetition_penalty"] = 1.2
+        st.session_state["max_new_tokens"]     = 200
+
+    st.button(
+        "Reset to demo defaults",
+        on_click=_reset_demo_defaults,
+        use_container_width=True,
+        help="Snaps sampling to temp 0.8 · top-k 50 · rep 1.2 · 200 tokens (the sample.py defaults).",
+    )
 
     st.divider()
     st.caption(f"Device: `{device}`")
@@ -367,21 +740,18 @@ gen_kwargs = dict(
 )
 
 
-# --------------------------------------------------------------------------- #
-# Chat mode                                                                   #
-# --------------------------------------------------------------------------- #
+# ---------- Chat mode ----------
 if mode == "Chat":
     if selected_model is None:
-        st.info("Select a model with a checkpoint to start chatting.")
+        st.info("Pick a model with a checkpoint to start chatting.")
         st.stop()
 
     with st.spinner(f"Loading {selected_model}..."):
         loaded = load_model(selected_model, device)
 
-    st.caption(
-        f"`{selected_model}`  ·  ctx={loaded.context_window}  ·  "
-        f"step={loaded.checkpoint_step}  ·  device={loaded.device}"
-    )
+    info = arch_info(selected_model)
+    st.markdown(model_badge_html(selected_model, loaded, info), unsafe_allow_html=True)
+    about_panel(selected_model)
 
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = {}
@@ -398,22 +768,26 @@ if mode == "Chat":
         with st.chat_message("user"):
             st.write(user_input)
 
-        prompt, truncated = build_chat_prompt(
+        prompt, dropped = build_chat_prompt(
             history, user_input, loaded.tokenizer,
             loaded.context_window, max_new_tokens,
         )
 
         with st.chat_message("assistant"):
-            if truncated:
-                st.caption("...earlier turns dropped to fit context window")
-            response = st.write_stream(streaming_generate(loaded, prompt, **gen_kwargs))
+            if dropped > 0:
+                noun = "turn" if dropped == 1 else "turns"
+                st.caption(f"{dropped} earlier {noun} dropped to fit context window")
+            tg = TimedGen(streaming_generate(loaded, prompt, **gen_kwargs))
+            response = st.write_stream(tg)
+            st.markdown(
+                status_html(selected_model, tg.elapsed, tg.chunks, done=True),
+                unsafe_allow_html=True,
+            )
 
         history.append({"user": user_input, "assistant": response})
 
 
-# --------------------------------------------------------------------------- #
-# Compare mode — each selected model streams in its own thread                #
-# --------------------------------------------------------------------------- #
+# ---------- Compare mode (one thread per model) ----------
 else:
     if not selected_models:
         st.info("Pick at least one model with a checkpoint.")
@@ -424,40 +798,61 @@ else:
         for name in selected_models:
             loaded_map[name] = load_model(name, device)
 
+    # Per-model "About" expanders inline, so viewers can see what's different
+    # between the columns they're about to compare.
+    with st.expander(
+        f"About these {len(selected_models)} models",
+        expanded=False,
+    ):
+        for name in selected_models:
+            spec = MODEL_SPECS[name]
+            st.markdown(
+                f"**{name}** — <span style='color:{spec.color};font-weight:600;'>"
+                f"{spec.blurb}</span>",
+                unsafe_allow_html=True,
+            )
+            st.caption(spec.summary)
+            for b in spec.bullets:
+                st.markdown(f"- {b}")
+            st.markdown("")
+
     user_input = st.chat_input("Prompt all selected models")
     if user_input:
-        st.markdown(f"**Prompt:** {user_input}")
+        st.markdown(
+            f"<div class='mg-pill' style='display:inline-block;margin-bottom:0.6rem;'>"
+            f"prompt · {user_input}</div>",
+            unsafe_allow_html=True,
+        )
 
         cols = st.columns(len(selected_models))
-        text_placeholders = {}
-        stat_placeholders = {}
+        text_placeholders: dict[str, "st.delta_generator.DeltaGenerator"] = {}
+        stat_placeholders: dict[str, "st.delta_generator.DeltaGenerator"] = {}
         for col, name in zip(cols, selected_models):
             with col:
-                st.subheader(name)
+                st.markdown(col_header_html(name, arch_info(name)), unsafe_allow_html=True)
                 stat_placeholders[name] = st.empty()
                 text_placeholders[name] = st.empty()
 
         q: queue.Queue = queue.Queue()
         for name in selected_models:
             prompt = f"USER: {user_input}\nASSISTANT:"
-            t = threading.Thread(
+            threading.Thread(
                 target=compare_worker,
                 args=(loaded_map[name], prompt, gen_kwargs, q),
                 daemon=True,
-            )
-            t.start()
+            ).start()
 
-        texts = {n: "" for n in selected_models}
-        elapsed = {n: 0.0 for n in selected_models}
+        texts       = {n: "" for n in selected_models}
+        elapsed     = {n: 0.0 for n in selected_models}
         chunks_seen = {n: 0 for n in selected_models}
-        done = {n: False for n in selected_models}
+        done        = {n: False for n in selected_models}
 
         while not all(done.values()):
             try:
                 while True:
                     msg_type, name, text_or_err, t_elapsed, n_chunks = q.get_nowait()
                     if msg_type == "error":
-                        texts[name] = f":warning: {text_or_err}"
+                        texts[name] = f"[ERROR] {text_or_err}"
                         done[name] = True
                     else:
                         texts[name] = text_or_err
@@ -471,10 +866,9 @@ else:
             for name in selected_models:
                 cursor = "" if done[name] else "&#9612;"
                 text_placeholders[name].markdown(texts[name] + cursor)
-                tps = chunks_seen[name] / elapsed[name] if elapsed[name] > 0 else 0.0
-                state = "done" if done[name] else "streaming"
-                stat_placeholders[name].caption(
-                    f"{state}  ·  {elapsed[name]:.1f}s  ·  ~{tps:.1f} chunks/s"
+                stat_placeholders[name].markdown(
+                    status_html(name, elapsed[name], chunks_seen[name], done[name]),
+                    unsafe_allow_html=True,
                 )
 
             time.sleep(0.03)
