@@ -41,13 +41,21 @@ val_data = np.memmap("data/chat_val.bin", dtype=np.uint16, mode="r")
 _tokenizer = BPETokenizer()
 _tokenizer.load("data/tokenizer.json")
 
-# Encode role marker patterns. We use the "\n" prefix because EVERY role marker
-# in our training data is preceded by a newline (either from joining turns with
-# "\n" or from the document separator "\n\n###\n\n"). This makes detection
-# unambiguous — bare "USER:" appearing in some assistant response content won't
-# trigger a false role boundary.
-ASSISTANT_MARKER = np.array(_tokenizer.encode("\nASSISTANT:"), dtype=np.uint16)
-USER_MARKER = np.array(_tokenizer.encode("\nUSER:"), dtype=np.uint16)
+# Encode role marker patterns. We tried using "\nASSISTANT:" and "\nUSER:" with
+# a leading newline for unambiguous detection, but it failed: byte-level BPE
+# has NO pre-tokenization regex, so merges fire purely by global rank. The
+# tokenizer learned merges like (".", "\n"), ("?", "\n"), ("!", "\n") during
+# pre-training (these are very common in natural text). So in actual chat data,
+# "what is it?\nASSISTANT:" tokenizes as [..., <?\n_merged>, 504, 58, ...] —
+# the "\n" gets ABSORBED into a merge with the preceding punctuation character,
+# and the standalone [10, 504, 58] pattern from encoding "\nASSISTANT:" by
+# itself NEVER appears in the data. Result: 100% of tokens get masked.
+#
+# Fix: drop the "\n" prefix and just match on "ASSISTANT:" / "USER:". These
+# capitalized-name + colon patterns are essentially unique to role boundaries
+# in chat data — natural conversational text basically never contains them.
+ASSISTANT_MARKER = np.array(_tokenizer.encode("ASSISTANT:"), dtype=np.uint16)
+USER_MARKER = np.array(_tokenizer.encode("USER:"), dtype=np.uint16)
 
 # How far to look back in the token stream when sampling a chunk, so we know
 # the role state at the chunk's start. 2000 tokens reliably catches at least
