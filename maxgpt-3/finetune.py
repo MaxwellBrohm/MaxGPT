@@ -114,7 +114,11 @@ def main():
         )
     print(f"Loading pre-trained checkpoint from {base_ckpt_path}...")
     checkpoint = torch.load(base_ckpt_path, map_location=device, weights_only=False)
-    model.load_state_dict(checkpoint["model_state"])
+    state_dict = checkpoint["model_state"]
+    # Strip torch.compile's "_orig_mod." prefix if present (train.py's older code
+    # didn't strip it on save; this no-ops cleanly when prefix isn't there)
+    state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
+    model.load_state_dict(state_dict)
     base_step = checkpoint.get("step", 0)
     print(f"  Starting SFT from pre-training step {base_step:,}")
 

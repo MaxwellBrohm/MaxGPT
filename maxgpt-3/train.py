@@ -145,8 +145,14 @@ def main():
         
         # Periodic checkpoint
         if step % config.checkpoint_interval == 0 and step > 0:
+            # If model was wrapped by torch.compile, unwrap to save the underlying
+            # state_dict WITHOUT the "_orig_mod." prefix. Future loaders see clean keys.
+            state_dict_to_save = (
+                model._orig_mod.state_dict() if hasattr(model, "_orig_mod")
+                else model.state_dict()
+            )
             checkpoint = {
-                "model_state": model.state_dict(),
+                "model_state": state_dict_to_save,
                 "optimizer_state": optimizer.state_dict(),
                 "step": step,
                 "config": config,
@@ -155,9 +161,13 @@ def main():
             torch.save(checkpoint, path)
             print(f"  >> Saved checkpoint: {path}")
     
-    # Final checkpoint
+    # Final checkpoint — same unwrap-from-compile pattern as periodic checkpoints
+    state_dict_to_save = (
+        model._orig_mod.state_dict() if hasattr(model, "_orig_mod")
+        else model.state_dict()
+    )
     final_checkpoint = {
-        "model_state": model.state_dict(),
+        "model_state": state_dict_to_save,
         "optimizer_state": optimizer.state_dict(),
         "step": config.max_steps,
         "config": config,

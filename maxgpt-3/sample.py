@@ -113,7 +113,12 @@ def main():
     # weights_only=False because checkpoint contains the Config dataclass, not just weights.
     # Safe because we created the file ourselves.
     checkpoint = torch.load(config.checkpoint_dir + "/final.pt", map_location=device, weights_only=False)
-    model.load_state_dict(checkpoint["model_state"])
+    state_dict = checkpoint["model_state"]
+    # Strip torch.compile's "_orig_mod." prefix if the checkpoint was saved from a
+    # compiled model. (train.py's older code didn't strip it on save, so existing
+    # final.pt files have prefixed keys. This .replace() is a no-op if not present.)
+    state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
+    model.load_state_dict(state_dict)
     model = model.to(device)
     
     print(f"Loaded model from step {checkpoint['step']}")

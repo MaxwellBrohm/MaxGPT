@@ -83,7 +83,11 @@ def load_model_from_checkpoint(checkpoint_path, config, device):
     # weights_only=False because our checkpoints contain the Config dataclass
     # (not just tensor weights). Safe because we created these files ourselves.
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    model.load_state_dict(checkpoint["model_state"])
+    state_dict = checkpoint["model_state"]
+    # Strip torch.compile's "_orig_mod." prefix if present (train.py's older code
+    # didn't strip it on save; this no-ops cleanly when prefix isn't there)
+    state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
+    model.load_state_dict(state_dict)
     model = model.to(device)
     model.eval()
     # checkpoint["step"] tells us where in training this snapshot was saved
