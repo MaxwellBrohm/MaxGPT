@@ -97,9 +97,12 @@ MODEL_SPECS: dict[str, ModelSpec] = {
         blurb="SFT chat-tuned",
         summary="235M params · same architecture as MaxGPT-3 · SFT-fine-tuned",
         bullets=(
-            "Starts from MaxGPT-3's weights, then continues training on chat-only data.",
-            "~2.4B chat tokens (300K SFT steps at lr=5e-5, 4× smaller than pre-training lr).",
-            "Same knowledge as MaxGPT-3 — but follows the USER/ASSISTANT format much better.",
+            "Starts from MaxGPT-3's weights, then continues on chat-only data "
+            "(~2.4B tokens, 300K SFT steps at lr=5e-5, loss masked to assistant turns).",
+            "Best at sustained conversation: resolves cross-turn references "
+            "(\"feed HIM\" → the puppy) ~4× more reliably than base, and stays on-topic in follow-ups.",
+            "A trade-off (per blind eval): more assistant-like and factually structured, but "
+            "more verbose — base MaxGPT-3 still wins on concise, open-ended single-turn replies.",
         ),
     ),
 }
@@ -221,7 +224,11 @@ def load_model(name: str, device: str) -> LoadedModel:
         num_blocks=config.num_blocks,
     )
     if "use_flash" in sig.parameters:
-        kwargs["use_flash"] = getattr(config, "use_flash_attention", True)
+        # Flash/Efficient SDPA backends are CUDA-only. On MPS/CPU (e.g. running
+        # the demo on the Mac) force the manual-attention path, otherwise the
+        # forced sdpa_kernel([FLASH, EFFICIENT]) context in model.py raises
+        # "no viable backend." Manual attention is fine for inference.
+        kwargs["use_flash"] = getattr(config, "use_flash_attention", True) and device == "cuda"
     model = classes.Transformer(**kwargs)
 
     ckpt_path = spec.folder / "checkpoints" / spec.checkpoint_filename
@@ -675,7 +682,13 @@ with st.sidebar:
 
     if mode == "Chat":
         options = list(MODEL_SPECS.keys())
-        picked = st.radio("Model", options, format_func=picker_label)
+        # Default to MaxGPT-3.5 (flagship chatbot) if available, else the
+        # largest available model.
+        _pref = next(
+            (n for n in ["MaxGPT-3.5", "MaxGPT-3", "MaxGPT-2", "MaxGPT-1"] if avail.get(n)),
+            options[0],
+        )
+        picked = st.radio("Model", options, index=options.index(_pref), format_func=picker_label)
         if avail[picked]:
             selected_model = picked
         else:
@@ -689,10 +702,14 @@ with st.sidebar:
     else:
         loadable = [n for n in MODEL_SPECS if avail[n]]
         not_loadable = [n for n in MODEL_SPECS if not avail[n]]
+        # Default to the flagship matchup: MaxGPT-3.5 vs MaxGPT-3 (SFT vs base).
+        # Fall back to the first two available if that pair isn't present.
+        _pair = [n for n in ["MaxGPT-3.5", "MaxGPT-3"] if n in loadable]
+        _compare_default = _pair if len(_pair) == 2 else loadable[: min(2, len(loadable))]
         selected_models = st.multiselect(
             "Models to compare",
             loadable,
-            default=loadable[: min(2, len(loadable))],
+            default=_compare_default,
             format_func=picker_label,
         )
         if not_loadable:
