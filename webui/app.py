@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import json
+import datetime
 import queue
 import sys
 import threading
@@ -744,6 +746,10 @@ with st.sidebar:
     st.caption(f"Device: `{device}`")
 
     if mode == "Chat" and selected_model is not None:
+        st.session_state["collect_feedback"] = st.toggle(
+            "Collect feedback (training data)", value=True,
+            help="Logs your 1-5 ratings to webui/feedback.jsonl so you can fine-tune on them later. Does not train the model live.",
+        )
         if st.button("Clear chat", use_container_width=True):
             st.session_state.get("chat_history", {}).pop(selected_model, None)
             st.rerun()
@@ -755,6 +761,41 @@ gen_kwargs = dict(
     top_k=top_k,
     repetition_penalty=repetition_penalty,
 )
+
+
+# ============================================================================
+# Feedback collection. Logs ratings to webui/feedback.jsonl for LATER offline
+# fine-tuning (this does NOT train the model live; it only gathers data, the
+# safe approach we settled on: collect now, batch-train on the good ones later).
+# ============================================================================
+FEEDBACK_PATH = Path(__file__).parent / "feedback.jsonl"
+
+
+def log_feedback(model: str, prompt: str, response: str, rating: int) -> None:
+    rec = {
+        "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+        "model": model,
+        "rating": rating,            # 1 (bad) to 5 (great), magnitude for future LR scaling
+        "prompt": prompt,
+        "response": response,
+    }
+    with open(FEEDBACK_PATH, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def feedback_ui(model: str, idx: int, turn: dict) -> None:
+    logged = st.session_state.setdefault("fb_logged", set())
+    fid = f"{model}::{idx}"
+    if fid in logged:
+        st.caption("rating saved, thanks!")
+        return
+    st.caption("Rate this reply (1 = bad, 5 = great):")
+    c1, c2 = st.columns([4, 1])
+    rating = c1.slider("rating", 1, 5, 3, key=f"rate_{fid}", label_visibility="collapsed")
+    if c2.button("Save", key=f"save_{fid}", use_container_width=True):
+        log_feedback(model, f"USER: {turn['user']}\nASSISTANT:", turn["assistant"], rating)
+        logged.add(fid)
+        st.rerun()
 
 
 # ---------- Chat mode ----------
@@ -774,11 +815,14 @@ if mode == "Chat":
         st.session_state.chat_history = {}
     history = st.session_state.chat_history.setdefault(selected_model, [])
 
-    for turn in history:
+    collect_feedback = st.session_state.get("collect_feedback", True)
+    for i, turn in enumerate(history):
         with st.chat_message("user"):
             st.write(turn["user"])
         with st.chat_message("assistant"):
             st.write(turn["assistant"])
+            if collect_feedback:
+                feedback_ui(selected_model, i, turn)
 
     user_input = st.chat_input(f"Talk to {selected_model}")
     if user_input:
@@ -800,8 +844,10 @@ if mode == "Chat":
                 status_html(selected_model, tg.elapsed, tg.chunks, done=True),
                 unsafe_allow_html=True,
             )
-
-        history.append({"user": user_input, "assistant": response})
+            new_turn = {"user": user_input, "assistant": response}
+            history.append(new_turn)
+            if st.session_state.get("collect_feedback", True):
+                feedback_ui(selected_model, len(history) - 1, new_turn)
 
 
 # ---------- Compare mode (one thread per model) ----------
