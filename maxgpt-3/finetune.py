@@ -113,14 +113,22 @@ def main():
             "produce a pre-trained model, then run this script to fine-tune it."
         )
     print(f"Loading pre-trained checkpoint from {base_ckpt_path}...")
-    checkpoint = torch.load(base_ckpt_path, map_location=device, weights_only=False)
+    # Load to CPU first — the checkpoint includes ~1.88 GB of pre-train optimizer
+    # state we don't need (SFT uses a fresh optimizer). Loading with map_location=
+    # device burned that into VRAM and pushed us over the 12 GB cap on step 1's
+    # forward pass ("CUDA driver error: device not ready" inside MLP fc1).
+    checkpoint = torch.load(base_ckpt_path, map_location="cpu", weights_only=False)
     state_dict = checkpoint["model_state"]
     # Strip torch.compile's "_orig_mod." prefix if present (train.py's older code
     # didn't strip it on save; this no-ops cleanly when prefix isn't there)
     state_dict = {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
-    model.load_state_dict(state_dict)
+    model.load_state_dict(state_dict)   # model is on GPU, this copies CPU → GPU
     base_step = checkpoint.get("step", 0)
     print(f"  Starting SFT from pre-training step {base_step:,}")
+    # Free CPU memory + force GPU cleanup before training begins
+    del checkpoint, state_dict
+    import gc; gc.collect()
+    torch.cuda.empty_cache()
 
     # Compile after loading weights (compile + load_state_dict order matters)
     if config.use_torch_compile and device.startswith("cuda"):

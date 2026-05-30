@@ -237,8 +237,10 @@ if __name__ == "__main__":
     print(f"  Total target positions: {n_total}")
     print(f"  Trained on (assistant): {n_trained} ({n_trained/n_total:.1%})")
     print(f"  Masked out (user/markers): {n_masked} ({n_masked/n_total:.1%})")
-    print(f"\nExpected: roughly 30-60% of tokens trained on (assistant responses)")
-    print(f"If this is way off (e.g., 0% or 100%), something's wrong with marker detection.")
+    print(f"\nExpected: roughly 70-90% of tokens trained on (assistant responses).")
+    print(f"Chat data is dominated by long assistant turns (~500-1500 tokens) vs.")
+    print(f"short user turns (~50-150 tokens), so most tokens SHOULD be assistant.")
+    print(f"If this is 0% or 100%, marker detection is broken.")
 
     # Show a chunk of the actual target tokens and which ones survived masking
     print(f"\nFirst 30 positions of y[0]:")
