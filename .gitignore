@@ -7,4 +7,5 @@ checkpoints/
 .env
 .deck_build/
 webui-venv/
+webui/feedback.jsonl
 
