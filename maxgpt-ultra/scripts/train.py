@@ -29,6 +29,9 @@ def main() -> None:
     ap.add_argument("--max-steps", type=int, default=None, help="optional cap (for testing)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--stop-file", default=None, help="if this file appears, checkpoint and exit (GUI pause)")
+    ap.add_argument("--eval-data", default=None, help="held-out shard dir for periodic val perplexity")
+    ap.add_argument("--eval-every", type=int, default=0, help="run eval every N steps")
+    ap.add_argument("--tokenizer", default=None, help="tokenizer json (enables sample generations in eval)")
     args = ap.parse_args()
 
     with open(args.config) as f:
@@ -41,7 +44,21 @@ def main() -> None:
 
     model = MaxGPTUltra(mcfg)
     data = PackedShardDataset(args.data, mcfg.seq_len)
-    trainer = Trainer(model, data, tcfg, device, args.out, seed=args.seed, stop_file=args.stop_file)
+
+    eval_fn = None
+    if args.eval_data:
+        from eval.harness import evaluate
+        from tokenizer.tokenizer import UltraTokenizer
+        val_data = PackedShardDataset(args.eval_data, mcfg.seq_len)
+        etok = UltraTokenizer(args.tokenizer) if args.tokenizer else None
+        prompts = ["The meaning of life is", "Once upon a time", "def add(a, b):"] if etok else None
+        eval_fn = lambda m, step: evaluate(m, tokenizer=etok, val_data=val_data,
+                                           sample_prompts=prompts, device=device)
+        if args.eval_every:
+            tcfg["eval_every"] = args.eval_every
+
+    trainer = Trainer(model, data, tcfg, device, args.out, eval_fn=eval_fn,
+                      seed=args.seed, stop_file=args.stop_file)
     resumed = trainer.resume_if_available()
 
     import signal

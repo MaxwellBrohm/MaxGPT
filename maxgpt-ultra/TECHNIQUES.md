@@ -375,9 +375,42 @@ trainable here. The prototype uses plain AdamW.
 - ☐ **Quantization** (GGUF / llama.cpp): fast local serving
 - ☐ **Sampling** (temp / top-p / repetition) + **self-consistency / best-of-N**
 
-## 8. Evaluation
-- ☐ **Perplexity + benchmark harness**: HellaSwag / ARC / MMLU-slice
-- ☐ **Fixed-prompt generation tracking**: watching the same prompt improve
+## 8. Evaluation  ◐ (`eval/`, verified by `scripts/test_eval.py`; benchmark loaders need PC data)
+
+**Validation perplexity.**
+*What it is:* Periodically run the model on held-out tokens it never trains on and report
+the average next-token loss (and its exponential, perplexity).
+*Why it was developed:* Training loss can fall just from memorizing; held-out loss
+measures generalization. It's been the standard yardstick for language models for decades.
+*Why we use it here:* It's the most reliable "is the run healthy and improving" signal
+over months, it's cheap, and it's what the dashboard trends.
+
+**Multiple-choice benchmarks (likelihood scoring).**
+*What it is:* For tasks like HellaSwag and ARC, score each answer by the model's
+length-normalized log-probability of that continuation given the context, and pick the
+highest; report accuracy.
+*Why it was developed:* Base (non-chat) models can't reliably be told to "answer A/B/C/D",
+so the field scores choices by likelihood instead. It's how the standard harnesses
+(EleutherAI lm-eval) evaluate base models.
+*Why we use it here:* It gives a comparable, public number against known small models and
+a capability signal beyond perplexity. Scoring is verified here; the dataset loaders run
+on the PC.
+
+**Fixed-prompt generation tracking.**
+*What it is:* Generate from a fixed set of prompts at each eval, saving each output with
+the step and generation speed, so we can scroll the same prompt across checkpoints.
+*Why it was developed / why we use it:* numbers don't capture "does it sound good";
+watching a fixed prompt's output improve over training is the most motivating and honest
+qualitative signal, and it feeds the dashboard's sample archive.
+
+**Generation (sampling).**
+*What it is:* Autoregressive decoding with temperature + top-k + top-p (nucleus)
+filtering (`model/generate.py`).
+*Why it was developed:* greedy decoding is repetitive and bland; temperature/top-k (Fan
+et al., 2018) and nucleus sampling (Holtzman et al., 2019) truncate the unreliable tail
+of the distribution to trade coherence against diversity.
+*Why we use it here:* it's needed for sample generations now and for chat/RAG later; one
+function serves both.
 
 ## 9. Engineering  ◐ (checkpointing + divergence guard in `train/`, verified by `scripts/test_train.py`)
 
