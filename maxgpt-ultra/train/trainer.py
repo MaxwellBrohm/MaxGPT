@@ -41,7 +41,7 @@ def make_optimizer(model, lr, betas, weight_decay, use_8bit=False):
 
 class Trainer:
     def __init__(self, model, data, tcfg: dict, device: str, out_dir: str,
-                 eval_fn=None, seed: int = 0):
+                 eval_fn=None, seed: int = 0, stop_file: str | None = None):
         self.model = model.to(device)
         self.data = data
         self.tcfg = tcfg
@@ -77,6 +77,14 @@ class Trainer:
         self.step = 0
         self._last_save = time.time()
         self._t0 = time.time()
+        self._stop = False           # set by request_stop() (e.g. Ctrl-C)
+        self.stop_file = stop_file    # GUI pause: presence of this file => checkpoint + exit
+
+    def request_stop(self) -> None:
+        self._stop = True
+
+    def _should_stop(self) -> bool:
+        return self._stop or bool(self.stop_file and os.path.exists(self.stop_file))
 
     # --- helpers ---
     def _set_lr(self, lr: float) -> None:
@@ -139,7 +147,12 @@ class Trainer:
     def train(self, max_steps: int | None = None) -> None:
         target = self.total_steps if max_steps is None else min(self.total_steps, self.step + max_steps)
         self._t0 = time.time()
+        self._log({"step": self.step, "event": "meta", "total_steps": self.total_steps,
+                   "tokens_per_step": self.tokens_per_step})
         while self.step < target:
+            if self._should_stop():        # GUI pause / Ctrl-C: save and exit cleanly
+                self._log({"step": self.step, "event": "paused"})
+                break
             rec = self.train_step()
             if rec["diverged"]:
                 self._log({**rec, "event": "divergence"})

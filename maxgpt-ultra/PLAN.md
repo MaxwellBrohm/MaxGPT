@@ -129,7 +129,9 @@ but quality-identical. Pause as often as you like — zero downside.
    -> shard); runs on the 5070 box (`--smoke` dry-run verified on the Mac).
 3. **Training loop:** WSD, bf16, checkpoint/resume, autosave, logging, eval hooks. ✅
    (built + CPU-tested: loss falls, exact resume, divergence guard + rollback; runs on GPU)
-4. **GUI:** dashboard + pause/play + subprocess supervisor.
+4. **GUI:** dashboard + pause/play + subprocess supervisor. ✅ core
+   (FastAPI + websocket; xterm terminal + loss/LR charts + stats; stop-file pause that
+   checkpoints & frees VRAM; backend-tested + renders. To add: MFU/VRAM, sample-gen archive)
 5. **Shakedown run (124M)** end-to-end: pretrain → SFT → DPO → RAG → measure real
    throughput on the 5070.
 6. **Scale config to 1B**, launch the MaxGPT-Ultra pretrain (the long haul).
