@@ -232,16 +232,54 @@ and "thinking" all work later without ever touching the vocab; the 16 spares cov
 we didn't foresee. Cheap insurance against a painful retrofit. (Verified atomic and
 low-id in the smoke test.)
 
-## 3. Data
+## 3. Data  ◐ (pipeline code in `data/`, verified by `scripts/test_data.py`; the data-content steps run at download time on the training box)
+
+**Memmapped binary shards.**
+*What it is:* We pre-tokenize all text once into flat files of uint16 token ids
+(`shard_*.bin` + a `meta.json` index) and read them at train time via numpy memory-
+mapping (the OS pages bytes in on demand rather than loading everything into RAM).
+*Why it was developed:* Tokenizing on the fly wastes CPU every epoch and stalls the GPU,
+and loading a multi-hundred-GB corpus into RAM is impossible. The pre-tokenized-shard +
+memmap pattern (nanoGPT, llm.c, Megatron) feeds the GPU pre-digested tokens straight from
+disk with near-zero overhead.
+*Why we use it here:* It keeps the 5070 fed without a data bottleneck and uses almost no
+RAM regardless of corpus size. uint16 (vs uint32) halves on-disk size since our vocab
+fits in 16 bits; EOT ids separate documents in the stream.
+
+**Sequence packing.**
+*What it is:* Instead of one (padded) document per example, we read the token stream as
+one continuous sequence and slice it into back-to-back `seq_len` windows, so documents
+flow across window boundaries (separated by the EOT marker).
+*Why it was developed:* Documents vary wildly in length; one-doc-per-example wastes a
+large fraction of every batch on padding tokens that contribute nothing. Packing
+(standard in GPT/Llama/T5 pretraining) fills every position with real tokens.
+*Why we use it here:* Over a months-long run, having ~100% of each batch be real tokens
+(instead of, say, 60% with padding) is a large, free efficiency gain. Our loader reads
+contiguous windows so it tiles the corpus exactly.
+
+**Data-position tracking (resumable loader).**
+*What it is:* The loader's entire read state is a single integer (the global token
+position) plus an epoch counter, saved/restored via `state_dict()`/`load_state_dict()`.
+*Why it was developed:* Long runs crash and resume constantly; if the loader restarts
+from the beginning each time, the model over-trains on early data and wastes compute.
+Tracking the exact position is the standard fix.
+*Why we use it here:* It's what makes your pause/play workflow correct: stop and resume
+as often as you like and training continues over the exact same data with no replay.
+Shards are written from an already-shuffled stream, so a simple sequential read is both
+well-shuffled and trivially resumable.
+
+**Mixture weights.**  ◐ (spec in `data/prepare.py: PRETRAIN_MIX`; weights to tune)
+*What it is:* The target token-share of each source (web / textbooks / code / math /
+wiki), realized by weighted streaming interleave.
+*Why it matters:* The ratio is a real capability lever (too much code dulls general
+fluency; too little dulls reasoning). We start from the proven SmolLM mix and tune.
+
+Remaining (applied when we download + build the corpus on the 5070 box):
 - ☐ **FineWeb-Edu backbone**: what the edu filter buys us
 - ☐ **Cosmopedia v2 / synthetic textbooks**: distilled quality for free
 - ☐ **Code + math mixing**: reasoning-structure transfer
-- ☐ **Dedup + quality filtering**: why duplicates hurt
+- ☐ **Dedup + quality filtering**: FineWeb-Edu / SmolLM-corpus are already deduped; add light exact-dedup
 - ☐ **Curriculum / final-phase annealing**: best data saved for the decay
-- ☐ **Mixture weights**: tune the web/code/math/textbook ratio (it directly shapes capabilities)
-- ☐ **Sequence packing**: concatenate docs to fill each sequence, ~no padding waste
-- ☐ **Memmapped binary shards**: fast, RAM-light streaming
-- ☐ **Data-position tracking**: correct resume without replaying tokens
 
 ## 4. Training & optimization
 - ☐ **WSD schedule** (warmup-stable-decay): why over cosine for our case
