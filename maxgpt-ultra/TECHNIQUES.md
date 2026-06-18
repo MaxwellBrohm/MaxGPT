@@ -178,11 +178,59 @@ start context at 2048 to keep attention cheap during the long pretrain; because 
 come from RoPE, we can extend it later (to 4k-8k) with a short bout of continued training
 instead of retraining from scratch.
 
-## 2. Tokenizer
-- ☐ **~49k byte-level BPE**: vocab-size tradeoff (compression vs embedding params)
-- ☐ **Digit-splitting**: why it helps arithmetic/math
-- ☐ **Byte fallback**: no out-of-vocab, ever
-- ☐ **Special tokens reserved up front**: chat roles (ChatML-style), tool-call markers, `<think>` tags, BOS/EOS/pad, plus spare slots (very painful to retrofit later)
+## 2. Tokenizer  ☑ (module in `tokenizer/`, verified by `scripts/test_tokenizer.py`; the real 49k vocab gets trained on a corpus sample in the data milestone)
+
+**Byte-level BPE (~49k vocab).**
+*What it is:* BPE (byte-pair encoding) builds a vocabulary by repeatedly merging the
+most frequent adjacent symbol pairs, starting from raw bytes. "Byte-level" means the
+base alphabet is the 256 possible bytes, so any text is representable. We train to
+49,152 tokens.
+*Why it was developed:* Word-level vocabularies can't handle unseen words and balloon in
+size; character-level is too granular (very long sequences). BPE (Sennrich et al., 2016;
+popularized for LMs by GPT-2's byte-level variant, 2019) was the middle ground: a
+fixed-size subword vocabulary that covers everything through merges.
+*Why we use it here:* It's the universal LLM standard. We pick ~49k over 32k/64k because
+a larger vocab compresses text better (shorter sequences, faster effective training,
+better on code/math) while the bigger embedding table stays affordable at 1B with tied
+embeddings; 49,152 is hardware-aligned and the proven SmolLM2 size. Trained on our own
+corpus mix so the merges fit our data.
+
+**Digit-splitting.**
+*What it is:* A pre-tokenization rule that splits every run of digits into individual
+digit tokens, so "1234" becomes "1","2","3","4" before BPE ever sees it.
+*Why it was developed:* Default BPE merges common number strings ("2024", "100") into
+single tokens, so the model sees "17" and "18" as unrelated atoms with no place-value
+structure to learn arithmetic from. Splitting digits (Llama 3 and others) gives every
+number a uniform, compositional representation.
+*Why we use it here:* It measurably improves arithmetic and math, which we care about
+(math is in the data, reasoning is a goal), at essentially no cost. Merged number tokens
+are strictly worse for math.
+
+**Byte fallback.**
+*What it is:* Guaranteeing all 256 raw bytes are in the base vocabulary (we seed the
+trainer with the full byte alphabet), so any input decomposes into known tokens and
+there is never an out-of-vocabulary token.
+*Why it was developed:* Older subword tokenizers used an explicit "UNK" token for
+anything outside the vocab, silently destroying information (rare characters, other
+scripts, symbols). Byte-level / byte-fallback schemes (GPT-2; SentencePiece's
+byte_fallback) eliminated UNK entirely.
+*Why we use it here:* It makes the tokenizer lossless and universal: emoji, any language,
+code, and odd symbols all round-trip exactly (verified in the test), which matters for
+arbitrary user input and attachments. No real downside, so it's standard.
+
+**Special tokens reserved up front.**
+*What it is:* A fixed set of non-text control tokens baked into the vocab from the start:
+`<|endoftext|>` (BOS/EOS/separator), `<|pad|>`, ChatML markers `<|im_start|>`/`<|im_end|>`,
+tool markers `<|tool_call|>`/`<|tool_response|>`, reasoning tags `<think>`/`</think>`,
+plus 16 spare reserved slots.
+*Why it was developed:* Models need in-band control signals for turn boundaries, document
+ends, tool calls, and reasoning; chat formats like ChatML (OpenAI) standardized this.
+Reserving them (and spares) in the original vocab is common practice because adding
+tokens later forces resizing the embedding matrix and re-training.
+*Why we use it here:* Baking in chat, tool, and reasoning tokens now means SFT, tool-use,
+and "thinking" all work later without ever touching the vocab; the 16 spares cover what
+we didn't foresee. Cheap insurance against a painful retrofit. (Verified atomic and
+low-id in the smoke test.)
 
 ## 3. Data
 - ☐ **FineWeb-Edu backbone**: what the edu filter buys us
