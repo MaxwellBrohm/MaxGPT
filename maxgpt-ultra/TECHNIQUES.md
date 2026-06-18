@@ -376,7 +376,20 @@ parrot questions, whereas masking focuses the gradient on producing good replies
 the pretraining trainer unchanged (the -100 labels flow through the same loss), just with a
 lower LR and short schedule.
 
-- ☐ **DPO**: preference optimization, the tractable RLHF (next)
+**DPO (Direct Preference Optimization).**  ☑ (`posttrain/dpo.py`, verified by `scripts/test_dpo.py`)
+*What it is:* After SFT, fine-tune on preference pairs (prompt, chosen, rejected). DPO
+raises the policy's log-prob of the chosen reply and lowers the rejected one, measured
+*relative to a frozen reference* (the SFT model) with a KL anchor (the beta term). No
+reward model, no RL loop.
+*Why it was developed:* RLHF (InstructGPT) aligns models to preferences but needs a
+trained reward model plus PPO, which is complex and unstable. DPO (Rafailov et al., 2023)
+showed the same preference objective can be optimized directly with a simple
+classification-style loss, vastly simpler to run.
+*Why we use it here:* it's the tractable, at-home way to make replies more helpful and
+preferred after SFT, needing only a frozen copy of the model and a logsigmoid loss.
+Memory note: two model copies are resident, so on 12GB use a small batch + gradient
+checkpointing.
+
 - ☐ **Reasoning / CoT data**: teaching "thinking" (include reasoning traces in SFT)
 - ☐ **(stretch) GRPO RL**: on checkable math
 
