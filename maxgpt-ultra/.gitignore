@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Data + model artifacts (large; never commit)
+data/**/*.bin
+data/**/*.npy
+data/**/*.arrow
+data/raw/
+data/shards/
+checkpoints/
+runs/
+logs/
+*.pt
+*.safetensors
+*.gguf
+wandb/
+
+# OS / editor
+.DS_Store
+.ipynb_checkpoints/

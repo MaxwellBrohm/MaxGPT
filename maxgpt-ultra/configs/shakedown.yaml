@@ -1,0 +1,43 @@
+# MaxGPT-Ultra — SHAKEDOWN (prototype) config  (~124M params)
+# An exact scaled-down replica of the 1B. Goal: validate the ENTIRE pipeline
+# (arch, data, training, WSD, SFT, DPO, RAG, GUI, autosave, pause/play) in days,
+# and measure real throughput on the 5070 before committing to the long run.
+name: maxgpt-ultra-shakedown
+
+model:
+  vocab_size: 49152      # ~49k byte-level BPE (digit-split + byte fallback)
+  d_model: 768
+  n_layers: 12
+  n_heads: 12
+  n_kv_heads: 4          # GQA
+  mlp: swiglu
+  mlp_hidden: 2048       # ~8/3 * d_model
+  norm: rmsnorm
+  pos: rope
+  rope_theta: 10000
+  qk_norm: true
+  tie_embeddings: true
+  seq_len: 1024
+  # ~124M parameters
+
+train:
+  precision: bf16
+  optimizer: adamw       # 'muon' optional (see PLAN.md)
+  lr: 6.0e-4
+  betas: [0.9, 0.95]
+  weight_decay: 0.1
+  grad_clip: 1.0
+  schedule: wsd          # warmup -> stable -> decay
+  warmup_tokens: 2.0e8
+  total_tokens: 5.0e9    # quick validation budget (hours-to-days)
+  decay_frac: 0.2        # last 20% of tokens decay the LR
+  z_loss: 1.0e-4
+  micro_batch: 16
+  grad_accum: 8          # effective ~131k tokens/step at seq 1024
+  grad_checkpointing: false
+  optimizer_8bit: false
+
+io:
+  autosave_minutes: 10
+  keep_last_k: 3
+  keep_best: true

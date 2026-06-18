@@ -1,0 +1,42 @@
+# MaxGPT-Ultra — THE REAL RUN  (~1.1B params)
+# Same recipe as the shakedown, scaled up. Batch sizes get tuned to actually
+# fit + saturate the 5070's 12GB once we measure on the card.
+name: maxgpt-ultra
+
+model:
+  vocab_size: 49152      # ~49k byte-level BPE (digit-split + byte fallback)
+  d_model: 2048
+  n_layers: 22
+  n_heads: 16
+  n_kv_heads: 4          # GQA
+  mlp: swiglu
+  mlp_hidden: 5632       # ~8/3 * d_model, rounded to a multiple of 256
+  norm: rmsnorm
+  pos: rope
+  rope_theta: 10000
+  qk_norm: true
+  tie_embeddings: true
+  seq_len: 2048
+  # ~1.1B parameters
+
+train:
+  precision: bf16
+  optimizer: adamw       # 'muon' optional (see PLAN.md)
+  lr: 3.0e-4
+  betas: [0.9, 0.95]
+  weight_decay: 0.1
+  grad_clip: 1.0
+  schedule: wsd
+  warmup_tokens: 1.0e9
+  total_tokens: 1.0e11   # ~100B target (time-no-object); ship earlier via decay
+  decay_frac: 0.15
+  z_loss: 1.0e-4
+  micro_batch: 4         # tune to fit 12GB
+  grad_accum: 64         # ~0.5M tokens/step effective at seq 2048
+  grad_checkpointing: true
+  optimizer_8bit: true   # 8-bit AdamW so optimizer states fit in 12GB
+
+io:
+  autosave_minutes: 15
+  keep_last_k: 3
+  keep_best: true
