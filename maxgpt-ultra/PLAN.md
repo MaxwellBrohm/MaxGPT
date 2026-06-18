@@ -71,6 +71,19 @@ stable high-LR training · **Muon optimizer** optional for faster convergence.
 good sampling · GGUF/llama.cpp quantization · wired into the web UI + side-by-side
 compare · optional self-consistency / best-of-N.
 
+**Attachments (text-based files).** Let the user upload txt/md/docx/pptx/pdf/csv/code
+and extract them to raw text, then inject as clearly-labeled context. Pure inference-layer
+feature (no retraining). Key constraint: our context is small (2048, extendable), so big
+files get chunked into the RAG retriever and only the relevant parts are pulled in per
+question; small files inject whole. SFT on document-grounded QA makes the model actually
+good at using them.
+
+**Input hygiene (deliberately light).** No sensitive data and no side-effectful tools, so
+we skip heavy prompt-injection defenses. But because attachments and web results bring in
+untrusted text, we do the cheap, worthwhile basics: wrap that text in clear delimiters and
+label it as data (not instructions), and cap lengths so it can't blow the context. That is
+the whole security surface worth building for a personal model.
+
 ## Training GUI — the "mission control" dashboard
 A dense, dark, monospace, hacker-aesthetic local web dashboard: looks cool to anyone,
 fully legible to someone who knows ML. Compact panels, sparklines, data everywhere.

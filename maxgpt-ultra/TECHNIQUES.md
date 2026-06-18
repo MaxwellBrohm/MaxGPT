@@ -216,6 +216,8 @@ instead of retraining from scratch.
 ## 7. Inference
 - ☐ **RAG** (retriever + web tool): why it's the small-model superpower
 - ☐ **Tool / function calling**: taught via SFT
+- ☐ **Attachment ingestion**: extract text from txt/md/docx/pptx/pdf/csv/code, inject as delimited context; chunk big files into RAG
+- ☐ **Input hygiene (light)**: label untrusted attachment/web text as data, length caps; no heavy injection defenses (personal model, no secrets/side-effects)
 - ☐ **Quantization** (GGUF / llama.cpp): fast local serving
 - ☐ **Sampling** (temp / top-p / repetition) + **self-consistency / best-of-N**
 
