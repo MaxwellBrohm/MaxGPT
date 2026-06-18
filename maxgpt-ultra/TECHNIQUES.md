@@ -361,10 +361,23 @@ trainable here. The prototype uses plain AdamW.
 - ☐ **Micro-batch + accumulation tuning**: measure and saturate the card (set on the 5070)
 - ☐ **Activation / dtype bookkeeping**: confirm what lives where in VRAM during a real run
 
-## 6. Post-training
-- ☐ **SFT**: chat template, loss masking on prompts
-- ☐ **DPO**: preference optimization, the tractable RLHF
-- ☐ **Reasoning / CoT data**: teaching "thinking"
+## 6. Post-training  ◐ (SFT in `posttrain/`, verified by `scripts/test_sft.py`)
+
+**SFT (supervised fine-tuning).**
+*What it is:* Continue training the pretrained base on (prompt, ideal-reply) chat examples
+formatted with the ChatML template, but compute the loss **only on the assistant's reply
+tokens** (the system/user prompt is masked with -100). Lower LR, a few epochs.
+*Why it was developed:* A pretrained model only continues text; it doesn't know it's an
+assistant or when to stop. SFT / instruction tuning (InstructGPT, Alpaca lineage) teaches
+the chat format and answering behavior by imitating good responses.
+*Why we use it here:* it's the step that turns our text-completer into something you can
+chat with. Assistant-only masking is essential: supervising the prompt would teach it to
+parrot questions, whereas masking focuses the gradient on producing good replies. We reuse
+the pretraining trainer unchanged (the -100 labels flow through the same loss), just with a
+lower LR and short schedule.
+
+- ☐ **DPO**: preference optimization, the tractable RLHF (next)
+- ☐ **Reasoning / CoT data**: teaching "thinking" (include reasoning traces in SFT)
 - ☐ **(stretch) GRPO RL**: on checkable math
 
 ## 7. Inference

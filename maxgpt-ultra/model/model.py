@@ -222,7 +222,10 @@ class MaxGPTUltra(nn.Module):
         if targets is not None:
             logits_flat = logits.view(-1, logits.size(-1)).float()  # fp32 for the softmax
             targets_flat = targets.view(-1)
-            loss = F.cross_entropy(logits_flat, targets_flat, ignore_index=-100)
+            if (targets_flat != -100).any():
+                loss = F.cross_entropy(logits_flat, targets_flat, ignore_index=-100)
+            else:
+                loss = logits_flat.sum() * 0.0   # batch had no supervised tokens (SFT masking edge case)
             if z_loss_weight > 0.0:
                 # z-loss penalizes large logsumexp, keeping logits from drifting huge
                 lse = torch.logsumexp(logits_flat, dim=-1)
