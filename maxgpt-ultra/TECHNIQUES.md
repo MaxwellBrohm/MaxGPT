@@ -393,13 +393,45 @@ checkpointing.
 - ☐ **Reasoning / CoT data**: teaching "thinking" (include reasoning traces in SFT)
 - ☐ **(stretch) GRPO RL**: on checkable math
 
-## 7. Inference
-- ☐ **RAG** (retriever + web tool): why it's the small-model superpower
-- ☐ **Tool / function calling**: taught via SFT
-- ☐ **Attachment ingestion**: extract text from txt/md/docx/pptx/pdf/csv/code, inject as delimited context; chunk big files into RAG
-- ☐ **Input hygiene (light)**: label untrusted attachment/web text as data, length caps; no heavy injection defenses (personal model, no secrets/side-effects)
-- ☐ **Quantization** (GGUF / llama.cpp): fast local serving
-- ☐ **Sampling** (temp / top-p / repetition) + **self-consistency / best-of-N**
+## 7. Inference  ◐ (`rag/`, verified by `scripts/test_rag.py`)
+
+**RAG (retrieval-augmented generation).**
+*What it is:* At inference, retrieve text relevant to the question (from a knowledge base
+via the TF-IDF retriever, from uploaded attachments, and/or a live web search), insert it
+into the prompt as labeled context, and have the model answer from it.
+*Why it was developed:* LLMs hallucinate facts they don't reliably store, and their
+knowledge is frozen at training time. RAG (Lewis et al., 2020) grounds generation in
+retrieved documents, improving factuality and adding fresh/private knowledge without
+retraining.
+*Why we use it here:* it's the single biggest usability lever for a small model. A 1B
+can't memorize the world, but it can reason over text you hand it; retrieval turns its job
+from "recall" (bad at) into "read and synthesize" (good at). Our retriever is
+dependency-free TF-IDF; attachments and web feed the same pipeline.
+
+**Attachment ingestion.**
+*What it is:* Upload text-based files (txt/md/csv/code now; pdf/docx/pptx via parsers),
+extract raw text, feed it as context (whole if small, chunked into the retriever if big).
+*Why it was developed / why us:* "can I attach a file" was direct user feedback;
+auto-extracting on upload (rather than relying on the model to call a tool) is simpler and
+more reliable at this scale, and big files are chunked because the context window is small.
+
+**Web search tool.**
+*What it is:* Returns snippets for a query (DuckDuckGo, no API key), feeding the same
+context pipeline; degrades to empty offline.
+*Why us:* it's the model's "internet access" and the biggest knowledge boost: it can look
+up anything current, then phrase an answer from what it found.
+
+**Input hygiene (light).**
+*What it is:* Untrusted text (attachments, web) is wrapped and labeled "data, not
+instructions," with length caps; no heavy prompt-injection defenses.
+*Why:* no secrets or side-effectful tools means heavy defenses are overkill, but
+attachments/web bring in untrusted text, so the cheap label-and-cap habit is exactly the
+surface worth bothering with.
+
+- ☑ **Sampling** (temperature / top-k / top-p): in `model/generate.py` (see §8).
+- ◐ **Tool / function calling**: the web tool + ChatML tool tokens exist; teaching the model to *emit* structured tool calls (SFT on tool-use traces) + an execute loop is a follow-up.
+- (note) **Quantization / serving**: the ~1B serves comfortably in bf16 (~2GB) on the 5070, so quantization isn't needed for fast local inference. GGUF/llama.cpp would need a custom converter for our architecture, so we skip it; int8/4-bit via bitsandbytes is an optional future footprint reduction.
+- ☐ **self-consistency / best-of-N**: sample several reasoning paths and vote (a later quality knob).
 
 ## 8. Evaluation  ◐ (`eval/`, verified by `scripts/test_eval.py`; benchmark loaders need PC data)
 
