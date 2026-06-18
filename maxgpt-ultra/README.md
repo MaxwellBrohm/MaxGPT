@@ -19,11 +19,22 @@ Develop here on the Mac; train on the Windows PC with the 5070 (pull from GitHub
 - `gui/` — local pause/play training dashboard
 - `configs/` — `shakedown.yaml` (124M prototype) and `ultra.yaml` (~1.1B)
 
-## Status
-- ✅ Model architecture (`model/`) + smoke test (`scripts/smoke_test.py`)
-- ✅ Tokenizer (`tokenizer/`) + smoke test (`scripts/test_tokenizer.py`)
-- ✅ Data pipeline (`data/`: shard writer + packed resumable loader) + test (`scripts/test_data.py`)
-- ⏭ Next: download the corpus + train the real 49k tokenizer + shard it (on the 5070 box), then the training loop.
+## Status — core stack built + CPU-tested
+- ✅ Model architecture (`model/`) — `scripts/smoke_test.py`
+- ✅ Tokenizer (`tokenizer/`) — `scripts/test_tokenizer.py`
+- ✅ Data pipeline (`data/`) + one-command `scripts/prepare_data.py` — `scripts/test_data.py`
+- ✅ Training loop (`train/`: WSD, checkpoint/resume, divergence guard, autosave) — `scripts/test_train.py`
+- ✅ Mission-control GUI (`gui/`: pause/play, live terminal + charts) — `scripts/test_gui.py`
+- ✅ Eval harness (`eval/`: perplexity, MC benchmarks, sample generations) + `model/generate.py` — `scripts/test_eval.py`
+- ⏭ Next: post-training (SFT → DPO), then RAG + attachments + quantization. The real
+  pretraining (data download + shakedown + 1B run) executes on the 5070 box.
+
+### Run the real thing (on the 5070 box)
+```
+python scripts/prepare_data.py --config configs/shakedown.yaml      # download -> 49k tokenizer -> shards
+python gui/server.py --config configs/shakedown.yaml --data data/shards --out runs/shakedown
+# open http://127.0.0.1:8800 and hit play; validate at 124M, then switch to configs/ultra.yaml
+```
 
 ## Working across machines
 This repo *is* the shared brain: `PLAN.md` (the full design) and `TECHNIQUES.md` (every
