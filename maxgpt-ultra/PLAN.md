@@ -34,9 +34,12 @@ tied embeddings · no biases · pre-norm · z-loss. Sizes in `configs/`.
 **Bulk pretrain (free):** FineWeb-Edu (backbone) + Cosmopedia v2 (synthetic
 textbooks) + code (StarCoder subset) + math (FineMath/OpenWebMath) + a little
 Wikipedia/books. Tokenized to memmapped shards. **Tokenizer: ~49k byte-level BPE**
-(49,152 vocab, digit-splitting + byte fallback), trained on the corpus mix — bigger
-than 32k for better compression on code/math, at an embedding cost the 1B absorbs
-(this is SmolLM2's vocab size).
+(49,152 vocab, digit-splitting + byte fallback), trained on the corpus mix. Bigger than
+32k for better compression on code/math, at an embedding cost the 1B absorbs (it's
+SmolLM2's vocab size). We reserve **special tokens up front** (ChatML-style chat roles,
+tool-call markers, `<think>` tags, BOS/EOS/pad, plus spare slots) so chat, tools, and
+reasoning work cleanly without resizing the vocab later. Mixture weights across sources
+are a tuned quality lever, and we pack documents to fill sequences (no padding waste).
 **Curriculum / annealing:** save the highest-quality data (textbook/instruction/
 math/code) for the WSD **decay** phase — proven quality bump.
 **SFT (free, distilled):** OpenHermes 2.5, Tülu 3, UltraChat, OASST2.

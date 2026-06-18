@@ -182,6 +182,7 @@ instead of retraining from scratch.
 - ☐ **~49k byte-level BPE**: vocab-size tradeoff (compression vs embedding params)
 - ☐ **Digit-splitting**: why it helps arithmetic/math
 - ☐ **Byte fallback**: no out-of-vocab, ever
+- ☐ **Special tokens reserved up front**: chat roles (ChatML-style), tool-call markers, `<think>` tags, BOS/EOS/pad, plus spare slots (very painful to retrofit later)
 
 ## 3. Data
 - ☐ **FineWeb-Edu backbone**: what the edu filter buys us
@@ -189,6 +190,8 @@ instead of retraining from scratch.
 - ☐ **Code + math mixing**: reasoning-structure transfer
 - ☐ **Dedup + quality filtering**: why duplicates hurt
 - ☐ **Curriculum / final-phase annealing**: best data saved for the decay
+- ☐ **Mixture weights**: tune the web/code/math/textbook ratio (it directly shapes capabilities)
+- ☐ **Sequence packing**: concatenate docs to fill each sequence, ~no padding waste
 - ☐ **Memmapped binary shards**: fast, RAM-light streaming
 - ☐ **Data-position tracking**: correct resume without replaying tokens
 
@@ -199,6 +202,7 @@ instead of retraining from scratch.
 - ☐ **Large effective batch via grad-accum**: stability of a big token batch
 - ☐ **bf16 mixed precision**: why bf16 over fp16 on Blackwell
 - ☐ **torch.compile**: fusion / graph speedups
+- ☐ **Checkpoint averaging / model soup** (optional): average a few late checkpoints for a small, near-free final bump
 - ☑ **FlashAttention / SDPA**: used by the model now (see the Attention kernel note in §1)
 
 ## 5. Fitting 1B into 12GB (memory engineering)
@@ -227,5 +231,7 @@ instead of retraining from scratch.
 
 ## 9. Engineering
 - ☐ **Atomic checkpointing + resume**: exact-continuation guarantee
+- ☐ **Divergence guard + auto-rollback**: watch for NaN/Inf or a loss/grad-norm spike, auto-revert to the last good checkpoint (skip the bad batch / lower LR). Vital for an unattended, months-long run.
 - ☐ **Pause/play subprocess supervisor**: freeing VRAM on demand
+- ☐ **Run reproducibility**: snapshot the exact config, git commit, and seed with every checkpoint
 - ☐ **The mission-control dashboard**: metrics, MFU, live charts
