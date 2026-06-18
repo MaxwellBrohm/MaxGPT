@@ -19,6 +19,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint as grad_checkpoint
 
 from .config import ModelConfig
 
@@ -174,6 +175,7 @@ class MaxGPTUltra(nn.Module):
     def __init__(self, cfg: ModelConfig):
         super().__init__()
         self.cfg = cfg
+        self.grad_checkpointing = False   # trainer sets True to trade compute for memory (fits the 1B on 12GB)
         self.tok_emb = nn.Embedding(cfg.vocab_size, cfg.d_model)
         self.blocks = nn.ModuleList([Block(cfg) for _ in range(cfg.n_layers)])
         self.norm = RMSNorm(cfg.d_model, cfg.rms_eps)
@@ -209,7 +211,10 @@ class MaxGPTUltra(nn.Module):
         cos = self.rope_cos[:T].to(x.dtype)
         sin = self.rope_sin[:T].to(x.dtype)
         for block in self.blocks:
-            x = block(x, cos, sin)
+            if self.grad_checkpointing and self.training:
+                x = grad_checkpoint(block, x, cos, sin, use_reentrant=False)
+            else:
+                x = block(x, cos, sin)
         x = self.norm(x)
         logits = self.lm_head(x)
 

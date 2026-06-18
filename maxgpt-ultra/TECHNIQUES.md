@@ -281,21 +281,85 @@ Remaining (applied when we download + build the corpus on the 5070 box):
 - ☐ **Dedup + quality filtering**: FineWeb-Edu / SmolLM-corpus are already deduped; add light exact-dedup
 - ☐ **Curriculum / final-phase annealing**: best data saved for the decay
 
-## 4. Training & optimization
-- ☐ **WSD schedule** (warmup-stable-decay): why over cosine for our case
-- ☐ **AdamW config**: betas, weight decay, grad clip
-- ☐ **Muon optimizer** (optional): the convergence-speed win
-- ☐ **Large effective batch via grad-accum**: stability of a big token batch
-- ☐ **bf16 mixed precision**: why bf16 over fp16 on Blackwell
-- ☐ **torch.compile**: fusion / graph speedups
-- ☐ **Checkpoint averaging / model soup** (optional): average a few late checkpoints for a small, near-free final bump
-- ☑ **FlashAttention / SDPA**: used by the model now (see the Attention kernel note in §1)
+## 4. Training & optimization  ◐ (loop in `train/`, verified by `scripts/test_train.py`)
 
-## 5. Fitting 1B into 12GB (memory engineering)
-- ☐ **Gradient checkpointing**: recompute vs store, the time/memory trade
-- ☐ **8-bit AdamW** (bitsandbytes): optimizer-state compression
-- ☐ **Micro-batch + accumulation tuning**: saturating the card
-- ☐ **Activation / dtype bookkeeping**: what lives where in VRAM
+**WSD schedule (warmup-stable-decay).**
+*What it is:* The learning-rate curve over training: a short linear warmup to the peak
+LR, a long stretch holding it constant, then a cosine decay to near-zero over the final
+fraction of steps (`train/schedule.py`).
+*Why it was developed:* The long-standing default is a single cosine curve, but it
+requires committing to the total step count up front (the curve has to reach zero
+exactly at the end). WSD (popularized by MiniCPM, 2024) decouples the middle from the
+end, so the stable phase can run as long as you want and you decay only when you decide
+to stop.
+*Why we use it here:* Our run is open-ended and pause-heavy; WSD lets us extend or stop
+without wasting the end-of-run loss drop, and keeps a pre-decay checkpoint to continue
+from later. Same final quality as cosine, far more flexible.
+
+**AdamW (decoupled weight decay).**
+*What it is:* The optimizer. Adam adapts a per-parameter step size from running estimates
+of the gradient's mean and variance; AdamW applies weight decay as a separate shrink
+rather than folding it into the gradient. We use betas (0.9, 0.95), weight decay 0.1 on
+2D+ tensors only (not norms), and gradient clipping at 1.0.
+*Why it was developed:* Adam (Kingma & Ba, 2014) made transformer training robust to
+gradient scaling where plain SGD struggled. AdamW (Loshchilov & Hutter, 2017) fixed a
+subtle bug where L2 regularization interacts badly with Adam's adaptivity, by decoupling
+weight decay.
+*Why we use it here:* It's the proven LLM default; the (0.9, 0.95) betas + 0.1 decay are
+the standard GPT/Llama recipe. Clipping at 1.0 stops a rare huge gradient from wrecking
+the run; decaying only matmul/embedding weights (not norms) is standard best practice.
+
+**Large effective batch via gradient accumulation.**
+*What it is:* We run several micro-batches, sum their gradients, and only then take one
+optimizer step, so the effective batch is `micro_batch * grad_accum * seq_len` tokens
+(~0.5M for the 1B) even though only a micro-batch fits in 12GB at once.
+*Why it was developed:* Large-batch training is more stable and supports a higher LR, but
+big batches don't fit in memory; accumulation (used everywhere) decouples the statistical
+batch size from what physically fits on the GPU.
+*Why we use it here:* It's the only way to get a pretraining-scale token batch out of a
+12GB card. We tune micro_batch to fill VRAM and grad_accum to reach the target batch.
+
+**bf16 mixed precision.**
+*What it is:* Run the forward/backward in bfloat16 (via autocast) while the optimizer
+math stays fp32. bf16 keeps fp32's exponent range, just with fewer mantissa bits.
+*Why it was developed:* fp32 is memory- and bandwidth-bound; fp16 is fast but its narrow
+exponent range overflows easily and needs fragile loss-scaling. bf16 (Google Brain
+float) keeps fp32's range, so it's fast *and* stable with no loss-scaling.
+*Why we use it here:* The 5070 (Blackwell) has fast bf16 tensor cores, so it roughly
+halves memory and speeds up matmuls with no stability hacks. Enabled on CUDA; falls back
+to fp32 on CPU so the Mac tests still run.
+
+- ☐ **Muon optimizer** (optional): a newer optimizer that orthogonalizes the update for faster convergence; a candidate to try
+- ☐ **torch.compile**: fuse the graph for a speedup once the loop is stable on the GPU
+- ☐ **Checkpoint averaging / model soup** (optional): average a few late checkpoints for a small, near-free final bump
+- ☑ **FlashAttention / SDPA**: used by the model (see the Attention kernel note in §1)
+
+## 5. Fitting 1B into 12GB (memory engineering)  ◐ (toggles wired in the trainer/model)
+
+**Gradient checkpointing.**
+*What it is:* During the forward pass, don't keep every layer's activations for the
+backward pass; keep only a few and recompute the rest on the fly during backprop. Toggled
+by `grad_checkpointing` (wraps each block in `torch.utils.checkpoint`).
+*Why it was developed:* Activations, not weights, dominate memory for deep models, and
+they grow with batch and sequence length. Checkpointing (Chen et al., 2016) trades a bit
+of extra compute (~one extra forward) for a large drop in activation memory.
+*Why we use it here:* It's a key lever for fitting the 1B's activations into 12GB; we pay
+~30% more compute to make a model fit and a bigger batch possible. Off for the prototype
+(plenty of room), on for the 1B.
+
+**8-bit AdamW.**
+*What it is:* Store Adam's two optimizer states (mean + variance) per parameter in 8-bit
+with block-wise quantization instead of fp32, via bitsandbytes. Toggled by
+`optimizer_8bit` (falls back to normal AdamW if unavailable / on CPU).
+*Why it was developed:* Adam's states are 2x the model size in fp32 (8 bytes/param),
+often the single biggest memory consumer; 8-bit optimizers (Dettmers et al., 2021) shrink
+that ~4x with negligible quality loss.
+*Why we use it here:* For a 1B model, fp32 Adam states alone are ~8GB and wouldn't fit
+beside weights, grads, and activations on a 12GB card; 8-bit states (~2GB) make the 1B
+trainable here. The prototype uses plain AdamW.
+
+- ☐ **Micro-batch + accumulation tuning**: measure and saturate the card (set on the 5070)
+- ☐ **Activation / dtype bookkeeping**: confirm what lives where in VRAM during a real run
 
 ## 6. Post-training
 - ☐ **SFT**: chat template, loss masking on prompts
@@ -315,9 +379,33 @@ Remaining (applied when we download + build the corpus on the 5070 box):
 - ☐ **Perplexity + benchmark harness**: HellaSwag / ARC / MMLU-slice
 - ☐ **Fixed-prompt generation tracking**: watching the same prompt improve
 
-## 9. Engineering
-- ☐ **Atomic checkpointing + resume**: exact-continuation guarantee
-- ☐ **Divergence guard + auto-rollback**: watch for NaN/Inf or a loss/grad-norm spike, auto-revert to the last good checkpoint (skip the bad batch / lower LR). Vital for an unattended, months-long run.
-- ☐ **Pause/play subprocess supervisor**: freeing VRAM on demand
-- ☐ **Run reproducibility**: snapshot the exact config, git commit, and seed with every checkpoint
-- ☐ **The mission-control dashboard**: metrics, MFU, live charts
+## 9. Engineering  ◐ (checkpointing + divergence guard in `train/`, verified by `scripts/test_train.py`)
+
+**Atomic checkpointing + resume.**
+*What it is:* A checkpoint saves everything needed for exact continuation (weights,
+optimizer state, step, data-loader position, configs, seed, RNG). Writes go to a temp
+file then `os.replace` (atomic), we keep the last K plus a `latest.json` pointer, and
+training resumes from latest automatically.
+*Why it was developed:* Long runs crash, get killed, or lose power; saving only weights
+loses optimizer momentum and the data position, and a non-atomic save can leave a
+half-written, corrupt file if it dies mid-write. The temp-then-rename pattern and
+full-state checkpoints are the standard fixes.
+*Why we use it here:* It's the backbone of your pause/play workflow and power-outage
+safety: a crash or pause costs at most the time since the last save, and resuming is
+bit-for-bit a continuation (verified in the test).
+
+**Divergence guard + auto-rollback.**
+*What it is:* After each step we check the loss and gradient norm; if either is NaN/Inf,
+we don't apply the step, log a divergence event, and roll back to the last good
+checkpoint instead of continuing on corrupted weights.
+*Why it was developed:* Large bf16 runs occasionally hit an instability (a bad batch, a
+spike) that turns weights to NaN; without a guard the whole run silently dies and you
+discover it hours or days later. Spike-detection + rollback is standard practice in big
+training stacks.
+*Why we use it here:* The run is unattended for long stretches, so a silent NaN could
+waste days. The guard makes the run self-healing: it reverts and keeps going (verified in
+the test). Pairs with the autosave and surfaces on the dashboard.
+
+- ◐ **Run reproducibility**: we snapshot config + seed + RNG state in each checkpoint; still to add: stamp the git commit too
+- ☐ **Pause/play subprocess supervisor**: freeing VRAM on demand (next milestone, the GUI)
+- ☐ **The mission-control dashboard**: metrics, MFU, live charts (reads the `metrics.jsonl` the trainer already writes)
