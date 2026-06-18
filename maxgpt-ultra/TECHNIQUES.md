@@ -407,5 +407,29 @@ waste days. The guard makes the run self-healing: it reverts and keeps going (ve
 the test). Pairs with the autosave and surfaces on the dashboard.
 
 - ◐ **Run reproducibility**: we snapshot config + seed + RNG state in each checkpoint; still to add: stamp the git commit too
-- ☐ **Pause/play subprocess supervisor**: freeing VRAM on demand (next milestone, the GUI)
-- ☐ **The mission-control dashboard**: metrics, MFU, live charts (reads the `metrics.jsonl` the trainer already writes)
+
+**Pause/play subprocess supervisor (stop-file).**  ☑ (`gui/server.py`, verified by `scripts/test_gui.py`)
+*What it is:* The GUI runs training as a child process and controls it with a stop-file:
+pause creates the file, the trainer sees it at the next step, checkpoints, and exits (so
+the OS reclaims all VRAM); play deletes the file and relaunches `train.py`, which
+auto-resumes from the latest checkpoint.
+*Why this design:* the goal is to free the GPU on demand (to game) and resume later.
+Killing mid-step loses progress; OS signals (SIGINT/SIGTERM) are awkward and inconsistent
+on Windows (the training box). A stop-file is dead-simple, cross-platform, and lets the
+trainer stop at a clean step boundary with a fresh checkpoint.
+*Why we use it here:* it's exactly the "pause to game, unpause before bed" workflow, and
+since exit frees VRAM and resume is exact, pausing costs only the few seconds to
+checkpoint. Verified start/pause/play end-to-end.
+
+**Mission-control dashboard.**  ◐ (`gui/`, core panels done; MFU / VRAM / sample-gen archive to add)
+*What it is:* A local FastAPI + websocket web app that streams the live terminal
+(xterm.js) and parsed metrics (uPlot charts for loss + LR, plus step / progress /
+tokens-per-sec / grad-norm / ETA) from the run's `metrics.jsonl`, with play/pause/stop.
+*Why build our own:* a bare terminal makes a long run opaque; a dashboard makes progress,
+throughput, and stability visible at a glance and gives one-click control. We built it
+in-repo (rather than wandb/TensorBoard) so it's local, zero-setup, controls the run, and
+looks the way we want.
+*Why we use it here:* it turns a months-long unattended run into something monitorable and
+pausable at a glance, and it reads the JSONL the trainer already writes, so it adds no
+training overhead. Still to add: MFU and VRAM/temp readouts, and the sample-generation
+archive (watch a fixed prompt improve across checkpoints).

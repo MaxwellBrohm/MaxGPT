@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MaxGPT-Ultra — mission control</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css" />
+<style>
+  :root{--bg:#07070c;--panel:#0f0f17;--line:#20202e;--ink:#e7e7f0;--mut:#7a7a92;--acc:#ff7a1a;--good:#5de4a0;--warn:#ffd166;--bad:#ff5d6c}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:13px}
+  header{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+  header .logo{color:var(--acc);font-weight:700;letter-spacing:.5px}
+  header .sub{color:var(--mut)}
+  .pill{padding:2px 10px;border-radius:999px;border:1px solid var(--line);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
+  .pill.running{color:var(--good);border-color:var(--good)}
+  .pill.paused{color:var(--warn);border-color:var(--warn)}
+  .pill.exited,.pill.stopped{color:var(--bad);border-color:var(--bad)}
+  .grow{flex:1}
+  button{background:#15151f;color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:6px 14px;font-family:inherit;font-size:12px;cursor:pointer}
+  button:hover{border-color:var(--acc)}
+  button.play{color:var(--good)} button.pause{color:var(--warn)} button.stop{color:var(--bad)}
+  .stats{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--line);border-bottom:1px solid var(--line)}
+  .stat{background:var(--panel);padding:9px 12px}
+  .stat .k{color:var(--mut);font-size:10px;text-transform:uppercase;letter-spacing:.1em}
+  .stat .v{font-size:18px;margin-top:3px}
+  .stat .v small{font-size:11px;color:var(--mut)}
+  .bar{height:4px;background:#15151f;border-bottom:1px solid var(--line)}
+  .bar>div{height:100%;background:var(--acc);width:0%}
+  main{display:grid;grid-template-columns:1.15fr .85fr;gap:1px;background:var(--line);height:calc(100vh - 150px)}
+  .col{background:var(--bg);display:flex;flex-direction:column;min-height:0}
+  .col h3{margin:0;padding:7px 12px;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.1em;border-bottom:1px solid var(--line);background:var(--panel)}
+  #term{flex:1;min-height:0;padding:6px 8px}
+  .chart{padding:8px 10px;border-bottom:1px solid var(--line)}
+  .u-title{color:var(--mut)!important}
+</style>
+</head>
+<body>
+<header>
+  <span class="logo">◆ MaxGPT-Ultra</span>
+  <span class="sub">mission control</span>
+  <span id="pill" class="pill">idle</span>
+  <span class="grow"></span>
+  <button class="play" onclick="api('start')">▶ play</button>
+  <button class="pause" onclick="api('pause')">❚❚ pause</button>
+  <button class="stop" onclick="api('stop')">■ stop</button>
+</header>
+
+<div class="stats">
+  <div class="stat"><div class="k">step</div><div class="v" id="s-step">—</div></div>
+  <div class="stat"><div class="k">progress</div><div class="v" id="s-prog">—</div></div>
+  <div class="stat"><div class="k">loss</div><div class="v" id="s-loss">—</div></div>
+  <div class="stat"><div class="k">lr</div><div class="v" id="s-lr">—</div></div>
+  <div class="stat"><div class="k">tokens/sec</div><div class="v" id="s-tps">—</div></div>
+  <div class="stat"><div class="k">grad norm</div><div class="v" id="s-gn">—</div></div>
+  <div class="stat"><div class="k">eta</div><div class="v" id="s-eta">—</div></div>
+</div>
+<div class="bar"><div id="progbar"></div></div>
+
+<main>
+  <div class="col"><h3>terminal</h3><div id="term"></div></div>
+  <div class="col">
+    <h3>analytics</h3>
+    <div class="chart"><div id="losschart"></div></div>
+    <div class="chart"><div id="lrchart"></div></div>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+<script>
+const term = new Terminal({fontSize:12, theme:{background:'#07070c', foreground:'#cfcfe0'}, convertEol:true, scrollback:5000});
+term.open(document.getElementById('term'));
+
+function darkAxis(){return {stroke:'#7a7a92', grid:{stroke:'#1a1a26'}, ticks:{stroke:'#1a1a26'}};}
+function mkChart(el, label, color){
+  return new uPlot({title:label, width:el.clientWidth||460, height:200,
+    series:[{}, {label, stroke:color, width:2, points:{show:false}}],
+    axes:[darkAxis(), darkAxis()], scales:{x:{time:false}}}, [[],[]], el);
+}
+const lossChart = mkChart(document.getElementById('losschart'), 'loss', '#ff7a1a');
+const lrChart   = mkChart(document.getElementById('lrchart'), 'learning rate', '#5aa9ff');
+addEventListener('resize', ()=>{ for(const c of [lossChart,lrChart]) c.setSize({width:c.root.parentElement.clientWidth, height:200}); });
+
+async function api(action){ try{ await fetch('/api/'+action, {method:'POST'}); }catch(e){} }
+
+function fmtEta(s){ if(!isFinite(s)||s<=0) return '—'; const d=Math.floor(s/86400), h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60); return d?`${d}d ${h}h`:h?`${h}h ${m}m`:`${m}m`; }
+
+function applyMetrics(data){
+  let meta=null; const steps=[], loss=[], lr=[]; let last=null;
+  for(const r of data){
+    if(r.event==='meta') meta=r;
+    if(r.event) continue;
+    if(r.step!==undefined && r.loss!==undefined){ steps.push(r.step); loss.push(r.loss); lr.push(r.lr); last=r; }
+  }
+  lossChart.setData([steps, loss]); lrChart.setData([steps, lr]);
+  if(last){
+    document.getElementById('s-step').textContent = last.step.toLocaleString();
+    document.getElementById('s-loss').textContent = last.loss.toFixed(3);
+    document.getElementById('s-lr').textContent = (last.lr!=null? last.lr.toExponential(2):'—');
+    document.getElementById('s-tps').textContent = last.tok_per_s? Math.round(last.tok_per_s).toLocaleString() : '—';
+    document.getElementById('s-gn').textContent = last.grad_norm!=null? last.grad_norm.toFixed(2):'—';
+    if(meta && meta.total_steps){
+      const pct = 100*last.step/meta.total_steps;
+      document.getElementById('s-prog').innerHTML = pct.toFixed(1)+'<small> %</small>';
+      document.getElementById('progbar').style.width = Math.min(100,pct)+'%';
+      const sps = last.tok_per_s && meta.tokens_per_step ? last.tok_per_s/meta.tokens_per_step : 0;
+      document.getElementById('s-eta').textContent = sps? fmtEta((meta.total_steps-last.step)/sps) : '—';
+    }
+  }
+}
+
+function setStatus(s){ const p=document.getElementById('pill'); p.textContent=s; p.className='pill '+s; }
+
+function connect(){
+  const ws = new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/ws');
+  ws.onmessage = (ev)=>{ const m=JSON.parse(ev.data);
+    if(m.type==='log'){ for(const l of m.lines) term.writeln(l); }
+    else if(m.type==='metrics'){ applyMetrics(m.data); }
+    else if(m.type==='status'){ setStatus(m.status); }
+  };
+  ws.onclose = ()=> setTimeout(connect, 1500);
+}
+connect();
+</script>
+</body>
+</html>

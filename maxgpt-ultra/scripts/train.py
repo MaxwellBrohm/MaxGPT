@@ -28,6 +28,7 @@ def main() -> None:
     ap.add_argument("--device", default=None)
     ap.add_argument("--max-steps", type=int, default=None, help="optional cap (for testing)")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--stop-file", default=None, help="if this file appears, checkpoint and exit (GUI pause)")
     args = ap.parse_args()
 
     with open(args.config) as f:
@@ -40,8 +41,17 @@ def main() -> None:
 
     model = MaxGPTUltra(mcfg)
     data = PackedShardDataset(args.data, mcfg.seq_len)
-    trainer = Trainer(model, data, tcfg, device, args.out, seed=args.seed)
+    trainer = Trainer(model, data, tcfg, device, args.out, seed=args.seed, stop_file=args.stop_file)
     resumed = trainer.resume_if_available()
+
+    import signal
+    def _graceful(*_):
+        trainer.request_stop()
+    signal.signal(signal.SIGINT, _graceful)
+    try:
+        signal.signal(signal.SIGTERM, _graceful)
+    except (ValueError, OSError):
+        pass
 
     print(f"[train] device={device} params={model.num_params()/1e6:.1f}M "
           f"total_steps={trainer.total_steps} tokens/step={trainer.tokens_per_step} "

@@ -2,9 +2,10 @@
 torch>=2.4
 pyyaml
 tokenizers
+numpy
+fastapi
+uvicorn[standard]
 
-# arriving with later milestones:
-#   numpy            (data shards / arrays)
-#   datasets         (FineWeb-Edu etc. download + streaming)
-#   bitsandbytes     (8-bit AdamW so the 1B's optimizer states fit in 12GB)
-#   fastapi, uvicorn, websockets   (the training dashboard)
+# installed on the 5070 box for the real run:
+#   datasets       (FineWeb-Edu etc. download + streaming)
+#   bitsandbytes   (8-bit AdamW so the 1B's optimizer states fit in 12GB)
