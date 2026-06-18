@@ -18,7 +18,7 @@ model:
   qk_norm: true
   tie_embeddings: true
   seq_len: 1024
-  # ~124M parameters
+  # ~113M parameters (measured by scripts/smoke_test.py)
 
 train:
   precision: bf16
