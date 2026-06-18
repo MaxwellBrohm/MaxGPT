@@ -135,7 +135,9 @@ but quality-identical. Pause as often as you like — zero downside.
 5. **Shakedown run (124M)** end-to-end: pretrain → SFT → DPO → RAG → measure real
    throughput on the 5070.
 6. **Scale config to 1B**, launch the MaxGPT-Ultra pretrain (the long haul).
-7. **Post-train (SFT ✅, DPO ✅) + RAG + quantize next**, wire into the web UI.
+7. **Post-train (SFT ✅, DPO ✅) + RAG/attachments/web ✅.** Quantization = bf16 serving
+   (GGUF skipped; see TECHNIQUES §7). Remaining: wire RAG into the web UI; structured
+   tool-call loop; reasoning/CoT data; GUI MFU/VRAM + sample archive.
 
 ## Workflow (dev vs train)
 Develop on the **Mac** (write/test code, CPU smoke tests) → push to **GitHub** →

@@ -26,8 +26,10 @@ Develop here on the Mac; train on the Windows PC with the 5070 (pull from GitHub
 - ✅ Training loop (`train/`: WSD, checkpoint/resume, divergence guard, autosave) — `scripts/test_train.py`
 - ✅ Mission-control GUI (`gui/`: pause/play, live terminal + charts) — `scripts/test_gui.py`
 - ✅ Eval harness (`eval/`: perplexity, MC benchmarks, sample generations) + `model/generate.py` — `scripts/test_eval.py`
-- ⏭ Next: post-training (SFT → DPO), then RAG + attachments + quantization. The real
-  pretraining (data download + shakedown + 1B run) executes on the 5070 box.
+- ✅ Post-training: SFT (`posttrain/sft_data.py`, `scripts/sft.py`) — `scripts/test_sft.py`; DPO (`posttrain/dpo.py`, `scripts/dpo.py`) — `scripts/test_dpo.py`
+- ✅ Inference: RAG retriever + attachments + web tool + grounded chat (`rag/`) — `scripts/test_rag.py`
+- ⏭ Remaining: execute the real pretraining (download → shakedown → 1B) on the 5070; then
+  wire RAG into the web UI, a structured tool-call loop, reasoning data, and GUI MFU/VRAM.
 
 ### Run the real thing (on the 5070 box)
 ```
