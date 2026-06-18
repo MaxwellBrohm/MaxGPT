@@ -123,9 +123,10 @@ but quality-identical. Pause as often as you like — zero downside.
 ## Roadmap (build order)
 0. **Repo scaffold + this plan.** ✅
 1. **Model architecture** (modern decoder) + CPU smoke test. ✅
-2. **Tokenizer + data pipeline** (download → filter → tokenize to shards). Tokenizer
-   module ✅ (byte-level BPE, digit-split, byte-fallback, special tokens; verified).
-   Next: data download/filter, train the real 49k tokenizer on a corpus sample, shard.
+2. **Tokenizer + data pipeline**. Tokenizer module ✅ and shard/loader pipeline ✅
+   (byte-level BPE + special tokens; packed, resumable memmap loader; all verified).
+   Next (on the 5070 box): download the mix, train the real 49k tokenizer on a corpus
+   sample, tokenize the corpus to shards.
 3. **Training loop:** WSD, bf16, checkpoint/resume, autosave, logging, eval hooks.
 4. **GUI:** dashboard + pause/play + subprocess supervisor.
 5. **Shakedown run (124M)** end-to-end: pretrain → SFT → DPO → RAG → measure real

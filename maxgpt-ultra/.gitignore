@@ -6,12 +6,16 @@ venv/
 env/
 *.egg-info/
 
-# Data + model artifacts (large; never commit)
+# Data + model artifacts (large; never commit).
+# NOTE: the repo-root .gitignore excludes `data/` globally, so we re-include this
+# folder to keep the pipeline CODE tracked, then re-ignore the heavy artifacts.
+!data/
 data/**/*.bin
 data/**/*.npy
 data/**/*.arrow
 data/raw/
 data/shards/
+data/processed/
 checkpoints/
 runs/
 logs/
