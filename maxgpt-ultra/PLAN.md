@@ -106,7 +106,7 @@ but quality-identical. Pause as often as you like — zero downside.
 
 ## Roadmap (build order)
 0. **Repo scaffold + this plan.** ✅
-1. **Model architecture** (modern decoder) + CPU smoke test.
+1. **Model architecture** (modern decoder) + CPU smoke test. ✅
 2. **Tokenizer + data pipeline** (download → filter → tokenize to shards).
 3. **Training loop:** WSD, bf16, checkpoint/resume, autosave, logging, eval hooks.
 4. **GUI:** dashboard + pause/play + subprocess supervisor.
