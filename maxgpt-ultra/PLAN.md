@@ -125,8 +125,8 @@ but quality-identical. Pause as often as you like — zero downside.
 1. **Model architecture** (modern decoder) + CPU smoke test. ✅
 2. **Tokenizer + data pipeline**. Tokenizer module ✅ and shard/loader pipeline ✅
    (byte-level BPE + special tokens; packed, resumable memmap loader; all verified).
-   Next (on the 5070 box): download the mix, train the real 49k tokenizer on a corpus
-   sample, tokenize the corpus to shards.
+   One-command driver `scripts/prepare_data.py` ✅ (download mix -> train 49k tokenizer
+   -> shard); runs on the 5070 box (`--smoke` dry-run verified on the Mac).
 3. **Training loop:** WSD, bf16, checkpoint/resume, autosave, logging, eval hooks. ✅
    (built + CPU-tested: loss falls, exact resume, divergence guard + rollback; runs on GPU)
 4. **GUI:** dashboard + pause/play + subprocess supervisor.
