@@ -33,10 +33,11 @@ class Supervisor:
     """Manages one training subprocess: start / pause (checkpoint + exit) / stop, with a
     ring buffer of terminal lines and a reader of the run's metrics.jsonl."""
 
-    def __init__(self, cmd: list[str], run_out: str, stop_file: str):
+    def __init__(self, cmd: list[str], run_out: str, stop_file: str, data_path: str | None = None):
         self.cmd = cmd
         self.run_out = run_out
         self.stop_file = stop_file
+        self.data_path = data_path
         self.proc: subprocess.Popen | None = None
         self.log: deque[tuple[int, str]] = deque(maxlen=4000)
         self._seq = 0
@@ -58,6 +59,13 @@ class Supervisor:
     def start(self) -> bool:
         with self._lock:
             if self.running():
+                return False
+            if self.data_path and not os.path.exists(os.path.join(self.data_path, "meta.json")):
+                self._append("$ start requested")
+                self._append(f"  ✗ ERROR: model / data not found  (no shards at '{self.data_path}').")
+                self._append("  Nothing has been trained on this machine yet.")
+                self._append("  Run  python scripts/prepare_data.py  to build the data, then press play again.")
+                self.status = "error"
                 return False
             for p in (self.stop_file,):
                 try:
@@ -180,7 +188,7 @@ def build_supervisor(config: str, data: str, out: str) -> Supervisor:
     stop_file = os.path.join(out, "STOP")
     cmd = [sys.executable, os.path.join("scripts", "train.py"),
            "--config", config, "--data", data, "--out", out, "--stop-file", stop_file]
-    return Supervisor(cmd, out, stop_file)
+    return Supervisor(cmd, out, stop_file, data_path=data)
 
 
 def main() -> None:
