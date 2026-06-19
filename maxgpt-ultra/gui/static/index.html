@@ -3,124 +3,209 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>MaxGPT-Ultra — mission control</title>
+<title>MaxGPT-Ultra — reactor</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css" />
 <style>
-  :root{--bg:#07070c;--panel:#0f0f17;--line:#20202e;--ink:#e7e7f0;--mut:#7a7a92;--acc:#ff7a1a;--good:#5de4a0;--warn:#ffd166;--bad:#ff5d6c}
+  @property --spin { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+  :root{
+    --bg:#04050a; --metal-hi:#3a3f4b; --metal-lo:#0b0d12; --edge:#4a4f5a;
+    --green:#33ff9b; --green-dim:#1b6b48; --ink:#d8dde6; --mut:#6f7585;
+    --amber:#ffd166; --red:#ff5d6c; --blue:#7fb2ff;
+  }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:13px}
-  header{display:flex;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
-  header .logo{color:var(--acc);font-weight:700;letter-spacing:.5px}
-  header .sub{color:var(--mut)}
-  .pill{padding:2px 10px;border-radius:999px;border:1px solid var(--line);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
-  .pill.running{color:var(--good);border-color:var(--good)}
-  .pill.paused{color:var(--warn);border-color:var(--warn)}
-  .pill.exited,.pill.stopped{color:var(--bad);border-color:var(--bad)}
+  html,body{height:100%}
+  body{margin:0;background:
+      radial-gradient(120% 90% at 50% 0%, #0b0e16 0%, var(--bg) 60%),
+      var(--bg);
+    color:var(--ink);font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:13px;overflow:hidden}
+  /* faint hex/grid texture */
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.5;
+    background-image:linear-gradient(#0d1320 1px,transparent 1px),linear-gradient(90deg,#0d1320 1px,transparent 1px);
+    background-size:34px 34px;mask:radial-gradient(120% 90% at 50% 40%,#000 0,transparent 80%)}
+
+  .topbar{position:relative;z-index:5;display:flex;align-items:center;gap:12px;padding:8px 16px;
+    border-bottom:1px solid #141823;background:linear-gradient(#0a0d14,#06080d)}
+  .topbar .logo{color:var(--green);font-weight:700;letter-spacing:1px;text-shadow:0 0 12px rgba(51,255,155,.5)}
+  .topbar .sub{color:var(--mut)}
+  .pill{margin-left:4px;padding:2px 11px;border-radius:999px;border:1px solid #2a2f3a;font-size:11px;
+    text-transform:uppercase;letter-spacing:.12em;color:var(--mut)}
+  .pill.running{color:var(--green);border-color:var(--green);box-shadow:0 0 14px rgba(51,255,155,.35)}
+  .pill.paused{color:var(--amber);border-color:var(--amber)}
+  .pill.exited,.pill.stopped{color:var(--red);border-color:var(--red)}
   .grow{flex:1}
-  button{background:#15151f;color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:6px 14px;font-family:inherit;font-size:12px;cursor:pointer}
-  button:hover{border-color:var(--acc)}
-  button.play{color:var(--good)} button.pause{color:var(--warn)} button.stop{color:var(--bad)}
-  .stats{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--line);border-bottom:1px solid var(--line)}
-  .stat{background:var(--panel);padding:9px 12px}
-  .stat .k{color:var(--mut);font-size:10px;text-transform:uppercase;letter-spacing:.1em}
-  .stat .v{font-size:18px;margin-top:3px}
+  .stopbtn{background:#10131b;color:var(--mut);border:1px solid #2a2f3a;border-radius:6px;
+    padding:5px 12px;font-family:inherit;font-size:11px;cursor:pointer;letter-spacing:.1em}
+  .stopbtn:hover{color:var(--red);border-color:var(--red)}
+
+  /* ---- 2x2 reactor grid ---- */
+  .hud{position:relative;z-index:1;height:calc(100vh - 41px);
+    display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:14px;padding:14px}
+  .panel{position:relative;border-radius:16px;overflow:hidden;min-height:0;
+    background:linear-gradient(150deg,#121620 0%,#0a0c12 55%,#070910 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.06), inset 0 0 0 1px #20242e, 0 10px 30px -18px #000;
+    transition:filter .9s ease, box-shadow .9s ease;
+    filter:saturate(.55) brightness(.82)}                 /* "off" by default */
+  /* flowing energy ring around each panel (revealed when live) */
+  .panel::after{content:"";position:absolute;inset:0;border-radius:16px;padding:1.5px;pointer-events:none;
+    background:conic-gradient(from var(--spin), transparent 0deg, var(--green) 40deg, transparent 110deg, transparent 360deg);
+    -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor; mask-composite:exclude;
+    opacity:0; transition:opacity 1s ease}
+  body.live .panel{filter:none;box-shadow: inset 0 1px 0 rgba(255,255,255,.10), inset 0 0 22px -6px rgba(51,255,155,.25), inset 0 0 0 1px #2b5; 0 10px 30px -18px #000}
+  body.live .panel::after{opacity:.9;animation:spin 5s linear infinite}
+  @keyframes spin{to{--spin:360deg}}
+
+  .panel h3{margin:0;padding:7px 13px;color:var(--mut);font-size:10.5px;text-transform:uppercase;
+    letter-spacing:.18em;border-bottom:1px solid #161a24;background:linear-gradient(#0c0f16,#090b11)}
+  body.live .panel h3{color:var(--green);text-shadow:0 0 10px rgba(51,255,155,.35)}
+  .tl{grid-column:1;grid-row:1} .bl{grid-column:1;grid-row:2}
+  .tr{grid-column:2;grid-row:1} .br{grid-column:2;grid-row:2}
+
+  /* stats */
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#161a24;height:calc(100% - 31px)}
+  .stat{background:linear-gradient(#0c0f16,#080a10);padding:10px 14px;display:flex;flex-direction:column;justify-content:center}
+  .stat .k{color:var(--mut);font-size:9.5px;text-transform:uppercase;letter-spacing:.14em}
+  .stat .v{font-size:20px;margin-top:4px;font-variant-numeric:tabular-nums}
+  body.live .stat .v{color:#eafff4;text-shadow:0 0 10px rgba(51,255,155,.25)}
   .stat .v small{font-size:11px;color:var(--mut)}
-  .bar{height:4px;background:#15151f;border-bottom:1px solid var(--line)}
-  .bar>div{height:100%;background:var(--acc);width:0%}
-  main{display:grid;grid-template-columns:1.15fr .85fr;gap:1px;background:var(--line);height:calc(100vh - 150px)}
-  .col{background:var(--bg);display:flex;flex-direction:column;min-height:0}
-  .col h3{margin:0;padding:7px 12px;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.1em;border-bottom:1px solid var(--line);background:var(--panel)}
-  #term{flex:1;min-height:0;padding:6px 8px}
-  .chart{padding:8px 10px;border-bottom:1px solid var(--line)}
+  .progwrap{grid-column:1 / -1;background:#080a10;padding:0}
+  .progwrap .bar{height:4px;background:#11151d}
+  .progwrap .bar>div{height:100%;width:0%;background:linear-gradient(90deg,var(--green-dim),var(--green));
+    box-shadow:0 0 12px rgba(51,255,155,.6);transition:width .5s}
+
+  #term{height:calc(100% - 31px);padding:6px 8px}
+  .chart{height:calc(100% - 31px);padding:8px 10px}
   .u-title{color:var(--mut)!important}
+
+  /* ---- central reactor core (play/pause) ---- */
+  .hub{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:4;
+    width:200px;height:200px;border-radius:50%;
+    background:radial-gradient(circle at 50% 38%, #1a1f2a 0%, #0a0c12 60%, #05060a 100%);
+    box-shadow:0 0 0 1px #20242e, 0 18px 50px -10px #000;display:grid;place-items:center}
+  .core{position:relative;width:128px;height:128px;border-radius:50%;cursor:pointer;border:none;
+    background:
+      radial-gradient(circle at 50% 32%, #4b515f 0%, #20242d 45%, #0c0e14 100%);
+    box-shadow: inset 0 2px 3px rgba(255,255,255,.18), inset 0 -8px 18px rgba(0,0,0,.7),
+                0 0 0 2px #3a3f4b, 0 10px 26px -8px #000;
+    display:grid;place-items:center;transition:box-shadow .5s, transform .1s}
+  .core:active{transform:scale(.97)}
+  .core svg{width:46px;height:46px;fill:#cdd3de;filter:drop-shadow(0 1px 1px rgba(0,0,0,.6));transition:fill .4s}
+  /* energized ring around the core */
+  .core::before{content:"";position:absolute;inset:-12px;border-radius:50%;pointer-events:none;
+    border:2px solid transparent;transition:border-color .6s, box-shadow .6s}
+  body.live .core{box-shadow: inset 0 2px 3px rgba(255,255,255,.22), inset 0 -8px 18px rgba(0,0,0,.6),
+                0 0 0 2px #2c6, 0 0 40px rgba(51,255,155,.5)}
+  body.live .core svg{fill:#eafff4}
+  body.live .core::before{border-color:rgba(51,255,155,.55);box-shadow:0 0 26px rgba(51,255,155,.45);
+    animation:corepulse 2.2s ease-in-out infinite}
+  @keyframes corepulse{0%,100%{transform:scale(1);opacity:.8}50%{transform:scale(1.06);opacity:1}}
+
+  /* one-shot power flood when you hit play */
+  .flood{position:fixed;inset:0;z-index:3;pointer-events:none;border-radius:0;opacity:0;
+    background:radial-gradient(circle at 50% 50%, rgba(51,255,155,.33), transparent 60%)}
+  body.flooding .flood{animation:flood 1.1s ease-out}
+  @keyframes flood{0%{opacity:.9;clip-path:circle(6% at 50% 50%)}100%{opacity:0;clip-path:circle(85% at 50% 50%)}}
+
+  @media (prefers-reduced-motion: reduce){
+    .panel::after,body.live .core::before{animation:none!important}
+  }
 </style>
 </head>
 <body>
-<header>
-  <span class="logo">◆ MaxGPT-Ultra</span>
-  <span class="sub">mission control</span>
+<div class="topbar">
+  <span class="logo">◆ MAXGPT-ULTRA</span><span class="sub">reactor</span>
   <span id="pill" class="pill">idle</span>
   <span class="grow"></span>
-  <button class="play" onclick="api('start')">▶ play</button>
-  <button class="pause" onclick="api('pause')">❚❚ pause</button>
-  <button class="stop" onclick="api('stop')">■ stop</button>
-</header>
-
-<div class="stats">
-  <div class="stat"><div class="k">step</div><div class="v" id="s-step">—</div></div>
-  <div class="stat"><div class="k">progress</div><div class="v" id="s-prog">—</div></div>
-  <div class="stat"><div class="k">loss</div><div class="v" id="s-loss">—</div></div>
-  <div class="stat"><div class="k">lr</div><div class="v" id="s-lr">—</div></div>
-  <div class="stat"><div class="k">tokens/sec</div><div class="v" id="s-tps">—</div></div>
-  <div class="stat"><div class="k">grad norm</div><div class="v" id="s-gn">—</div></div>
-  <div class="stat"><div class="k">eta</div><div class="v" id="s-eta">—</div></div>
+  <button class="stopbtn" onclick="api('stop')">■ STOP</button>
 </div>
-<div class="bar"><div id="progbar"></div></div>
 
-<main>
-  <div class="col"><h3>terminal</h3><div id="term"></div></div>
-  <div class="col">
-    <h3>analytics</h3>
-    <div class="chart"><div id="losschart"></div></div>
-    <div class="chart"><div id="lrchart"></div></div>
+<div class="hud">
+  <section class="panel tl"><h3>telemetry</h3>
+    <div class="stats">
+      <div class="stat"><div class="k">step</div><div class="v" id="s-step">—</div></div>
+      <div class="stat"><div class="k">progress</div><div class="v" id="s-prog">—</div></div>
+      <div class="stat"><div class="k">loss</div><div class="v" id="s-loss">—</div></div>
+      <div class="stat"><div class="k">learning rate</div><div class="v" id="s-lr">—</div></div>
+      <div class="stat"><div class="k">tokens / sec</div><div class="v" id="s-tps">—</div></div>
+      <div class="stat"><div class="k">grad norm</div><div class="v" id="s-gn">—</div></div>
+      <div class="stat"><div class="k">eta</div><div class="v" id="s-eta">—</div></div>
+      <div class="stat"><div class="k">epoch</div><div class="v" id="s-ep">—</div></div>
+      <div class="progwrap"><div class="bar"><div id="progbar"></div></div></div>
+    </div>
+  </section>
+  <section class="panel tr"><h3>loss</h3><div class="chart" id="losschart"></div></section>
+  <section class="panel bl"><h3>terminal</h3><div id="term"></div></section>
+  <section class="panel br"><h3>learning rate</h3><div class="chart" id="lrchart"></div></section>
+
+  <div class="hub">
+    <button class="core" id="core" title="play / pause" aria-label="play or pause training"></button>
   </div>
-</main>
+</div>
+<div class="flood"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
 <script>
-const term = new Terminal({fontSize:12, theme:{background:'#07070c', foreground:'#cfcfe0'}, convertEol:true, scrollback:5000});
+const PLAY = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
+const PAUSE = '<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
+const core = document.getElementById('core');
+let running = false;
+
+const term = new Terminal({fontSize:12, theme:{background:'#070910', foreground:'#bfeede'}, convertEol:true, scrollback:6000});
 term.open(document.getElementById('term'));
 
-function darkAxis(){return {stroke:'#7a7a92', grid:{stroke:'#1a1a26'}, ticks:{stroke:'#1a1a26'}};}
-function mkChart(el, label, color){
-  return new uPlot({title:label, width:el.clientWidth||460, height:200,
-    series:[{}, {label, stroke:color, width:2, points:{show:false}}],
-    axes:[darkAxis(), darkAxis()], scales:{x:{time:false}}}, [[],[]], el);
+function axis(){return {stroke:'#5a6072', grid:{stroke:'#11151d'}, ticks:{stroke:'#11151d'}};}
+function mkChart(el, label, color, yfmt){
+  const yax = yfmt ? Object.assign(axis(), {size:54, values:(u,vals)=>vals.map(yfmt)}) : axis();
+  return new uPlot({title:label, width:el.clientWidth||420, height:el.clientHeight-26||220,
+    series:[{}, {label, stroke:color, width:2, fill:color+'18', points:{show:false}}],
+    axes:[axis(), yax], scales:{x:{time:false}}}, [[],[]], el);
 }
-const lossChart = mkChart(document.getElementById('losschart'), 'loss', '#ff7a1a');
-const lrChart   = mkChart(document.getElementById('lrchart'), 'learning rate', '#5aa9ff');
-addEventListener('resize', ()=>{ for(const c of [lossChart,lrChart]) c.setSize({width:c.root.parentElement.clientWidth, height:200}); });
+const lossChart = mkChart(document.getElementById('losschart'), 'loss', '#33ff9b');
+const lrChart   = mkChart(document.getElementById('lrchart'), 'learning rate', '#7fb2ff',
+                          v => v ? v.toExponential(1) : '0');
+function resize(){ for(const [c,id] of [[lossChart,'losschart'],[lrChart,'lrchart']]){
+  const el=document.getElementById(id); c.setSize({width:el.clientWidth, height:el.clientHeight-26}); } }
+addEventListener('resize', resize); setTimeout(resize, 60);
 
-async function api(action){ try{ await fetch('/api/'+action, {method:'POST'}); }catch(e){} }
+async function api(a){ try{ await fetch('/api/'+a,{method:'POST'}); }catch(e){} }
+function setCore(r){ running=r; core.innerHTML = r?PAUSE:PLAY; }
+core.onclick = ()=>{ if(running){ api('pause'); } else { document.body.classList.add('flooding');
+  setTimeout(()=>document.body.classList.remove('flooding'),1100); api('start'); } };
+setCore(false);
 
-function fmtEta(s){ if(!isFinite(s)||s<=0) return '—'; const d=Math.floor(s/86400), h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60); return d?`${d}d ${h}h`:h?`${h}h ${m}m`:`${m}m`; }
+function fmtEta(s){ if(!isFinite(s)||s<=0) return '—'; const d=s/86400|0,h=s%86400/3600|0,m=s%3600/60|0;
+  return d?`${d}d ${h}h`:h?`${h}h ${m}m`:`${m}m`; }
+const $=id=>document.getElementById(id);
 
 function applyMetrics(data){
-  let meta=null; const steps=[], loss=[], lr=[]; let last=null;
-  for(const r of data){
-    if(r.event==='meta') meta=r;
-    if(r.event) continue;
-    if(r.step!==undefined && r.loss!==undefined){ steps.push(r.step); loss.push(r.loss); lr.push(r.lr); last=r; }
-  }
-  lossChart.setData([steps, loss]); lrChart.setData([steps, lr]);
+  let meta=null,last=null; const xs=[],loss=[],lr=[];
+  for(const r of data){ if(r.event==='meta'){meta=r;continue} if(r.event) continue;
+    if(r.step!==undefined&&r.loss!==undefined){ xs.push(r.step);loss.push(r.loss);lr.push(r.lr);last=r; } }
+  lossChart.setData([xs,loss]); lrChart.setData([xs,lr]);
   if(last){
-    document.getElementById('s-step').textContent = last.step.toLocaleString();
-    document.getElementById('s-loss').textContent = last.loss.toFixed(3);
-    document.getElementById('s-lr').textContent = (last.lr!=null? last.lr.toExponential(2):'—');
-    document.getElementById('s-tps').textContent = last.tok_per_s? Math.round(last.tok_per_s).toLocaleString() : '—';
-    document.getElementById('s-gn').textContent = last.grad_norm!=null? last.grad_norm.toFixed(2):'—';
-    if(meta && meta.total_steps){
-      const pct = 100*last.step/meta.total_steps;
-      document.getElementById('s-prog').innerHTML = pct.toFixed(1)+'<small> %</small>';
-      document.getElementById('progbar').style.width = Math.min(100,pct)+'%';
-      const sps = last.tok_per_s && meta.tokens_per_step ? last.tok_per_s/meta.tokens_per_step : 0;
-      document.getElementById('s-eta').textContent = sps? fmtEta((meta.total_steps-last.step)/sps) : '—';
-    }
+    $('s-step').textContent=last.step.toLocaleString();
+    $('s-loss').textContent=last.loss.toFixed(3);
+    $('s-lr').textContent=last.lr!=null?last.lr.toExponential(2):'—';
+    $('s-tps').textContent=last.tok_per_s?Math.round(last.tok_per_s).toLocaleString():'—';
+    $('s-gn').textContent=last.grad_norm!=null?last.grad_norm.toFixed(2):'—';
+    if(meta&&meta.total_steps){ const pct=100*last.step/meta.total_steps;
+      $('s-prog').innerHTML=pct.toFixed(1)+'<small> %</small>'; $('progbar').style.width=Math.min(100,pct)+'%';
+      const sps=last.tok_per_s&&meta.tokens_per_step?last.tok_per_s/meta.tokens_per_step:0;
+      $('s-eta').textContent=sps?fmtEta((meta.total_steps-last.step)/sps):'—'; }
   }
 }
-
-function setStatus(s){ const p=document.getElementById('pill'); p.textContent=s; p.className='pill '+s; }
+function setStatus(s){ const p=$('pill'); p.textContent=s; p.className='pill '+s;
+  setCore(s==='running'); document.body.classList.toggle('live', s==='running'); }
 
 function connect(){
-  const ws = new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/ws');
-  ws.onmessage = (ev)=>{ const m=JSON.parse(ev.data);
+  const ws=new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/ws');
+  ws.onmessage=e=>{ const m=JSON.parse(e.data);
     if(m.type==='log'){ for(const l of m.lines) term.writeln(l); }
     else if(m.type==='metrics'){ applyMetrics(m.data); }
-    else if(m.type==='status'){ setStatus(m.status); }
-  };
-  ws.onclose = ()=> setTimeout(connect, 1500);
+    else if(m.type==='status'){ setStatus(m.status); } };
+  ws.onclose=()=>setTimeout(connect,1500);
 }
 connect();
 </script>
