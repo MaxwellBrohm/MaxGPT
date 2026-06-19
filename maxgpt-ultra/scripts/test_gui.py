@@ -1,9 +1,8 @@
-"""Backend smoke test for the mission-control GUI.
+"""Backend smoke test for the pipeline GUI.
 
-Uses a dummy "training" subprocess (prints lines, writes metrics.jsonl, respects the stop
-file) so we can exercise the supervisor mechanics without a GPU: serve the dashboard,
-start, capture terminal + metrics, pause via the stop-file (process checkpoints + exits),
-and stream over the websocket. The real training integration runs on the 5070 box.
+Uses dummy stage processes (print + write metrics + honor the stop-file) to verify the
+orchestration without a GPU: stages auto-advance in order, pause checkpoints+halts the
+current stage, the REST endpoints serve per-stage data, and the dashboard is served.
 
 Run from maxgpt-ultra/:  ../venv/bin/python scripts/test_gui.py
 """
@@ -17,79 +16,82 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 from fastapi.testclient import TestClient
 
 import gui.server as server
+from gui.server import Stage, Pipeline
 
-# stands in for scripts/train.py: emits logs + metrics, exits when the stop file appears
 DUMMY = r'''
 import sys, os, time, json
-run_out, stop_file = sys.argv[1], sys.argv[2]
+run_out, mode = sys.argv[1], sys.argv[2]
 os.makedirs(run_out, exist_ok=True)
-mp = os.path.join(run_out, "metrics.jsonl")
-print("dummy training started", flush=True)
+mp = os.path.join(run_out, "metrics.jsonl"); stop = os.path.join(run_out, "STOP")
+print(f"dummy {mode} start", flush=True)
 i = 0
 while True:
-    if os.path.exists(stop_file):
-        print("stop file seen; checkpointing and exiting", flush=True)
-        break
+    if os.path.exists(stop): print("stop seen; checkpoint + exit", flush=True); break
     i += 1
-    print(f"hello step {i}", flush=True)
-    with open(mp, "a") as f:
-        f.write(json.dumps({"step": i, "loss": 5.0 / (1 + i), "lr": 1e-3,
-                            "tok_per_s": 1000, "grad_norm": 1.0}) + "\n")
-    time.sleep(0.1)
-print("dummy exited", flush=True)
+    print(f"step {i}", flush=True)
+    with open(mp, "a") as f: f.write(json.dumps({"step": i, "loss": 5.0/(1+i), "lr": 1e-3}) + "\n")
+    if mode == "quick" and i >= 3: break
+    time.sleep(0.15)
+print("dummy done", flush=True)
 '''
 
 
-def main() -> None:
-    print("=" * 72)
-    print("MaxGPT-Ultra GUI backend smoke test")
-    print("=" * 72)
+def dummy(run_out, mode):
+    return Stage(mode + "_" + os.path.basename(run_out), mode.title(),
+                 (lambda r=run_out, m=mode: [sys.executable, "-c", DUMMY, r, m]), run_out)
 
-    run_out = tempfile.mkdtemp(prefix="mgu_gui_")
-    stop_file = os.path.join(run_out, "STOP")
-    cmd = [sys.executable, "-c", DUMMY, run_out, stop_file]
-    server.SUP = server.Supervisor(cmd, run_out, stop_file)
+
+def wait_for(fn, timeout=8.0):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if fn():
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def main():
+    print("=" * 72)
+    print("MaxGPT-Ultra pipeline GUI smoke test")
+    print("=" * 72)
+    d = tempfile.mkdtemp(prefix="mgu_pipe_")
+
+    print("\n[1] stages auto-advance in order")
+    a, b = dummy(os.path.join(d, "a"), "quick"), dummy(os.path.join(d, "b"), "quick")
+    server.PIPE = Pipeline([a, b])
     client = TestClient(server.app)
-
-    print("\n[1] dashboard + status served")
-    r = client.get("/")
-    assert r.status_code == 200 and "MaxGPT-Ultra" in r.text and "mission control" in r.text
-    assert client.get("/api/status").json()["status"] == "idle"
-    print("  GET / returns the dashboard; status=idle ✓")
-
-    print("\n[2] start -> running, terminal + metrics captured")
+    assert client.get("/").status_code == 200
     assert client.post("/api/start").json()["ok"] is True
-    time.sleep(1.6)
-    assert server.SUP.running(), "process not running after start"
-    lines, _ = server.SUP.lines_since(0)
-    assert any("hello step" in l for l in lines), "terminal output not captured"
-    assert len(server.SUP.metrics_tail()) > 0, "metrics.jsonl not picked up"
-    print(f"  running; captured {len(lines)} log lines and {len(server.SUP.metrics_tail())} metric rows ✓")
+    assert wait_for(lambda: a.status == "done" and b.status == "done", 12), \
+        f"stages did not both finish (a={a.status}, b={b.status})"
+    print(f"  stage A -> done, then auto-started B -> done ✓")
 
-    print("\n[3] websocket streams log/metrics/status")
-    with client.websocket_connect("/ws") as wsc:
-        first = wsc.receive_json()
-        assert first["type"] == "log"
-        got = {first["type"]}
-        for _ in range(3):
-            got.add(wsc.receive_json()["type"])
-    assert "metrics" in got and "status" in got
-    print(f"  websocket delivered {sorted(got)} ✓")
+    print("\n[2] per-stage REST data")
+    sa = client.get("/api/stage/" + a.key).json()
+    assert any("step" in l for l in sa["log"]) and len(sa["metrics"]) > 0
+    pipe = client.get("/api/pipeline").json()
+    assert [s["status"] for s in pipe["stages"]] == ["done", "done"]
+    print(f"  /api/stage returns log+metrics; /api/pipeline shows both done ✓")
 
-    print("\n[4] pause -> stop file -> process checkpoints + exits, VRAM freed")
+    print("\n[3] pause halts the current stage (checkpoint + exit)")
+    longst = dummy(os.path.join(d, "long"), "loop")
+    server.PIPE = Pipeline([longst])
+    client.post("/api/start")
+    assert wait_for(lambda: server.PIPE.running(), 5), "long stage never started"
+    time.sleep(0.4)
     assert client.post("/api/pause").json()["ok"] is True
-    assert not server.SUP.running(), "process still running after pause"
-    assert server.SUP.snapshot()["status"] == "paused"
-    lines, _ = server.SUP.lines_since(0)
-    assert any("exiting" in l for l in lines), "did not see graceful exit"
-    print("  paused: process exited cleanly on the stop-file ✓")
+    assert wait_for(lambda: longst.status == "paused", 8), f"did not pause (status={longst.status})"
+    assert not server.PIPE.running()
+    print("  pause -> stage checkpointed and halted (status=paused) ✓")
 
-    print("\n[5] play again -> fresh process runs")
-    assert client.post("/api/start").json()["ok"] is True
-    time.sleep(0.6)
-    assert server.SUP.running()
+    print("\n[4] stop aborts")
+    st = dummy(os.path.join(d, "s"), "loop")
+    server.PIPE = Pipeline([st])
+    client.post("/api/start")
+    assert wait_for(lambda: server.PIPE.running(), 5)
     client.post("/api/stop")
-    print("  restarted, then stopped ✓")
+    assert wait_for(lambda: not server.PIPE.running(), 5)
+    print("  stop -> pipeline aborted ✓")
 
     print("\n" + "=" * 72)
     print("ALL CHECKS PASSED ✅")

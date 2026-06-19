@@ -7,19 +7,11 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css" />
 <style>
-  @property --spin { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
-  :root{
-    --bg:#04050a; --metal-hi:#3a3f4b; --metal-lo:#0b0d12; --edge:#4a4f5a;
-    --green:#33ff9b; --green-dim:#1b6b48; --ink:#d8dde6; --mut:#6f7585;
-    --amber:#ffd166; --red:#ff5d6c; --blue:#7fb2ff;
-  }
-  *{box-sizing:border-box}
-  html,body{height:100%}
-  body{margin:0;background:
-      radial-gradient(120% 90% at 50% 0%, #0b0e16 0%, var(--bg) 60%),
-      var(--bg);
+  :root{ --bg:#04050a; --edge:#20242e; --green:#33ff9b; --green-dim:#1b6b48;
+    --ink:#d8dde6; --mut:#6f7585; --amber:#ffd166; --red:#ff5d6c; --blue:#7fb2ff; }
+  *{box-sizing:border-box} html,body{height:100%}
+  body{margin:0;background:radial-gradient(120% 90% at 50% 0%,#0b0e16 0%,var(--bg) 60%),var(--bg);
     color:var(--ink);font-family:'JetBrains Mono',ui-monospace,Menlo,monospace;font-size:13px;overflow:hidden}
-  /* faint hex/grid texture */
   body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.5;
     background-image:linear-gradient(#0d1320 1px,transparent 1px),linear-gradient(90deg,#0d1320 1px,transparent 1px);
     background-size:34px 34px;mask:radial-gradient(120% 90% at 50% 40%,#000 0,transparent 80%)}
@@ -28,100 +20,93 @@
     border-bottom:1px solid #141823;background:linear-gradient(#0a0d14,#06080d)}
   .topbar .logo{color:var(--green);font-weight:700;letter-spacing:1px;text-shadow:0 0 12px rgba(51,255,155,.5)}
   .topbar .sub{color:var(--mut)}
-  .pill{margin-left:4px;padding:2px 11px;border-radius:999px;border:1px solid #2a2f3a;font-size:11px;
-    text-transform:uppercase;letter-spacing:.12em;color:var(--mut)}
+  .pill{padding:2px 11px;border-radius:999px;border:1px solid #2a2f3a;font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--mut)}
   .pill.running{color:var(--green);border-color:var(--green);box-shadow:0 0 14px rgba(51,255,155,.35)}
+  .pill.complete{color:var(--blue);border-color:var(--blue)}
   .pill.paused{color:var(--amber);border-color:var(--amber)}
-  .pill.exited,.pill.stopped,.pill.error{color:var(--red);border-color:var(--red)}
+  .pill.error{color:var(--red);border-color:var(--red)}
   .grow{flex:1}
-  .stopbtn{background:#10131b;color:var(--mut);border:1px solid #2a2f3a;border-radius:6px;
-    padding:5px 12px;font-family:inherit;font-size:11px;cursor:pointer;letter-spacing:.1em}
+  .stopbtn{background:#10131b;color:var(--mut);border:1px solid #2a2f3a;border-radius:6px;padding:5px 12px;font-family:inherit;font-size:11px;cursor:pointer;letter-spacing:.1em}
   .stopbtn:hover{color:var(--red);border-color:var(--red)}
 
-  /* ---- 2x2 reactor grid ---- */
-  .hud{position:relative;z-index:1;height:calc(100vh - 41px);
-    display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:14px;padding:14px}
+  /* stage stepper */
+  .steps{position:relative;z-index:5;display:flex;align-items:center;gap:6px;padding:9px 16px;border-bottom:1px solid #141823;background:#06080d}
+  .step{display:flex;align-items:center;gap:8px;padding:6px 14px;border-radius:9px;border:1px solid var(--edge);
+    background:#0c0f16;color:var(--mut);font-size:11px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;transition:.2s}
+  .step:hover{border-color:#3a3f4b;color:var(--ink)}
+  .step.viewing{color:var(--ink);border-color:var(--green);box-shadow:0 0 14px -4px rgba(51,255,155,.5)}
+  .step .dot{width:8px;height:8px;border-radius:50%;background:#3a3f4b}
+  .step.s-running .dot{background:var(--green);box-shadow:0 0 10px var(--green);animation:pulse 1.5s ease-in-out infinite}
+  .step.s-done .dot{background:var(--green)} .step.s-ready .dot{background:var(--blue)}
+  .step.s-paused .dot{background:var(--amber)} .step.s-error .dot{background:var(--red)}
+  .step .sep{color:#2a2f3a}
+  @keyframes pulse{0%,100%{opacity:.55}50%{opacity:1}}
+
+  .hud{position:relative;z-index:1;height:calc(100vh - 86px);display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:14px;padding:14px}
   .panel{position:relative;border-radius:16px;overflow:hidden;min-height:0;
     background:linear-gradient(150deg,#121620 0%,#0a0c12 55%,#070910 100%);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.06), inset 0 0 0 1px #20242e, 0 10px 30px -18px #000;
-    transition:filter .9s ease, box-shadow .9s ease;
-    filter:saturate(.55) brightness(.82)}                 /* "off" by default */
-  /* flowing energy ring around each panel (revealed when live) */
-  .panel::after{content:"";position:absolute;inset:0;border-radius:16px;padding:1.5px;pointer-events:none;
-    background:conic-gradient(from var(--spin), transparent 0deg, var(--green) 40deg, transparent 110deg, transparent 360deg);
-    -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-    -webkit-mask-composite:xor; mask-composite:exclude;
-    opacity:0; transition:opacity 1s ease}
-  body.live .panel{filter:none;box-shadow: inset 0 1px 0 rgba(255,255,255,.10), inset 0 0 22px -6px rgba(51,255,155,.25), inset 0 0 0 1px #2b5; 0 10px 30px -18px #000}
-  body.live .panel::after{opacity:.9;animation:spin 5s linear infinite}
-  @keyframes spin{to{--spin:360deg}}
-
-  .panel h3{margin:0;padding:7px 13px;color:var(--mut);font-size:10.5px;text-transform:uppercase;
-    letter-spacing:.18em;border-bottom:1px solid #161a24;background:linear-gradient(#0c0f16,#090b11)}
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.06), inset 0 0 0 1px #20242e, 0 10px 30px -18px #000;
+    transition:filter .9s ease, box-shadow .9s ease; filter:saturate(.55) brightness(.82)}
+  /* live = steady green edge + glow (no animation) */
+  body.live .panel{filter:none;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.10), inset 0 0 0 1.5px rgba(51,255,155,.55),
+               inset 0 0 26px -8px rgba(51,255,155,.35), 0 0 22px -8px rgba(51,255,155,.4)}
+  .panel h3{margin:0;padding:7px 13px;color:var(--mut);font-size:10.5px;text-transform:uppercase;letter-spacing:.18em;border-bottom:1px solid #161a24;background:linear-gradient(#0c0f16,#090b11)}
   body.live .panel h3{color:var(--green);text-shadow:0 0 10px rgba(51,255,155,.35)}
-  .tl{grid-column:1;grid-row:1} .bl{grid-column:1;grid-row:2}
-  .tr{grid-column:2;grid-row:1} .br{grid-column:2;grid-row:2}
+  .tl{grid-column:1;grid-row:1} .bl{grid-column:1;grid-row:2} .tr{grid-column:2;grid-row:1} .br{grid-column:2;grid-row:2}
 
-  /* stats */
   .stats{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#161a24;height:calc(100% - 31px)}
-  .stat{background:linear-gradient(#0c0f16,#080a10);padding:10px 14px;display:flex;flex-direction:column;justify-content:center}
+  .stat{background:linear-gradient(#0c0f16,#080a10);padding:9px 14px;display:flex;flex-direction:column;justify-content:center}
   .stat .k{color:var(--mut);font-size:9.5px;text-transform:uppercase;letter-spacing:.14em}
-  .stat .v{font-size:20px;margin-top:4px;font-variant-numeric:tabular-nums}
-  body.live .stat .v{color:#eafff4;text-shadow:0 0 10px rgba(51,255,155,.25)}
+  .stat .v{font-size:19px;margin-top:3px;font-variant-numeric:tabular-nums}
+  body.live .stat .v{color:#eafff4}
   .stat .v small{font-size:11px;color:var(--mut)}
-  .progwrap{grid-column:1 / -1;background:#080a10;padding:0}
-  .progwrap .bar{height:4px;background:#11151d}
-  .progwrap .bar>div{height:100%;width:0%;background:linear-gradient(90deg,var(--green-dim),var(--green));
-    box-shadow:0 0 12px rgba(51,255,155,.6);transition:width .5s}
-
+  .progwrap{grid-column:1 / -1;background:#080a10} .progwrap .bar{height:4px;background:#11151d}
+  .progwrap .bar>div{height:100%;width:0%;background:linear-gradient(90deg,var(--green-dim),var(--green));box-shadow:0 0 12px rgba(51,255,155,.6);transition:width .5s}
   #term{height:calc(100% - 31px);padding:6px 8px}
-  .chart{height:calc(100% - 31px);padding:8px 10px}
-  .u-title{color:var(--mut)!important}
+  .chart{height:calc(100% - 31px);padding:8px 10px} .u-title{color:var(--mut)!important}
 
-  /* ---- central reactor core (play/pause) ---- */
-  .hub{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:4;
-    width:200px;height:200px;border-radius:50%;
-    background:radial-gradient(circle at 50% 38%, #1a1f2a 0%, #0a0c12 60%, #05060a 100%);
-    box-shadow:0 0 0 1px #20242e, 0 18px 50px -10px #000;display:grid;place-items:center}
+  /* reactor core */
+  .hub{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:4;width:200px;height:200px;border-radius:50%;
+    background:radial-gradient(circle at 50% 38%,#1a1f2a 0%,#0a0c12 60%,#05060a 100%);box-shadow:0 0 0 1px #20242e,0 18px 50px -10px #000;display:grid;place-items:center}
   .core{position:relative;width:128px;height:128px;border-radius:50%;cursor:pointer;border:none;
-    background:
-      radial-gradient(circle at 50% 32%, #4b515f 0%, #20242d 45%, #0c0e14 100%);
-    box-shadow: inset 0 2px 3px rgba(255,255,255,.18), inset 0 -8px 18px rgba(0,0,0,.7),
-                0 0 0 2px #3a3f4b, 0 10px 26px -8px #000;
-    display:grid;place-items:center;transition:box-shadow .5s, transform .1s}
-  .core:active{transform:scale(.97)}
-  .core svg{width:46px;height:46px;fill:#cdd3de;filter:drop-shadow(0 1px 1px rgba(0,0,0,.6));transition:fill .4s}
-  /* energized ring around the core */
-  .core::before{content:"";position:absolute;inset:-12px;border-radius:50%;pointer-events:none;
-    border:2px solid transparent;transition:border-color .6s, box-shadow .6s}
-  body.live .core{box-shadow: inset 0 2px 3px rgba(255,255,255,.22), inset 0 -8px 18px rgba(0,0,0,.6),
-                0 0 0 2px #2c6, 0 0 40px rgba(51,255,155,.5)}
+    background:radial-gradient(circle at 50% 32%,#4b515f 0%,#20242d 45%,#0c0e14 100%);
+    box-shadow:inset 0 2px 3px rgba(255,255,255,.18),inset 0 -8px 18px rgba(0,0,0,.7),0 0 0 2px #3a3f4b,0 10px 26px -8px #000;
+    display:grid;place-items:center;transition:box-shadow .5s,transform .1s}
+  .core:active{transform:scale(.97)} .core svg{width:46px;height:46px;fill:#cdd3de;transition:fill .4s}
+  .core::before{content:"";position:absolute;inset:-12px;border-radius:50%;border:2px solid transparent;transition:border-color .6s,box-shadow .6s}
+  body.live .core{box-shadow:inset 0 2px 3px rgba(255,255,255,.22),inset 0 -8px 18px rgba(0,0,0,.6),0 0 0 2px #2c6,0 0 40px rgba(51,255,155,.5)}
   body.live .core svg{fill:#eafff4}
-  body.live .core::before{border-color:rgba(51,255,155,.55);box-shadow:0 0 26px rgba(51,255,155,.45);
-    animation:corepulse 2.2s ease-in-out infinite}
+  body.live .core::before{border-color:rgba(51,255,155,.55);box-shadow:0 0 26px rgba(51,255,155,.45);animation:corepulse 2.2s ease-in-out infinite}
   @keyframes corepulse{0%,100%{transform:scale(1);opacity:.8}50%{transform:scale(1.06);opacity:1}}
-
-  /* one-shot power flood when you hit play */
-  .flood{position:fixed;inset:0;z-index:3;pointer-events:none;border-radius:0;opacity:0;
-    background:radial-gradient(circle at 50% 50%, rgba(51,255,155,.33), transparent 60%)}
+  .flood{position:fixed;inset:0;z-index:3;pointer-events:none;opacity:0;background:radial-gradient(circle at 50% 50%,rgba(51,255,155,.33),transparent 60%)}
   body.flooding .flood{animation:flood 1.1s ease-out}
   @keyframes flood{0%{opacity:.9;clip-path:circle(6% at 50% 50%)}100%{opacity:0;clip-path:circle(85% at 50% 50%)}}
 
-  @media (prefers-reduced-motion: reduce){
-    .panel::after,body.live .core::before{animation:none!important}
-  }
+  /* chat overlay */
+  .chatwrap{position:absolute;inset:14px;z-index:6;display:none;flex-direction:column;border-radius:16px;overflow:hidden;
+    background:linear-gradient(150deg,#121620,#070910);box-shadow:inset 0 0 0 1px #20242e}
+  body.chat-mode .chatwrap{display:flex} body.chat-mode .hud .panel,body.chat-mode .hub{visibility:hidden}
+  .chatwrap h3{margin:0;padding:8px 14px;color:var(--green);font-size:11px;text-transform:uppercase;letter-spacing:.16em;border-bottom:1px solid #161a24}
+  .chatlog{flex:1;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+  .msg{max-width:78%;padding:9px 13px;border-radius:12px;white-space:pre-wrap;line-height:1.45}
+  .msg.u{align-self:flex-end;background:#15303f;color:#dff} .msg.a{align-self:flex-start;background:#0e1620;border:1px solid #20242e}
+  .chatin{display:flex;gap:8px;padding:12px;border-top:1px solid #161a24}
+  .chatin input{flex:1;background:#0a0d14;border:1px solid #20242e;border-radius:9px;color:var(--ink);padding:10px 13px;font-family:inherit;font-size:13px}
+  .chatin button{background:#13202b;border:1px solid var(--green);color:var(--green);border-radius:9px;padding:0 18px;cursor:pointer;font-family:inherit}
+  @media (prefers-reduced-motion: reduce){ .core::before,.step .dot{animation:none!important} }
 </style>
 </head>
 <body>
 <div class="topbar">
   <span class="logo">◆ MAXGPT-ULTRA</span><span class="sub">reactor</span>
-  <span id="pill" class="pill">idle</span>
-  <span class="grow"></span>
+  <span id="pill" class="pill">idle</span><span class="grow"></span>
   <button class="stopbtn" onclick="api('stop')">■ STOP</button>
 </div>
+<div class="steps" id="steps"></div>
 
 <div class="hud">
-  <section class="panel tl"><h3>telemetry</h3>
+  <section class="panel tl"><h3 id="t-title">telemetry</h3>
     <div class="stats">
       <div class="stat"><div class="k">step</div><div class="v" id="s-step">—</div></div>
       <div class="stat"><div class="k">progress</div><div class="v" id="s-prog">—</div></div>
@@ -130,16 +115,20 @@
       <div class="stat"><div class="k">tokens / sec</div><div class="v" id="s-tps">—</div></div>
       <div class="stat"><div class="k">grad norm</div><div class="v" id="s-gn">—</div></div>
       <div class="stat"><div class="k">eta</div><div class="v" id="s-eta">—</div></div>
-      <div class="stat"><div class="k">epoch</div><div class="v" id="s-ep">—</div></div>
+      <div class="stat"><div class="k">stage</div><div class="v" id="s-stage">—</div></div>
       <div class="progwrap"><div class="bar"><div id="progbar"></div></div></div>
     </div>
   </section>
   <section class="panel tr"><h3>loss</h3><div class="chart" id="losschart"></div></section>
   <section class="panel bl"><h3>terminal</h3><div id="term"></div></section>
   <section class="panel br"><h3>learning rate</h3><div class="chart" id="lrchart"></div></section>
+  <div class="hub"><button class="core" id="core" title="play / pause"></button></div>
 
-  <div class="hub">
-    <button class="core" id="core" title="play / pause" aria-label="play or pause training"></button>
+  <div class="chatwrap">
+    <h3>chat · talk to your trained model</h3>
+    <div class="chatlog" id="chatlog"></div>
+    <div class="chatin"><input id="chatbox" placeholder="ask the model something..." />
+      <button onclick="sendChat()">send</button></div>
   </div>
 </div>
 <div class="flood"></div>
@@ -147,79 +136,89 @@
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
 <script>
-const PLAY = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
-const PAUSE = '<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
-const core = document.getElementById('core');
-let running = false;
+const PLAY='<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
+const PAUSE='<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
+const $=id=>document.getElementById(id);
+const core=$('core');
+let running=false, wantPlay=false, wantPause=false;
+let viewing=null, pinned=false;
 
-const term = new Terminal({fontSize:12, theme:{background:'#070910', foreground:'#bfeede'}, convertEol:true, scrollback:6000});
-term.open(document.getElementById('term'));
-
-function axis(){return {stroke:'#5a6072', grid:{stroke:'#11151d'}, ticks:{stroke:'#11151d'}};}
-function mkChart(el, label, color, yfmt){
-  const yax = yfmt ? Object.assign(axis(), {size:54, values:(u,vals)=>vals.map(yfmt)}) : axis();
-  return new uPlot({title:label, width:el.clientWidth||420, height:el.clientHeight-26||220,
-    series:[{}, {label, stroke:color, width:2, fill:color+'18', points:{show:false}}],
-    axes:[axis(), yax], scales:{x:{time:false}}}, [[],[]], el);
-}
-const lossChart = mkChart(document.getElementById('losschart'), 'loss', '#33ff9b');
-const lrChart   = mkChart(document.getElementById('lrchart'), 'learning rate', '#7fb2ff',
-                          v => v ? v.toExponential(1) : '0');
-function resize(){ for(const [c,id] of [[lossChart,'losschart'],[lrChart,'lrchart']]){
-  const el=document.getElementById(id); c.setSize({width:el.clientWidth, height:el.clientHeight-26}); } }
-addEventListener('resize', resize); setTimeout(resize, 60);
+const term=new Terminal({fontSize:12,theme:{background:'#070910',foreground:'#bfeede'},convertEol:true,scrollback:6000});
+term.open($('term'));
+function axis(){return {stroke:'#5a6072',grid:{stroke:'#11151d'},ticks:{stroke:'#11151d'}};}
+function mkChart(el,label,color,yfmt){ const y=yfmt?Object.assign(axis(),{size:54,values:(u,v)=>v.map(yfmt)}):axis();
+  return new uPlot({title:label,width:el.clientWidth||420,height:el.clientHeight-26||220,
+    series:[{},{label,stroke:color,width:2,fill:color+'18',points:{show:false}}],axes:[axis(),y],scales:{x:{time:false}}},[[],[]],el); }
+const lossChart=mkChart($('losschart'),'loss','#33ff9b');
+const lrChart=mkChart($('lrchart'),'learning rate','#7fb2ff',v=>v?v.toExponential(1):'0');
+addEventListener('resize',()=>{ for(const[c,id]of[[lossChart,'losschart'],[lrChart,'lrchart']]){const e=$(id);c.setSize({width:e.clientWidth,height:e.clientHeight-26});} });
 
 async function api(a){ try{ await fetch('/api/'+a,{method:'POST'}); }catch(e){} }
-let wantPlay=false, wantPause=false;
-function energize(on){ running=on; core.innerHTML = on?PAUSE:PLAY; document.body.classList.toggle('live', on); }
-core.onclick = ()=>{
-  if(running){                                    // -> pause: power down now, stay down until it truly stops
-    wantPause=true; wantPlay=false; energize(false); api('pause');
-    setTimeout(()=>{ wantPause=false; }, 15000);
-  } else {                                        // -> play: light the reactor up immediately
-    wantPlay=true; wantPause=false;
-    document.body.classList.add('flooding'); setTimeout(()=>document.body.classList.remove('flooding'),1100);
-    energize(true); api('start');
-    setTimeout(()=>{ wantPlay=false; }, 2600);    // hold the glow even if start fails, then follow the server
-  }
-};
+function energize(on){ running=on; core.innerHTML=on?PAUSE:PLAY; document.body.classList.toggle('live',on); }
+core.onclick=()=>{ if(running){ wantPause=true;wantPlay=false;energize(false);api('pause');setTimeout(()=>wantPause=false,15000); }
+  else { wantPlay=true;wantPause=false;document.body.classList.add('flooding');setTimeout(()=>document.body.classList.remove('flooding'),1100);
+    energize(true);api('start');setTimeout(()=>wantPlay=false,2600); } };
 energize(false);
 
-function fmtEta(s){ if(!isFinite(s)||s<=0) return '—'; const d=s/86400|0,h=s%86400/3600|0,m=s%3600/60|0;
-  return d?`${d}d ${h}h`:h?`${h}h ${m}m`:`${m}m`; }
-const $=id=>document.getElementById(id);
+function setRunning(r){ if(wantPause){ if(!r) wantPause=false; energize(false); return;} if(wantPlay){ if(r) wantPlay=false; energize(true); return;} energize(r); }
 
-function applyMetrics(data){
+function renderSteps(p){
+  const el=$('steps'); el.innerHTML='';
+  p.stages.forEach((s,i)=>{
+    if(i) { const sep=document.createElement('span'); sep.className='sep'; sep.textContent='›'; el.appendChild(sep); }
+    const d=document.createElement('div'); d.className='step s-'+s.status+(s.key===viewing?' viewing':'');
+    d.innerHTML=`<span class="dot"></span>${s.label}`;
+    d.onclick=()=>{ viewing=s.key; pinned=true; document.body.classList.toggle('chat-mode', s.kind==='chat'); pollStage(); renderSteps(p); };
+    el.appendChild(d);
+  });
+  // pill
+  let pill='idle';
+  if(p.running) pill='running';
+  else if(p.stages.some(s=>s.status==='error')) pill='error';
+  else if(p.stages.filter(s=>s.kind!=='chat').every(s=>s.status==='done')) pill='complete';
+  else if(p.stages.some(s=>s.status==='paused')) pill='paused';
+  $('pill').textContent=pill; $('pill').className='pill '+pill;
+}
+
+let termKey=null, termN=0;
+function renderTerminal(key, lines){ if(key!==termKey){ term.reset(); termKey=key; termN=0; }
+  for(let i=termN;i<lines.length;i++) term.writeln(lines[i]); termN=lines.length; }
+
+function renderMetrics(metrics){
   let meta=null,last=null; const xs=[],loss=[],lr=[];
-  for(const r of data){ if(r.event==='meta'){meta=r;continue} if(r.event) continue;
-    if(r.step!==undefined&&r.loss!==undefined){ xs.push(r.step);loss.push(r.loss);lr.push(r.lr);last=r; } }
+  for(const r of metrics){ if(r.event==='meta'){meta=r;continue} if(r.event) continue;
+    if(r.step!==undefined&&r.loss!==undefined){xs.push(r.step);loss.push(r.loss);lr.push(r.lr);last=r;} }
   lossChart.setData([xs,loss]); lrChart.setData([xs,lr]);
-  if(last){
-    $('s-step').textContent=last.step.toLocaleString();
-    $('s-loss').textContent=last.loss.toFixed(3);
-    $('s-lr').textContent=last.lr!=null?last.lr.toExponential(2):'—';
-    $('s-tps').textContent=last.tok_per_s?Math.round(last.tok_per_s).toLocaleString():'—';
-    $('s-gn').textContent=last.grad_norm!=null?last.grad_norm.toFixed(2):'—';
-    if(meta&&meta.total_steps){ const pct=100*last.step/meta.total_steps;
-      $('s-prog').innerHTML=pct.toFixed(1)+'<small> %</small>'; $('progbar').style.width=Math.min(100,pct)+'%';
-      const sps=last.tok_per_s&&meta.tokens_per_step?last.tok_per_s/meta.tokens_per_step:0;
-      $('s-eta').textContent=sps?fmtEta((meta.total_steps-last.step)/sps):'—'; }
-  }
+  const set=(id,v)=>$(id).textContent=v;
+  if(last){ set('s-step',last.step.toLocaleString()); set('s-loss',last.loss.toFixed(3));
+    set('s-lr',last.lr!=null?last.lr.toExponential(2):'—'); set('s-tps',last.tok_per_s?Math.round(last.tok_per_s).toLocaleString():'—');
+    set('s-gn',last.grad_norm!=null?last.grad_norm.toFixed(2):'—');
+    if(meta&&meta.total_steps){ const pct=100*last.step/meta.total_steps; $('s-prog').innerHTML=pct.toFixed(1)+'<small> %</small>'; $('progbar').style.width=Math.min(100,pct)+'%';
+      const sps=last.tok_per_s&&meta.tokens_per_step?last.tok_per_s/meta.tokens_per_step:0; set('s-eta',sps?fmtEta((meta.total_steps-last.step)/sps):'—'); } }
+  else { for(const id of['s-step','s-prog','s-loss','s-lr','s-tps','s-gn','s-eta']) set(id,'—'); $('progbar').style.width='0%'; }
 }
-function setStatus(s){ const p=$('pill'); p.textContent=s; p.className='pill '+s;
-  if(wantPause){ if(s!=='running') wantPause=false; energize(false); return; }   // stay off until the run really stops
-  if(wantPlay){ if(s==='running') wantPlay=false; energize(true); return; }       // hold the glow until confirmed/timeout
-  energize(s==='running'); }
+function fmtEta(s){ if(!isFinite(s)||s<=0)return '—'; const d=s/86400|0,h=s%86400/3600|0,m=s%3600/60|0; return d?`${d}d ${h}h`:h?`${h}h ${m}m`:`${m}m`; }
 
-function connect(){
-  const ws=new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/ws');
-  ws.onmessage=e=>{ const m=JSON.parse(e.data);
-    if(m.type==='log'){ for(const l of m.lines) term.writeln(l); }
-    else if(m.type==='metrics'){ applyMetrics(m.data); }
-    else if(m.type==='status'){ setStatus(m.status); } };
-  ws.onclose=()=>setTimeout(connect,1500);
+async function pollPipeline(){ try{ const p=await (await fetch('/api/pipeline')).json();
+  if(!pinned) viewing=p.current||viewing||(p.stages[1]&&p.stages[1].key);
+  document.body.classList.toggle('chat-mode', (p.stages.find(s=>s.key===viewing)||{}).kind==='chat');
+  setRunning(p.running); renderSteps(p);
+}catch(e){} }
+async function pollStage(){ if(!viewing) return; try{ const s=await (await fetch('/api/stage/'+viewing)).json();
+  $('t-title').textContent=s.label+' · telemetry'; $('s-stage').textContent=s.status;
+  renderTerminal(s.key, s.log||[]); renderMetrics(s.metrics||[]);
+}catch(e){} }
+setInterval(pollPipeline,800); setInterval(pollStage,800); pollPipeline();
+
+// chat
+async function sendChat(){ const box=$('chatbox'); const msg=box.value.trim(); if(!msg) return; box.value='';
+  add('u',msg); const a=add('a','…');
+  try{ const r=await (await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})})).json();
+    a.textContent=r.reply||'(no reply)'; }catch(e){ a.textContent='(error)'; }
+  $('chatlog').scrollTop=1e9;
 }
-connect();
+function add(role,text){ const d=document.createElement('div'); d.className='msg '+role; d.textContent=text; $('chatlog').appendChild(d); $('chatlog').scrollTop=1e9; return d; }
+$('chatbox').addEventListener('keydown',e=>{ if(e.key==='Enter') sendChat(); });
 </script>
 </body>
 </html>
