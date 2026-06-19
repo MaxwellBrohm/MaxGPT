@@ -27,12 +27,13 @@ ROOT = os.path.dirname(HERE)
 
 
 class Stage:
-    def __init__(self, key, label, build, run_out, kind="train"):
+    def __init__(self, key, label, build, run_out, kind="train", done_when=None):
         self.key = key
         self.label = label
         self.build = build          # () -> argv list (resolved at launch; may raise FriendlyError)
         self.run_out = run_out
         self.kind = kind            # "data" | "train" | "chat"
+        self.done_when = done_when  # optional () -> bool: outputs already on disk, so skip this stage
         self.status = "pending"     # pending | running | done | paused | error | stopped | ready
         self.log: deque[tuple[int, str]] = deque(maxlen=4000)
         self._seq = 0
@@ -73,6 +74,16 @@ class Pipeline:
         self.aborted = False
         self._lock = threading.Lock()
 
+    def sync_from_disk(self):
+        """Promote a stage to 'done' when its outputs already exist, so a fresh launch
+        skips finished work (mainly: data prep). Only runs while idle; training stages
+        have no done_when and instead resume from their checkpoints when re-run."""
+        if self.running():
+            return
+        for s in self.run_stages:
+            if s.status == "pending" and s.done_when and s.done_when():
+                s.status = "done"
+
     def current(self) -> Stage | None:
         return self.run_stages[self.idx] if self.idx < len(self.run_stages) else None
 
@@ -94,7 +105,7 @@ class Pipeline:
         try:
             cmd = st.build()
         except FriendlyError as e:
-            st.append(f"  ✗ {e}")
+            st.append(f"  ERROR: {e}")
             st.status = "error"
             return
         try:
@@ -143,6 +154,7 @@ class Pipeline:
             if self.running():
                 return False
             self.aborted = False
+            self.sync_from_disk()        # skip stages whose outputs already exist (e.g. data)
             while self.idx < len(self.run_stages) and self.run_stages[self.idx].status == "done":
                 self.idx += 1
             if self.idx >= len(self.run_stages):
@@ -163,6 +175,7 @@ class Pipeline:
             self.proc.terminate()
 
     def snapshot(self) -> dict:
+        self.sync_from_disk()        # reflect already-built artifacts in the UI (data shows done)
         cur = self.current()
         return {"stages": [{"key": s.key, "label": s.label, "status": s.status, "kind": s.kind}
                            for s in self.stages],
@@ -269,9 +282,14 @@ def build_default_pipeline(config, tokenizer, shards, sft_data, pref_data, runs)
                                 f"(it may not have finished). Nothing to start from.")
         return os.path.join(run_dir, "checkpoints", json.load(open(latest, encoding="utf-8"))["path"])
 
+    def data_done():   # data prep already built the shards + SFT/DPO files -> jump to pretrain
+        return (os.path.exists(os.path.join(ROOT, shards, "meta.json"))
+                and os.path.exists(os.path.join(ROOT, sft_data))
+                and os.path.exists(os.path.join(ROOT, pref_data)))
+
     stages = [
         Stage("data", "Data", lambda: [py, "scripts/prepare_data.py", "--config", config],
-              os.path.join(runs, "data"), kind="data"),
+              os.path.join(runs, "data"), kind="data", done_when=data_done),
         Stage("pretrain", "Pretrain", lambda: [py, "scripts/train.py", "--config", config,
               "--data", shards, "--out", os.path.join(runs, "pretrain"), "--tokenizer", tokenizer,
               "--eval-data", shards, "--eval-every", "500",
@@ -289,7 +307,9 @@ def build_default_pipeline(config, tokenizer, shards, sft_data, pref_data, runs)
               os.path.join(runs, "dpo")),
         Stage("chat", "Chat", lambda: [], os.path.join(runs, "dpo"), kind="chat"),
     ]
-    return Pipeline(stages)
+    pipe = Pipeline(stages)
+    pipe.sync_from_disk()   # so the very first page load already shows finished stages as done
+    return pipe
 
 
 def main():
