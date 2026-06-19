@@ -20,17 +20,20 @@ import numpy as np
 
 DTYPE = np.uint16
 
-# Pretraining mix. `weight` = how often a *document* is drawn from each source. SmolLM-corpus
-# bundles the proven FineWeb-Edu-dedup + Cosmopedia-v2 subsets; we add code + web-math + wiki.
-# Code note: smollm-corpus "python-edu" stores blob_ids (the text lives on S3), NOT inline
-# text, so a plain `text` field yields nothing from it. codeparrot-clean ships the code inline
-# in a `content` field and streams without auth, so we use that for the code slice instead.
+# Pretraining mix. Each `weight` is a *document* sampling probability, but the budget is counted
+# in TOKENS, and document length varies a lot by source (code files and math pages are long;
+# cosmopedia snippets are short). So these weights are tuned from a measured shakedown run so the
+# realized TOKEN shares land near the intended blend: ~55% web-edu, 22% textbook, 10% code, 8%
+# math, 5% wiki. (Raw doc-weights of 0.55/0.22/0.10/0.08/0.05 gave token shares of 46/13/23/14/4,
+# because per document code over-counts ~2.3x and cosmopedia under-counts ~0.6x.)
+# Code note: smollm-corpus "python-edu" stores blob_ids (text lives on S3), not inline text, so
+# codeparrot-clean (inline `content`, no auth) supplies the code slice instead.
 PRETRAIN_MIX = [
     {"path": "HuggingFaceTB/smollm-corpus", "name": "fineweb-edu-dedup", "text_field": "text",    "weight": 0.55},
-    {"path": "HuggingFaceTB/smollm-corpus", "name": "cosmopedia-v2",     "text_field": "text",    "weight": 0.22},
-    {"path": "codeparrot/codeparrot-clean",                              "text_field": "content", "weight": 0.10},
-    {"path": "open-web-math/open-web-math",                              "text_field": "text",    "weight": 0.08},
-    {"path": "wikimedia/wikipedia",          "name": "20231101.en",      "text_field": "text",    "weight": 0.05},
+    {"path": "HuggingFaceTB/smollm-corpus", "name": "cosmopedia-v2",     "text_field": "text",    "weight": 0.32},
+    {"path": "codeparrot/codeparrot-clean",                              "text_field": "content", "weight": 0.037},
+    {"path": "open-web-math/open-web-math",                              "text_field": "text",    "weight": 0.039},
+    {"path": "wikimedia/wikipedia",          "name": "20231101.en",      "text_field": "text",    "weight": 0.048},
 ]
 
 
