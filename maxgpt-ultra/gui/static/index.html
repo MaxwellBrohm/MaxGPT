@@ -56,12 +56,18 @@
   .tr h3,.br h3{text-align:right}   /* right-column titles hug the edge, clear of the centered core */
   .tl{grid-column:1;grid-row:1} .bl{grid-column:1;grid-row:2} .tr{grid-column:2;grid-row:1} .br{grid-column:2;grid-row:2}
 
-  .stats{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#161a24;height:calc(100% - 31px)}
+  .panel.tl{display:flex;flex-direction:column}
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#161a24}
   .stat{background:linear-gradient(#0c0f16,#080a10);padding:9px 14px;display:flex;flex-direction:column;justify-content:center}
   .stat .k{color:var(--mut);font-size:9.5px;text-transform:uppercase;letter-spacing:.14em}
   .stat .v{font-size:19px;margin-top:3px;font-variant-numeric:tabular-nums}
   body.live .stat .v{color:#eafff4}
   .stat .v small{font-size:11px;color:var(--mut)}
+  .samples{flex:1;min-height:54px;overflow:auto;padding:8px 12px;background:#080a10;border-top:1px solid #161a24}
+  .samples .sh{color:var(--mut);font-size:9px;text-transform:uppercase;letter-spacing:.13em;margin-bottom:7px}
+  .samples .smp{margin-bottom:9px;font-size:11px;line-height:1.45}
+  .samples .pr{color:var(--blue)} .samples .co{color:var(--mut);white-space:pre-wrap}
+  body.live .samples .co{color:#cfeede}
   .progwrap{grid-column:1 / -1;background:#080a10} .progwrap .bar{height:4px;background:#11151d}
   .progwrap .bar>div{height:100%;width:0%;background:linear-gradient(90deg,var(--green-dim),var(--green));box-shadow:0 0 12px rgba(51,255,155,.6);transition:width .5s}
   #term{height:calc(100% - 31px);padding:6px 8px}
@@ -119,6 +125,7 @@
       <div class="stat"><div class="k">stage</div><div class="v" id="s-stage">-</div></div>
       <div class="progwrap"><div class="bar"><div id="progbar"></div></div></div>
     </div>
+    <div class="samples" id="samples"><div class="sh">samples · no eval yet</div></div>
   </section>
   <section class="panel tr"><h3>loss</h3><div class="chart" id="losschart"></div></section>
   <section class="panel bl"><h3>terminal</h3><div id="term"></div></section>
@@ -186,8 +193,8 @@ function renderTerminal(key, lines){ if(key!==termKey){ term.reset(); termKey=ke
   for(let i=termN;i<lines.length;i++) term.writeln(lines[i]); termN=lines.length; }
 
 function renderMetrics(metrics){
-  let meta=null,last=null; const xs=[],loss=[],lr=[];
-  for(const r of metrics){ if(r.event==='meta'){meta=r;continue} if(r.event) continue;
+  let meta=null,last=null,lastEval=null; const xs=[],loss=[],lr=[];
+  for(const r of metrics){ if(r.event==='meta'){meta=r;continue} if(r.event==='eval'){lastEval=r;continue} if(r.event) continue;
     if(r.step!==undefined&&r.loss!==undefined){xs.push(r.step);loss.push(r.loss);lr.push(r.lr);last=r;} }
   lossChart.setData([xs,loss]); lrChart.setData([xs,lr]);
   const set=(id,v)=>$(id).textContent=v;
@@ -197,6 +204,16 @@ function renderMetrics(metrics){
     if(meta&&meta.total_steps){ const pct=100*last.step/meta.total_steps; $('s-prog').innerHTML=pct.toFixed(1)+'<small> %</small>'; $('progbar').style.width=Math.min(100,pct)+'%';
       const sps=last.tok_per_s&&meta.tokens_per_step?last.tok_per_s/meta.tokens_per_step:0; set('s-eta',sps?fmtEta((meta.total_steps-last.step)/sps):'-'); } }
   else { for(const id of['s-step','s-prog','s-loss','s-lr','s-tps','s-gn','s-eta']) set(id,'-'); $('progbar').style.width='0%'; }
+  renderSamples(lastEval);
+}
+function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function renderSamples(ev){
+  const box=$('samples'); if(!box) return;
+  if(!ev||!ev.samples||!ev.samples.length){ box.innerHTML='<div class="sh">samples · no eval yet</div>'; return; }
+  const ppl = ev.val_ppl!=null ? Number(ev.val_ppl).toFixed(2) : '-';
+  let h='<div class="sh">samples · step '+(ev.step!=null?ev.step.toLocaleString():'-')+' · val ppl '+ppl+'</div>';
+  for(const s of ev.samples){ h+='<div class="smp"><span class="pr">'+esc(s.prompt)+'</span> <span class="co">'+esc(s.completion)+'</span></div>'; }
+  box.innerHTML=h;
 }
 function fmtEta(s){ if(!isFinite(s)||s<=0)return '-'; const d=s/86400|0,h=s%86400/3600|0,m=s%3600/60|0; return d?`${d}d ${h}h`:h?`${h}h ${m}m`:`${m}m`; }
 
