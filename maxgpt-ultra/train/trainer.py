@@ -58,8 +58,8 @@ class Trainer:
         self.grad_accum = int(tcfg["grad_accum"])
         self.seq_len = data.seq_len
         self.tokens_per_step = self.micro_batch * self.grad_accum * self.seq_len
-        self.total_steps = max(1, int(tcfg["total_tokens"] // self.tokens_per_step))
-        self.warmup_steps = int(tcfg.get("warmup_tokens", 0) // self.tokens_per_step)
+        self.total_steps = max(1, int(float(tcfg["total_tokens"]) // self.tokens_per_step))
+        self.warmup_steps = int(float(tcfg.get("warmup_tokens", 0)) // self.tokens_per_step)
         self.max_lr = float(tcfg["lr"])
         self.decay_frac = float(tcfg.get("decay_frac", 0.15))
         self.grad_clip = float(tcfg.get("grad_clip", 1.0))

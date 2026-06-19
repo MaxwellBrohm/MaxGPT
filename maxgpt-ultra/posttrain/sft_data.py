@@ -103,3 +103,23 @@ def load_sft_hf(name: str = "HuggingFaceH4/ultrachat_200k", split: str = "train_
         if "messages" in ex:
             out.append({"messages": ex["messages"]})
     return out
+
+
+def build_sft_jsonl(out_path: str, n: int = 100000,
+                    name: str = "HuggingFaceH4/ultrachat_200k", split: str = "train_sft") -> int:
+    """Stream a chat dataset into a {"messages": [...]} jsonl for SFT (PC; needs datasets)."""
+    import os
+    from datasets import load_dataset
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    ds = load_dataset(name, split=split, streaming=True)
+    written = 0
+    with open(out_path, "w") as f:
+        for ex in ds:
+            msgs = ex.get("messages")
+            if not msgs:
+                continue
+            f.write(json.dumps({"messages": msgs}) + "\n")
+            written += 1
+            if written >= n:
+                break
+    return written

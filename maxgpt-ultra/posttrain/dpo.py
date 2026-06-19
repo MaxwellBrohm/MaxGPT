@@ -193,3 +193,30 @@ class DPOTrainer:
             if time.time() - self._last_save >= self.autosave_s:
                 self.save()
         self.save()
+
+
+def build_pref_jsonl(out_path: str, n: int = 60000,
+                     name: str = "HuggingFaceH4/ultrafeedback_binarized", split: str = "train_prefs") -> int:
+    """Stream a preference dataset into {"prompt":[...], "chosen":str, "rejected":str} jsonl
+    for DPO (PC; needs datasets)."""
+    from datasets import load_dataset
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    ds = load_dataset(name, split=split, streaming=True)
+    written = 0
+    with open(out_path, "w") as f:
+        for ex in ds:
+            prompt, chosen, rejected = ex.get("prompt"), ex.get("chosen"), ex.get("rejected")
+            if not (prompt and chosen and rejected):
+                continue
+            try:
+                c, r = chosen[-1]["content"], rejected[-1]["content"]
+            except Exception:
+                continue
+            if not (c and r):
+                continue
+            f.write(json.dumps({"prompt": [{"role": "user", "content": prompt}],
+                                "chosen": c, "rejected": r}) + "\n")
+            written += 1
+            if written >= n:
+                break
+    return written
