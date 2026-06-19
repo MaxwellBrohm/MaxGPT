@@ -1,4 +1,4 @@
-# MaxGPT-Ultra — SHAKEDOWN (prototype) config  (~124M params)
+# MaxGPT-Ultra - SHAKEDOWN (prototype) config  (~124M params)
 # An exact scaled-down replica of the 1B. Goal: validate the ENTIRE pipeline
 # (arch, data, training, WSD, SFT, DPO, RAG, GUI, autosave, pause/play) in days,
 # and measure real throughput on the 5070 before committing to the long run.
@@ -32,9 +32,13 @@ train:
   total_tokens: 5.0e9    # quick validation budget (hours-to-days)
   decay_frac: 0.2        # last 20% of tokens decay the LR
   z_loss: 1.0e-4
-  micro_batch: 16
-  grad_accum: 8          # effective ~131k tokens/step at seq 1024
-  grad_checkpointing: false
+  # Tuned for a 12GB card (RTX 5070). The killer at this vocab is the output
+  # logits tensor: micro_batch * seq_len * 49152, so keep micro_batch small and
+  # make up the effective batch with grad_accum. tokens/step stays 4*32*1024=131072,
+  # so the schedule and total_steps are unchanged from micro_batch 16 / accum 8.
+  micro_batch: 4         # was 16 (16*1024 logits over 49k vocab OOM'd the 5070)
+  grad_accum: 32         # was 8; keeps effective ~131k tokens/step at seq 1024
+  grad_checkpointing: true   # was false; recompute activations in backward to save VRAM
   optimizer_8bit: false
 
 io:

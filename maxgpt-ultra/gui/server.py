@@ -48,7 +48,7 @@ class Stage:
         path = os.path.join(self.run_out, "metrics.jsonl")
         out = []
         if os.path.exists(path):
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 for line in f:
                     try:
                         out.append(json.loads(line))
@@ -178,7 +178,7 @@ app = FastAPI()
 
 @app.get("/")
 def index():
-    with open(os.path.join(HERE, "static", "index.html")) as f:
+    with open(os.path.join(HERE, "static", "index.html"), encoding="utf-8") as f:
         return HTMLResponse(f.read())
 
 
@@ -248,7 +248,7 @@ def _load_chat_model():
     for run in ("runs/dpo", "runs/sft", "runs/pretrain"):
         latest = os.path.join(ROOT, run, "checkpoints", "latest.json")
         if os.path.exists(latest):
-            name = json.load(open(latest))["path"]
+            name = json.load(open(latest, encoding="utf-8"))["path"]
             ckpt = os.path.join(ROOT, run, "checkpoints", name)
             break
     if not ckpt:
@@ -267,7 +267,7 @@ def build_default_pipeline(config, tokenizer, shards, sft_data, pref_data, runs)
         if not os.path.exists(latest):
             raise FriendlyError(f"previous stage produced no checkpoint in {run_dir} "
                                 f"(it may not have finished). Nothing to start from.")
-        return os.path.join(run_dir, "checkpoints", json.load(open(latest))["path"])
+        return os.path.join(run_dir, "checkpoints", json.load(open(latest, encoding="utf-8"))["path"])
 
     stages = [
         Stage("data", "Data", lambda: [py, "scripts/prepare_data.py", "--config", config],

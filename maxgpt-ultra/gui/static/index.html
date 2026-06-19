@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>MaxGPT-Ultra — reactor</title>
+<title>MaxGPT-Ultra - reactor</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css" />
 <style>
@@ -53,6 +53,7 @@
                inset 0 0 26px -8px rgba(51,255,155,.35), 0 0 22px -8px rgba(51,255,155,.4)}
   .panel h3{margin:0;padding:7px 13px;color:var(--mut);font-size:10.5px;text-transform:uppercase;letter-spacing:.18em;border-bottom:1px solid #161a24;background:linear-gradient(#0c0f16,#090b11)}
   body.live .panel h3{color:var(--green);text-shadow:0 0 10px rgba(51,255,155,.35)}
+  .tr h3,.br h3{text-align:right}   /* right-column titles hug the edge, clear of the centered core */
   .tl{grid-column:1;grid-row:1} .bl{grid-column:1;grid-row:2} .tr{grid-column:2;grid-row:1} .br{grid-column:2;grid-row:2}
 
   .stats{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#161a24;height:calc(100% - 31px)}
@@ -108,14 +109,14 @@
 <div class="hud">
   <section class="panel tl"><h3 id="t-title">telemetry</h3>
     <div class="stats">
-      <div class="stat"><div class="k">step</div><div class="v" id="s-step">—</div></div>
-      <div class="stat"><div class="k">progress</div><div class="v" id="s-prog">—</div></div>
-      <div class="stat"><div class="k">loss</div><div class="v" id="s-loss">—</div></div>
-      <div class="stat"><div class="k">learning rate</div><div class="v" id="s-lr">—</div></div>
-      <div class="stat"><div class="k">tokens / sec</div><div class="v" id="s-tps">—</div></div>
-      <div class="stat"><div class="k">grad norm</div><div class="v" id="s-gn">—</div></div>
-      <div class="stat"><div class="k">eta</div><div class="v" id="s-eta">—</div></div>
-      <div class="stat"><div class="k">stage</div><div class="v" id="s-stage">—</div></div>
+      <div class="stat"><div class="k">step</div><div class="v" id="s-step">-</div></div>
+      <div class="stat"><div class="k">progress</div><div class="v" id="s-prog">-</div></div>
+      <div class="stat"><div class="k">loss</div><div class="v" id="s-loss">-</div></div>
+      <div class="stat"><div class="k">learning rate</div><div class="v" id="s-lr">-</div></div>
+      <div class="stat"><div class="k">tokens / sec</div><div class="v" id="s-tps">-</div></div>
+      <div class="stat"><div class="k">grad norm</div><div class="v" id="s-gn">-</div></div>
+      <div class="stat"><div class="k">eta</div><div class="v" id="s-eta">-</div></div>
+      <div class="stat"><div class="k">stage</div><div class="v" id="s-stage">-</div></div>
       <div class="progwrap"><div class="bar"><div id="progbar"></div></div></div>
     </div>
   </section>
@@ -191,13 +192,13 @@ function renderMetrics(metrics){
   lossChart.setData([xs,loss]); lrChart.setData([xs,lr]);
   const set=(id,v)=>$(id).textContent=v;
   if(last){ set('s-step',last.step.toLocaleString()); set('s-loss',last.loss.toFixed(3));
-    set('s-lr',last.lr!=null?last.lr.toExponential(2):'—'); set('s-tps',last.tok_per_s?Math.round(last.tok_per_s).toLocaleString():'—');
-    set('s-gn',last.grad_norm!=null?last.grad_norm.toFixed(2):'—');
+    set('s-lr',last.lr!=null?last.lr.toExponential(2):'-'); set('s-tps',last.tok_per_s?Math.round(last.tok_per_s).toLocaleString():'-');
+    set('s-gn',last.grad_norm!=null?last.grad_norm.toFixed(2):'-');
     if(meta&&meta.total_steps){ const pct=100*last.step/meta.total_steps; $('s-prog').innerHTML=pct.toFixed(1)+'<small> %</small>'; $('progbar').style.width=Math.min(100,pct)+'%';
-      const sps=last.tok_per_s&&meta.tokens_per_step?last.tok_per_s/meta.tokens_per_step:0; set('s-eta',sps?fmtEta((meta.total_steps-last.step)/sps):'—'); } }
-  else { for(const id of['s-step','s-prog','s-loss','s-lr','s-tps','s-gn','s-eta']) set(id,'—'); $('progbar').style.width='0%'; }
+      const sps=last.tok_per_s&&meta.tokens_per_step?last.tok_per_s/meta.tokens_per_step:0; set('s-eta',sps?fmtEta((meta.total_steps-last.step)/sps):'-'); } }
+  else { for(const id of['s-step','s-prog','s-loss','s-lr','s-tps','s-gn','s-eta']) set(id,'-'); $('progbar').style.width='0%'; }
 }
-function fmtEta(s){ if(!isFinite(s)||s<=0)return '—'; const d=s/86400|0,h=s%86400/3600|0,m=s%3600/60|0; return d?`${d}d ${h}h`:h?`${h}h ${m}m`:`${m}m`; }
+function fmtEta(s){ if(!isFinite(s)||s<=0)return '-'; const d=s/86400|0,h=s%86400/3600|0,m=s%3600/60|0; return d?`${d}d ${h}h`:h?`${h}h ${m}m`:`${m}m`; }
 
 async function pollPipeline(){ try{ const p=await (await fetch('/api/pipeline')).json();
   if(!pinned) viewing=p.current||viewing||(p.stages[1]&&p.stages[1].key);

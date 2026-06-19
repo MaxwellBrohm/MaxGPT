@@ -31,7 +31,7 @@ SMOKE_DOCS = [
     "The quick brown fox jumps over the lazy dog while 3 cats watch from the fence.",
     "def add(a, b):\n    return a + b\n\nprint(add(2, 3))  # 5",
     "Transformers learn from text by predicting the next token over and over.",
-    "Café, naïve, 北京, 🚀 — byte-level tokenization handles every one of these.",
+    "Café, naïve, 北京, 🚀 - byte-level tokenization handles every one of these.",
 ] * 100
 SMOKE_SFT = [{"messages": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello!"}]}] * 20
 SMOKE_PREF = [{"prompt": [{"role": "user", "content": "say a"}], "chosen": "a", "rejected": "b"}] * 20
@@ -55,7 +55,7 @@ def main() -> None:
     ap.add_argument("--smoke", action="store_true", help="tiny local dry-run, no network")
     args = ap.parse_args()
 
-    raw = yaml.safe_load(open(args.config))
+    raw = yaml.safe_load(open(args.config, encoding="utf-8"))
     mcfg = ModelConfig.from_yaml(args.config)
     vocab = args.vocab_size or mcfg.vocab_size
     max_tokens = int(args.max_tokens) if args.max_tokens else int(float(raw.get("train", {}).get("total_tokens", 1e11)))
@@ -92,13 +92,18 @@ def main() -> None:
     tot = meta["total_tokens"]
     print(f"[prepare] pretrain: {tot:,} tokens in {len(meta['shards'])} shard(s). mix:")
     for src, n in sorted(meta["by_source"].items(), key=lambda kv: -kv[1]):
-        print(f"           {src:<22} {n:>14,}  ({100*n/max(1,tot):4.1f}%)")
+        print(f"           {src:<26} {n:>14,}  ({100*n/max(1,tot):4.1f}%)")
+    if not args.smoke:   # loudly flag any configured source that contributed nothing
+        missing = [(s.get("name") or s["path"]) for s in PRETRAIN_MIX
+                   if (s.get("name") or s["path"]) not in meta["by_source"]]
+        if missing:
+            print(f"[prepare] WARNING: 0 tokens from {missing} -- check its dataset id/field in data/prepare.py")
 
     # 3) SFT + DPO data
     if not args.skip_posttrain:
         if args.smoke:
             for path, rows in ((args.sft_out, SMOKE_SFT), (args.pref_out, SMOKE_PREF)):
-                with open(path, "w") as f:
+                with open(path, "w", encoding="utf-8") as f:
                     for r in rows:
                         f.write(json.dumps(r) + "\n")
             print(f"[prepare] sft={len(SMOKE_SFT)} rows, prefs={len(SMOKE_PREF)} rows (smoke)")

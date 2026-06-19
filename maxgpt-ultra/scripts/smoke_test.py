@@ -60,7 +60,7 @@ def main() -> None:
     expected = math.log(cfg.vocab_size)
     print(f"  forward OK   logits={tuple(logits.shape)}  loss={loss.item():.3f}  "
           f"(expected ~{expected:.2f} at init)")
-    assert abs(loss.item() - expected) < 1.0, "init loss far from ln(vocab) — suspicious"
+    assert abs(loss.item() - expected) < 1.0, "init loss far from ln(vocab) - suspicious"
 
     loss.backward()
     grads = [p.grad for p in model.parameters() if p.grad is not None]

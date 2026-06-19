@@ -42,10 +42,10 @@ class ModelConfig:
 
     @classmethod
     def from_yaml(cls, path: str) -> "ModelConfig":
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             raw = yaml.safe_load(f)
         m = dict(raw.get("model", {}))
-        # These are design commitments, not knobs — assert the YAML agrees.
+        # These are design commitments, not knobs - assert the YAML agrees.
         assert m.pop("norm", "rmsnorm") == "rmsnorm", "this architecture is RMSNorm-only"
         assert m.pop("pos", "rope") == "rope", "this architecture is RoPE-only"
         assert m.pop("mlp", "swiglu") == "swiglu", "this architecture is SwiGLU-only"

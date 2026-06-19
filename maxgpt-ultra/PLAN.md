@@ -1,4 +1,4 @@
-# MaxGPT-Ultra — Build Plan
+# MaxGPT-Ultra - Build Plan
 
 A genuinely usable, **from-scratch ~1.1B language model** trained at home on a single
 RTX 5070 (12GB), then made actually useful with instruction tuning and retrieval.
@@ -14,19 +14,19 @@ Learning + portfolio capstone. Successor to the MaxGPT series.
 
 ## Locked decisions
 - **Model:** ~1.1B params, name **MaxGPT-Ultra**.
-- **Prototype first:** the **shakedown** (~124M) is an *exact scaled-down replica* —
+- **Prototype first:** the **shakedown** (~124M) is an *exact scaled-down replica* -
   same architecture, data, schedule, post-training, GUI. Debug the whole pipeline in
   days, then flip the config to 1B with confidence.
 - **Schedule:** **WSD** (warmup → stable → decay). Aim high on tokens (time is no
   object); decay-and-ship at the target and keep the pre-decay checkpoint so the run
-  can be *extended* later. (Infinite training is wasteful — it throws away the decay
+  can be *extended* later. (Infinite training is wasteful - it throws away the decay
   drop. A target + WSD is the sophisticated answer.)
 - **Token budget:** ~100B target (ship earlier via the decay if desired).
 - **Venue:** all training at home on the 5070 (no cloud, by choice).
-- **Data cost:** ~$0 — free open data + free *distilled* open datasets; optional
+- **Data cost:** ~$0 - free open data + free *distilled* open datasets; optional
   free top-ups via the Claude Max subscription.
 
-## Architecture (modern decoder-only — Llama/Qwen/SmolLM2 lineage)
+## Architecture (modern decoder-only - Llama/Qwen/SmolLM2 lineage)
 RoPE positions · RMSNorm · SwiGLU MLP · GQA (grouped-query attention) · QK-norm ·
 tied embeddings · no biases · pre-norm · z-loss. Sizes in `configs/`.
 
@@ -41,7 +41,7 @@ tool-call markers, `<think>` tags, BOS/EOS/pad, plus spare slots) so chat, tools
 reasoning work cleanly without resizing the vocab later. Mixture weights across sources
 are a tuned quality lever, and we pack documents to fill sequences (no padding waste).
 **Curriculum / annealing:** save the highest-quality data (textbook/instruction/
-math/code) for the WSD **decay** phase — proven quality bump.
+math/code) for the WSD **decay** phase - proven quality bump.
 **SFT (free, distilled):** OpenHermes 2.5, Tülu 3, UltraChat, OASST2.
 **Reasoning (free, distilled):** OpenThoughts / OpenR1 CoT traces.
 **Preferences for DPO (free):** UltraFeedback.
@@ -87,38 +87,38 @@ untrusted text, we do the cheap, worthwhile basics: wrap that text in clear deli
 label it as data (not instructions), and cap lengths so it can't blow the context. That is
 the whole security surface worth building for a personal model.
 
-## Training GUI — the "mission control" dashboard
+## Training GUI - the "mission control" dashboard
 A dense, dark, monospace, hacker-aesthetic local web dashboard: looks cool to anyone,
 fully legible to someone who knows ML. Compact panels, sparklines, data everywhere.
 Stack: FastAPI + a websocket metrics stream; **xterm.js** for the real terminal panel;
 **uPlot** for fast, compact live charts.
 
 Panels:
-- **Live terminal** — the raw training stdout, exactly as it scrolls in a shell (xterm.js).
-- **Progress** — bar (tokens seen / target), step, % complete, **ETA** to target + to next checkpoint.
-- **Loss** — train + val curve from step 0 → now (log-y, smoothed) + current value.
-- **Learning rate** — LR curve showing the WSD phases (warmup / stable / decay), current LR, **current decay %**.
-- **Throughput** — tokens/sec (live + sparkline), **MFU %** (model-FLOPs utilization), step time.
-- **Hardware** — VRAM used/max, GPU util %, temp, power draw (via nvidia-smi).
-- **Stability** — gradient norm (pre-clip), z-loss, spike flags.
-- **Eval** — benchmark scores (HellaSwag / ARC / MMLU-slice) + val perplexity over time.
-- **Sample generations** — outputs from a fixed test-prompt set, saved each eval with step,
+- **Live terminal** - the raw training stdout, exactly as it scrolls in a shell (xterm.js).
+- **Progress** - bar (tokens seen / target), step, % complete, **ETA** to target + to next checkpoint.
+- **Loss** - train + val curve from step 0 → now (log-y, smoothed) + current value.
+- **Learning rate** - LR curve showing the WSD phases (warmup / stable / decay), current LR, **current decay %**.
+- **Throughput** - tokens/sec (live + sparkline), **MFU %** (model-FLOPs utilization), step time.
+- **Hardware** - VRAM used/max, GPU util %, temp, power draw (via nvidia-smi).
+- **Stability** - gradient norm (pre-clip), z-loss, spike flags.
+- **Eval** - benchmark scores (HellaSwag / ARC / MMLU-slice) + val perplexity over time.
+- **Sample generations** - outputs from a fixed test-prompt set, saved each eval with step,
   timestamp, and **gen speed (tok/s)**. An **archive** scrolls the SAME prompt across
   checkpoints (watch it get smarter) and compares any two side by side.
-- **Checkpoints** — list with step, size, eval score; load / resume / mark-best.
-- **Controls** — Pause / Play / Stop, autosave status + last-save time.
+- **Checkpoints** - list with step, size, eval score; load / resume / mark-best.
+- **Controls** - Pause / Play / Stop, autosave status + last-save time.
 
 Mechanics:
 - Supervisor runs training as a **subprocess**. **Pause** = checkpoint + exit the
   subprocess → frees *all* VRAM for games. **Play** = relaunch from checkpoint.
-- **Autosave:** atomic write (temp file + rename) every ~10–15 min; rolling last-K +
+- **Autosave:** atomic write (temp file + rename) every ~10-15 min; rolling last-K +
   best-by-eval; autosave on graceful close; resume-from-latest on launch.
   A power outage costs at most one autosave interval.
 
 ## Checkpoint/resume guarantee
 Resuming == continuous training, as long as we save **weights + optimizer state +
 LR-schedule position + data position** (we will). bf16/cuDNN means not bit-identical
-but quality-identical. Pause as often as you like — zero downside.
+but quality-identical. Pause as often as you like - zero downside.
 
 ## Roadmap (build order)
 0. **Repo scaffold + this plan.** ✅
@@ -145,6 +145,6 @@ pull on the **Windows PC** → train on the **RTX 5070**. Code stays
 cross-platform / CUDA.
 
 ## Time (rough, to be pinned down by the shakedown)
-~5–8k tokens/sec for the 1B on a 5070 → roughly **3 months (50B tokens) to 6 months
+~5-8k tokens/sec for the 1B on a 5070 → roughly **3 months (50B tokens) to 6 months
 (100B tokens)** of actual compute, longer in wall-clock with part-time/overnight use.
 The shakedown will measure exact throughput so we can nail this down.

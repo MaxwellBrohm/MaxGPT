@@ -83,7 +83,7 @@ class SFTDataset:
 def load_chat_jsonl(path: str) -> list[dict]:
     """Local chat data: one JSON object per line, each {"messages": [...]}."""
     out = []
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
@@ -113,7 +113,7 @@ def build_sft_jsonl(out_path: str, n: int = 100000,
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     ds = load_dataset(name, split=split, streaming=True)
     written = 0
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         for ex in ds:
             msgs = ex.get("messages")
             if not msgs:

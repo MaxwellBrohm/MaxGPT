@@ -1,4 +1,4 @@
-"""DPO (Direct Preference Optimization) — post-training after SFT.
+"""DPO (Direct Preference Optimization) - post-training after SFT.
 
 DPO improves response quality from preference pairs (prompt, chosen, rejected) without a
 separate reward model or RL loop. It nudges the policy to raise the log-prob of `chosen`
@@ -137,7 +137,7 @@ class DPOTrainer:
         self._stop = True
 
     def _log(self, rec):
-        with open(self.log_path, "a") as f:
+        with open(self.log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
 
     def step_once(self) -> dict:
@@ -203,7 +203,7 @@ def build_pref_jsonl(out_path: str, n: int = 60000,
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     ds = load_dataset(name, split=split, streaming=True)
     written = 0
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         for ex in ds:
             prompt, chosen, rejected = ex.get("prompt"), ex.get("chosen"), ex.get("rejected")
             if not (prompt and chosen and rejected):

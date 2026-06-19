@@ -23,7 +23,7 @@ def _atomic_save(obj, path: str) -> None:
 
 def _atomic_save_json(obj, path: str) -> None:
     tmp = path + ".tmp"
-    with open(tmp, "w") as f:
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(obj, f)
     os.replace(tmp, path)
 
@@ -70,7 +70,7 @@ class CheckpointManager:
         p = os.path.join(self.dir, "latest.json")
         if not os.path.exists(p):
             return None
-        with open(p) as f:
+        with open(p, encoding="utf-8") as f:
             name = json.load(f)["path"]
         full = os.path.join(self.dir, name)
         return full if os.path.exists(full) else None

@@ -26,7 +26,7 @@ DOCS = [
     "In 2026 a high schooler trained a language model from scratch on a single GPU.",
     "def add(a, b):\n    return a + b\n\nprint(add(2, 3))  # 5",
     "Transformers attend to every token in parallel, which is why they train efficiently.",
-    "Café, naïve, Zürich, 北京, 🚀 — byte-level tokenization handles all of it losslessly.",
+    "Café, naïve, Zürich, 北京, 🚀 - byte-level tokenization handles all of it losslessly.",
 ] * 60
 
 
