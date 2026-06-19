@@ -170,13 +170,19 @@ function resize(){ for(const [c,id] of [[lossChart,'losschart'],[lrChart,'lrchar
 addEventListener('resize', resize); setTimeout(resize, 60);
 
 async function api(a){ try{ await fetch('/api/'+a,{method:'POST'}); }catch(e){} }
-let demoHold=false;
+let wantPlay=false, wantPause=false;
 function energize(on){ running=on; core.innerHTML = on?PAUSE:PLAY; document.body.classList.toggle('live', on); }
-core.onclick = ()=>{ if(running){ api('pause'); return; }
-  document.body.classList.add('flooding'); setTimeout(()=>document.body.classList.remove('flooding'),1100);
-  energize(true);                                          // light the reactor up immediately
-  demoHold=true; setTimeout(()=>{ demoHold=false; }, 2400);  // hold so the effect is visible even if start fails
-  api('start'); };
+core.onclick = ()=>{
+  if(running){                                    // -> pause: power down now, stay down until it truly stops
+    wantPause=true; wantPlay=false; energize(false); api('pause');
+    setTimeout(()=>{ wantPause=false; }, 15000);
+  } else {                                        // -> play: light the reactor up immediately
+    wantPlay=true; wantPause=false;
+    document.body.classList.add('flooding'); setTimeout(()=>document.body.classList.remove('flooding'),1100);
+    energize(true); api('start');
+    setTimeout(()=>{ wantPlay=false; }, 2600);    // hold the glow even if start fails, then follow the server
+  }
+};
 energize(false);
 
 function fmtEta(s){ if(!isFinite(s)||s<=0) return '—'; const d=s/86400|0,h=s%86400/3600|0,m=s%3600/60|0;
@@ -201,7 +207,8 @@ function applyMetrics(data){
   }
 }
 function setStatus(s){ const p=$('pill'); p.textContent=s; p.className='pill '+s;
-  if(demoHold) return;                              // don't let the WS cancel the play effect mid-animation
+  if(wantPause){ if(s!=='running') wantPause=false; energize(false); return; }   // stay off until the run really stops
+  if(wantPlay){ if(s==='running') wantPlay=false; energize(true); return; }       // hold the glow until confirmed/timeout
   energize(s==='running'); }
 
 function connect(){
