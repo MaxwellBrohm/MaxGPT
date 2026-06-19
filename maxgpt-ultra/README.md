@@ -9,25 +9,25 @@ decoder architecture (RoPE · RMSNorm · SwiGLU · GQA), with a pause/play train
 Develop here on the Mac; train on the Windows PC with the 5070 (pull from GitHub).
 
 ## Layout
-- `model/` — the transformer (architecture, attention, blocks)
-- `tokenizer/` — 32k BPE tokenizer (train + load)
-- `data/` — dataset download, filtering, tokenization to memmapped shards
-- `train/` — training loop, WSD schedule, checkpoint/resume, autosave, logging
-- `eval/` — perplexity + benchmark + chat vibe-test harness
-- `posttrain/` — SFT and DPO
-- `rag/` — retrieval + web-search tool for inference
-- `gui/` — local pause/play training dashboard
-- `configs/` — `shakedown.yaml` (124M prototype) and `ultra.yaml` (~1.1B)
+- `model/` - the transformer (architecture, attention, blocks)
+- `tokenizer/` - 32k BPE tokenizer (train + load)
+- `data/` - dataset download, filtering, tokenization to memmapped shards
+- `train/` - training loop, WSD schedule, checkpoint/resume, autosave, logging
+- `eval/` - perplexity + benchmark + chat vibe-test harness
+- `posttrain/` - SFT and DPO
+- `rag/` - retrieval + web-search tool for inference
+- `gui/` - local pause/play training dashboard
+- `configs/` - `shakedown.yaml` (124M prototype) and `ultra.yaml` (~1.1B)
 
-## Status — core stack built + CPU-tested
-- ✅ Model architecture (`model/`) — `scripts/smoke_test.py`
-- ✅ Tokenizer (`tokenizer/`) — `scripts/test_tokenizer.py`
-- ✅ Data pipeline (`data/`) + one-command `scripts/prepare_data.py` — `scripts/test_data.py`
-- ✅ Training loop (`train/`: WSD, checkpoint/resume, divergence guard, autosave) — `scripts/test_train.py`
-- ✅ Mission-control GUI (`gui/`: pause/play, live terminal + charts) — `scripts/test_gui.py`
-- ✅ Eval harness (`eval/`: perplexity, MC benchmarks, sample generations) + `model/generate.py` — `scripts/test_eval.py`
-- ✅ Post-training: SFT (`posttrain/sft_data.py`, `scripts/sft.py`) — `scripts/test_sft.py`; DPO (`posttrain/dpo.py`, `scripts/dpo.py`) — `scripts/test_dpo.py`
-- ✅ Inference: RAG retriever + attachments + web tool + grounded chat (`rag/`) — `scripts/test_rag.py`
+## Status - core stack built + CPU-tested
+- ✅ Model architecture (`model/`) - `scripts/smoke_test.py`
+- ✅ Tokenizer (`tokenizer/`) - `scripts/test_tokenizer.py`
+- ✅ Data pipeline (`data/`) + one-command `scripts/prepare_data.py` - `scripts/test_data.py`
+- ✅ Training loop (`train/`: WSD, checkpoint/resume, divergence guard, autosave) - `scripts/test_train.py`
+- ✅ Mission-control GUI (`gui/`: pause/play, live terminal + charts) - `scripts/test_gui.py`
+- ✅ Eval harness (`eval/`: perplexity, MC benchmarks, sample generations) + `model/generate.py` - `scripts/test_eval.py`
+- ✅ Post-training: SFT (`posttrain/sft_data.py`, `scripts/sft.py`) - `scripts/test_sft.py`; DPO (`posttrain/dpo.py`, `scripts/dpo.py`) - `scripts/test_dpo.py`
+- ✅ Inference: RAG retriever + attachments + web tool + grounded chat (`rag/`) - `scripts/test_rag.py`
 - ⏭ Remaining: execute the real pretraining (download → shakedown → 1B) on the 5070; then
   wire RAG into the web UI, a structured tool-call loop, reasoning data, and GUI MFU/VRAM.
 

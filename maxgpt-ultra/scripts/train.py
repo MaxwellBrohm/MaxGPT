@@ -34,7 +34,7 @@ def main() -> None:
     ap.add_argument("--tokenizer", default=None, help="tokenizer json (enables sample generations in eval)")
     args = ap.parse_args()
 
-    with open(args.config) as f:
+    with open(args.config, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
     mcfg = ModelConfig.from_yaml(args.config)
     tcfg = raw["train"]
@@ -44,7 +44,7 @@ def main() -> None:
 
     meta_path = os.path.join(args.data, "meta.json")
     if not os.path.exists(meta_path):
-        print(f"\n  ✗ ERROR: model / data not found  (no shards at '{args.data}').")
+        print(f"\n  ERROR: model / data not found  (no shards at '{args.data}').")
         print("  Nothing has been trained yet on this machine.")
         print("  Run  python scripts/prepare_data.py  to build the data, then press play again.\n")
         sys.exit(1)

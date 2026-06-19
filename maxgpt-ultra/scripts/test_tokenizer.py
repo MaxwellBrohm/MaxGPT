@@ -46,7 +46,7 @@ def main() -> None:
     print("\n[1] lossless round-trip (incl. unseen unicode / emoji via byte fallback)")
     cases = [
         "Hello, world!",
-        "café ☕ 北京 🚀 — naïve résumé",          # none of this was 'learned', byte fallback must cover it
+        "café ☕ 北京 🚀 - naïve résumé",          # none of this was 'learned', byte fallback must cover it
         "def f(x): return x * 2  # comment",
         "Order 66 executed at 3:30pm on 7/4/1776.",
         "\t\n  weird   whitespace\n\n",

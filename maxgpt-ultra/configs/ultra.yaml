@@ -1,4 +1,4 @@
-# MaxGPT-Ultra — THE REAL RUN  (~1.1B params)
+# MaxGPT-Ultra - THE REAL RUN  (~1.1B params)
 # Same recipe as the shakedown, scaled up. Batch sizes get tuned to actually
 # fit + saturate the 5070's 12GB once we measure on the card.
 name: maxgpt-ultra

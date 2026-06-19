@@ -48,7 +48,7 @@ def main() -> None:
     torch.manual_seed(0)
 
     tok = UltraTokenizer(args.tokenizer)
-    with open(args.data) as f:
+    with open(args.data, encoding="utf-8") as f:
         examples = [json.loads(l) for l in f if l.strip()]
     data = DPODataset(examples, tok, mcfg.seq_len)
 

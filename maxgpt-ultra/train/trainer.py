@@ -100,7 +100,7 @@ class Trainer:
         return loss
 
     def _log(self, rec: dict) -> None:
-        with open(self.log_path, "a") as f:
+        with open(self.log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
 
     # --- one optimizer step (grad_accum micro-steps) ---

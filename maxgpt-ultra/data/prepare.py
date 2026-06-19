@@ -20,14 +20,17 @@ import numpy as np
 
 DTYPE = np.uint16
 
-# Pretraining mix. `weight` = target token-share (the quality lever). SmolLM-corpus bundles
-# the proven FineWeb-Edu-dedup + Cosmopedia-v2 + Python-Edu subsets; we add web-math + wiki.
+# Pretraining mix. `weight` = how often a *document* is drawn from each source. SmolLM-corpus
+# bundles the proven FineWeb-Edu-dedup + Cosmopedia-v2 subsets; we add code + web-math + wiki.
+# Code note: smollm-corpus "python-edu" stores blob_ids (the text lives on S3), NOT inline
+# text, so a plain `text` field yields nothing from it. codeparrot-clean ships the code inline
+# in a `content` field and streams without auth, so we use that for the code slice instead.
 PRETRAIN_MIX = [
-    {"path": "HuggingFaceTB/smollm-corpus", "name": "fineweb-edu-dedup", "text_field": "text", "weight": 0.55},
-    {"path": "HuggingFaceTB/smollm-corpus", "name": "cosmopedia-v2",     "text_field": "text", "weight": 0.22},
-    {"path": "HuggingFaceTB/smollm-corpus", "name": "python-edu",        "text_field": "text", "weight": 0.10},
-    {"path": "open-web-math/open-web-math",                              "text_field": "text", "weight": 0.08},
-    {"path": "wikimedia/wikipedia",          "name": "20231101.en",      "text_field": "text", "weight": 0.05},
+    {"path": "HuggingFaceTB/smollm-corpus", "name": "fineweb-edu-dedup", "text_field": "text",    "weight": 0.55},
+    {"path": "HuggingFaceTB/smollm-corpus", "name": "cosmopedia-v2",     "text_field": "text",    "weight": 0.22},
+    {"path": "codeparrot/codeparrot-clean",                              "text_field": "content", "weight": 0.10},
+    {"path": "open-web-math/open-web-math",                              "text_field": "text",    "weight": 0.08},
+    {"path": "wikimedia/wikipedia",          "name": "20231101.en",      "text_field": "text",    "weight": 0.05},
 ]
 
 
@@ -41,10 +44,17 @@ def stream_mixed(specs=PRETRAIN_MIX, seed: int = 0):
     rng = random.Random(seed)
     src = []
     for s in specs:
-        d = load_dataset(s["path"], s.get("name"), split=s.get("split", "train"), streaming=True)
+        name = s.get("name") or s["path"]
+        try:
+            d = load_dataset(s["path"], s.get("name"), split=s.get("split", "train"), streaming=True)
+        except Exception as e:                      # one bad source must not kill the whole prep
+            print(f"[data] WARNING: could not open {name}: {type(e).__name__}: {e}. Skipping it.")
+            continue
         src.append({"it": iter(d), "w": float(s["weight"]),
-                    "name": s.get("name") or s["path"], "field": s.get("text_field", "text"),
+                    "name": name, "field": s.get("text_field", "text"),
                     "alive": True})
+    if not src:
+        raise RuntimeError("no data sources could be opened (check network / dataset ids)")
     while any(s["alive"] for s in src):
         alive = [s for s in src if s["alive"]]
         s = rng.choices(alive, weights=[x["w"] for x in alive], k=1)[0]

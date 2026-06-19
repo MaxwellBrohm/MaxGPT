@@ -1,4 +1,4 @@
-"""MaxGPT-Ultra — a modern decoder-only transformer.
+"""MaxGPT-Ultra - a modern decoder-only transformer.
 
 Design (Llama / Qwen / SmolLM2 lineage), every choice documented in TECHNIQUES.md:
   - RoPE rotary positions (no learned position embeddings)

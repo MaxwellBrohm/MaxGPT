@@ -49,7 +49,7 @@ Qwen). We compute it in fp32 then cast back so bf16 stays safe.
 **SwiGLU feed-forward.**
 *What it is:* The feed-forward sublayer transforms each token independently through a
 small network and holds much of the model's stored knowledge. SwiGLU is a gated version:
-`down( silu(gate(x)) * up(x) )` — two parallel projections, one passed through a SiLU
+`down( silu(gate(x)) * up(x) )` - two parallel projections, one passed through a SiLU
 activation and used to gate (multiply) the other, then projected down.
 *Why it was developed:* The classic FFN is a plain two-layer MLP with ReLU/GELU. Gated
 Linear Units (Dauphin et al., 2017) showed a multiplicative gate helps; Shazeer (2020,
