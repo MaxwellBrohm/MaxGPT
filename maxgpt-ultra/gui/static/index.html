@@ -32,7 +32,7 @@
     text-transform:uppercase;letter-spacing:.12em;color:var(--mut)}
   .pill.running{color:var(--green);border-color:var(--green);box-shadow:0 0 14px rgba(51,255,155,.35)}
   .pill.paused{color:var(--amber);border-color:var(--amber)}
-  .pill.exited,.pill.stopped{color:var(--red);border-color:var(--red)}
+  .pill.exited,.pill.stopped,.pill.error{color:var(--red);border-color:var(--red)}
   .grow{flex:1}
   .stopbtn{background:#10131b;color:var(--mut);border:1px solid #2a2f3a;border-radius:6px;
     padding:5px 12px;font-family:inherit;font-size:11px;cursor:pointer;letter-spacing:.1em}
@@ -170,10 +170,14 @@ function resize(){ for(const [c,id] of [[lossChart,'losschart'],[lrChart,'lrchar
 addEventListener('resize', resize); setTimeout(resize, 60);
 
 async function api(a){ try{ await fetch('/api/'+a,{method:'POST'}); }catch(e){} }
-function setCore(r){ running=r; core.innerHTML = r?PAUSE:PLAY; }
-core.onclick = ()=>{ if(running){ api('pause'); } else { document.body.classList.add('flooding');
-  setTimeout(()=>document.body.classList.remove('flooding'),1100); api('start'); } };
-setCore(false);
+let demoHold=false;
+function energize(on){ running=on; core.innerHTML = on?PAUSE:PLAY; document.body.classList.toggle('live', on); }
+core.onclick = ()=>{ if(running){ api('pause'); return; }
+  document.body.classList.add('flooding'); setTimeout(()=>document.body.classList.remove('flooding'),1100);
+  energize(true);                                          // light the reactor up immediately
+  demoHold=true; setTimeout(()=>{ demoHold=false; }, 2400);  // hold so the effect is visible even if start fails
+  api('start'); };
+energize(false);
 
 function fmtEta(s){ if(!isFinite(s)||s<=0) return '—'; const d=s/86400|0,h=s%86400/3600|0,m=s%3600/60|0;
   return d?`${d}d ${h}h`:h?`${h}h ${m}m`:`${m}m`; }
@@ -197,7 +201,8 @@ function applyMetrics(data){
   }
 }
 function setStatus(s){ const p=$('pill'); p.textContent=s; p.className='pill '+s;
-  setCore(s==='running'); document.body.classList.toggle('live', s==='running'); }
+  if(demoHold) return;                              // don't let the WS cancel the play effect mid-animation
+  energize(s==='running'); }
 
 function connect(){
   const ws=new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/ws');

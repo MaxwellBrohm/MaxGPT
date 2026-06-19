@@ -42,6 +42,13 @@ def main() -> None:
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.seed)
 
+    meta_path = os.path.join(args.data, "meta.json")
+    if not os.path.exists(meta_path):
+        print(f"\n  ✗ ERROR: model / data not found  (no shards at '{args.data}').")
+        print("  Nothing has been trained yet on this machine.")
+        print("  Run  python scripts/prepare_data.py  to build the data, then press play again.\n")
+        sys.exit(1)
+
     model = MaxGPTUltra(mcfg)
     data = PackedShardDataset(args.data, mcfg.seq_len)
 
