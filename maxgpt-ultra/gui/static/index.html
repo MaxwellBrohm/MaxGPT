@@ -84,6 +84,7 @@
   .sm-bar>div.r{background:linear-gradient(90deg,#7a2330,var(--red))}
   .sm-bar>div.b{background:linear-gradient(90deg,#274a6b,var(--blue))}
   .chart{height:calc(100% - 31px);padding:8px 10px} .u-title{color:var(--mut)!important}
+  .u-select{background:rgba(51,255,155,.12);border:1px solid rgba(51,255,155,.45)}   /* visible drag-to-zoom box */
 
   /* reactor core */
   .hub{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:4;width:200px;height:200px;border-radius:50%;
@@ -185,8 +186,8 @@ function mkChart(el,label,color,yfmt,hid,withTrend){ const yc=yfmt?{size:54,valu
   const yL=Object.assign(axis(),yc), yR=Object.assign(axis(),yc,{side:1,scale:'y'});  // mirror y-axis on the right, clear of the center hub
   const fy=v=> v==null?'':(yfmt?yfmt(v):(+v).toFixed(3));
   const series=[{},{label,stroke:color,width:2,fill:color+'18',points:{show:false}}];
-  if(withTrend){ series.push({stroke:'#ffd166',width:1,dash:[6,4],points:{show:false}});   // straight line (recent rate)
-                 series.push({stroke:'#6fd6ff',width:1.5,points:{show:false}}); }            // log curve (projection)
+  if(withTrend){ series.push({stroke:'#ffd166',width:2.5,dash:[12,6],points:{show:false}});   // straight line (recent rate)
+                 series.push({stroke:'#6fd6ff',width:2,points:{show:false}}); }                // log curve (projection)
   const hook=up=>{ const h=$(hid); if(!h) return; const i=up.cursor.idx;   // hover -> show step + value in the title
     if(i==null){ h.textContent=h._base||label; }
     else { const x=up.data[0][i]; h.textContent=label+' · '+(x==null?'':Math.round(x).toLocaleString())+' · '+fy(up.data[1][i]); } };
@@ -238,18 +239,18 @@ function linfit(xs,ys,win){ const n=xs.length,s=Math.max(0,n-win); const idx=[];
   let sx=0,sy=0,sxx=0,sxy=0,m=u2.length; for(const i of u2){const x=xs[i],y=ys[i];sx+=x;sy+=y;sxx+=x*x;sxy+=x*y;}
   const d=m*sxx-sx*sx; if(d===0)return null; const slope=(m*sxy-sx*sy)/d;
   return {slope,intercept:(sy-slope*sx)/m,start:s}; }
-function logfit(xs,ys){ let sx=0,sy=0,sxx=0,sxy=0,m=0;            // bending curve L = a + b*ln(step) (the natural shape of an LM loss curve)
-  for(let i=0;i<xs.length;i++){ if(xs[i]>0){ const x=Math.log(xs[i]),y=ys[i]; sx+=x;sy+=y;sxx+=x*x;sxy+=x*y;m++; } }
+function logfit(xs,ys,win){ const s=Math.max(0,xs.length-(win||xs.length)); let sx=0,sy=0,sxx=0,sxy=0,m=0;  // L = a + b*ln(step) over the recent window so it hugs the live points (not warped by the early cliff)
+  for(let i=s;i<xs.length;i++){ if(xs[i]>0){ const x=Math.log(xs[i]),y=ys[i]; sx+=x;sy+=y;sxx+=x*x;sxy+=x*y;m++; } }
   if(m<2) return null; const d=m*sxx-sx*sx; if(d===0)return null;
-  const b=(m*sxy-sx*sy)/d; return {a:(sy-b*sx)/m,b}; }
+  const b=(m*sxy-sx*sy)/d; return {a:(sy-b*sx)/m,b,start:s}; }
 function renderMetrics(metrics){
   let meta=null,last=null,lastEval=null; const xs=[],loss=[],lr=[];
   for(const r of metrics){ if(r.event==='meta'){meta=r;continue} if(r.event==='eval'){lastEval=r;continue} if(r.event) continue;
     if(r.step!==undefined&&r.loss!==undefined){xs.push(r.step);loss.push(r.loss);lr.push(r.lr);last=r;} }
   const lf=linfit(xs,loss,500);   // straight line: recent local rate (short window so it hugs recent points)
-  const cf=logfit(xs,loss);       // bending curve over the whole run, for the projection
+  const cf=logfit(xs,loss,1500);  // bending curve over recent history so it hugs the live points
   const line=xs.map((x,i)=> (lf&&i>=lf.start)? lf.slope*x+lf.intercept : null);
-  const curve=xs.map(x=> cf? cf.a+cf.b*Math.log(x) : null);
+  const curve=xs.map((x,i)=> (cf&&i>=cf.start)? cf.a+cf.b*Math.log(x) : null);
   let lossBase='loss'; const p=[];
   if(lf){ const r=lf.slope*1000; p.push((r>=0?'+':'')+r.toFixed(3)+'/1k'); }
   if(cf&&meta&&meta.total_steps) p.push('~'+(cf.a+cf.b*Math.log(meta.total_steps)).toFixed(2)+' est');
