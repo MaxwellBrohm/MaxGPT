@@ -70,7 +70,19 @@
   body.live .samples .co{color:#cfeede}
   .progwrap{grid-column:1 / -1;background:#080a10} .progwrap .bar{height:4px;background:#11151d}
   .progwrap .bar>div{height:100%;width:0%;background:linear-gradient(90deg,var(--green-dim),var(--green));box-shadow:0 0 12px rgba(51,255,155,.6);transition:width .5s}
-  #term{height:calc(100% - 31px);padding:6px 8px}
+  .blbody{display:flex;height:calc(100% - 31px)}
+  #term{flex:1;min-width:0;padding:6px 8px}
+  .sysmon{width:200px;flex:none;border-left:1px solid #161a24;background:#070910;padding:11px 13px;display:flex;flex-direction:column;gap:13px;overflow:auto}
+  .sm-row{display:flex;flex-direction:column;gap:4px}
+  .sm-top{display:flex;justify-content:space-between;align-items:baseline}
+  .sm-k{color:var(--mut);font-size:9px;text-transform:uppercase;letter-spacing:.12em}
+  .sm-v{font-size:11px;color:var(--ink);font-variant-numeric:tabular-nums}
+  .sm-bar{height:6px;border-radius:4px;background:#11151d;overflow:hidden}
+  .sm-bar>div{height:100%;width:0%;transition:width .6s}
+  .sm-bar>div.g{background:linear-gradient(90deg,var(--green-dim),var(--green))}
+  .sm-bar>div.a{background:linear-gradient(90deg,#7a5a12,var(--amber))}
+  .sm-bar>div.r{background:linear-gradient(90deg,#7a2330,var(--red))}
+  .sm-bar>div.b{background:linear-gradient(90deg,#274a6b,var(--blue))}
   .chart{height:calc(100% - 31px);padding:8px 10px} .u-title{color:var(--mut)!important}
 
   /* reactor core */
@@ -128,7 +140,19 @@
     <div class="samples" id="samples"><div class="sh">samples · no eval yet</div></div>
   </section>
   <section class="panel tr"><h3>loss</h3><div class="chart" id="losschart"></div></section>
-  <section class="panel bl"><h3>terminal</h3><div id="term"></div></section>
+  <section class="panel bl"><h3>terminal</h3>
+    <div class="blbody">
+      <div id="term"></div>
+      <div id="sysmon" class="sysmon">
+        <div class="sm-row"><div class="sm-top"><span class="sm-k">gpu</span><span class="sm-v" id="sm-gpu">-</span></div><div class="sm-bar"><div id="sm-gpu-bar" class="g"></div></div></div>
+        <div class="sm-row"><div class="sm-top"><span class="sm-k">vram</span><span class="sm-v" id="sm-vram">-</span></div><div class="sm-bar"><div id="sm-vram-bar" class="a"></div></div></div>
+        <div class="sm-row"><div class="sm-top"><span class="sm-k">gpu temp</span><span class="sm-v" id="sm-temp">-</span></div><div class="sm-bar"><div id="sm-temp-bar" class="r"></div></div></div>
+        <div class="sm-row"><div class="sm-top"><span class="sm-k">gpu power</span><span class="sm-v" id="sm-pow">-</span></div><div class="sm-bar"><div id="sm-pow-bar" class="b"></div></div></div>
+        <div class="sm-row"><div class="sm-top"><span class="sm-k">cpu</span><span class="sm-v" id="sm-cpu">-</span></div><div class="sm-bar"><div id="sm-cpu-bar" class="g"></div></div></div>
+        <div class="sm-row"><div class="sm-top"><span class="sm-k">ram</span><span class="sm-v" id="sm-ram">-</span></div><div class="sm-bar"><div id="sm-ram-bar" class="a"></div></div></div>
+      </div>
+    </div>
+  </section>
   <section class="panel br"><h3>learning rate</h3><div class="chart" id="lrchart"></div></section>
   <div class="hub"><button class="core" id="core" title="play / pause"></button></div>
 
@@ -142,6 +166,7 @@
 <div class="flood"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
 <script>
 const PLAY='<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>';
@@ -152,14 +177,15 @@ let running=false, wantPlay=false, wantPause=false;
 let viewing=null, pinned=false;
 
 const term=new Terminal({fontSize:12,theme:{background:'#070910',foreground:'#bfeede'},convertEol:true,scrollback:6000});
-term.open($('term'));
+let fitAddon=null; try{ fitAddon=new FitAddon.FitAddon(); term.loadAddon(fitAddon); }catch(e){}
+term.open($('term')); if(fitAddon) setTimeout(()=>{try{fitAddon.fit()}catch(e){}},60);
 function axis(){return {stroke:'#5a6072',grid:{stroke:'#11151d'},ticks:{stroke:'#11151d'}};}
 function mkChart(el,label,color,yfmt){ const y=yfmt?Object.assign(axis(),{size:54,values:(u,v)=>v.map(yfmt)}):axis();
   return new uPlot({title:label,width:el.clientWidth||420,height:el.clientHeight-26||220,
     series:[{},{label,stroke:color,width:2,fill:color+'18',points:{show:false}}],axes:[axis(),y],scales:{x:{time:false}}},[[],[]],el); }
 const lossChart=mkChart($('losschart'),'loss','#33ff9b');
 const lrChart=mkChart($('lrchart'),'learning rate','#7fb2ff',v=>v?v.toExponential(1):'0');
-addEventListener('resize',()=>{ for(const[c,id]of[[lossChart,'losschart'],[lrChart,'lrchart']]){const e=$(id);c.setSize({width:e.clientWidth,height:e.clientHeight-26});} });
+addEventListener('resize',()=>{ for(const[c,id]of[[lossChart,'losschart'],[lrChart,'lrchart']]){const e=$(id);c.setSize({width:e.clientWidth,height:e.clientHeight-26});} if(fitAddon){try{fitAddon.fit()}catch(e){}} });
 
 async function api(a){ try{ await fetch('/api/'+a,{method:'POST'}); }catch(e){} }
 function energize(on){ running=on; core.innerHTML=on?PAUSE:PLAY; document.body.classList.toggle('live',on); }
@@ -227,6 +253,19 @@ async function pollStage(){ if(!viewing) return; try{ const s=await (await fetch
   renderTerminal(s.key, s.log||[]); renderMetrics(s.metrics||[]);
 }catch(e){} }
 setInterval(pollPipeline,800); setInterval(pollStage,800); pollPipeline();
+
+// system resource monitor (right side of the terminal panel)
+function smBar(key,frac){ const b=$('sm-'+key+'-bar'); if(b) b.style.width=Math.max(0,Math.min(100,(frac||0)*100))+'%'; }
+function smVal(key,txt){ const v=$('sm-'+key); if(v) v.textContent=txt; }
+async function pollSys(){ try{ const s=await (await fetch('/api/sysstats')).json();
+  if(s.gpu_util!=null){ smVal('gpu',Math.round(s.gpu_util)+'%'); smBar('gpu',s.gpu_util/100); } else { smVal('gpu','no gpu'); smBar('gpu',0); }
+  if(s.vram_total_mb){ smVal('vram',(s.vram_used_mb/1024).toFixed(1)+' / '+(s.vram_total_mb/1024).toFixed(1)+' GB'); smBar('vram',s.vram_used_mb/s.vram_total_mb); } else { smVal('vram','-'); smBar('vram',0); }
+  if(s.gpu_temp!=null){ smVal('temp',Math.round(s.gpu_temp)+'C'); smBar('temp',s.gpu_temp/100); } else { smVal('temp','-'); smBar('temp',0); }
+  if(s.gpu_power!=null){ smVal('pow',Math.round(s.gpu_power)+' W'); smBar('pow',s.gpu_power/250); } else { smVal('pow','-'); smBar('pow',0); }
+  if(s.cpu_pct!=null){ smVal('cpu',Math.round(s.cpu_pct)+'%'); smBar('cpu',s.cpu_pct/100); } else { smVal('cpu','pip psutil'); smBar('cpu',0); }
+  if(s.ram_total_gb){ smVal('ram',s.ram_used_gb.toFixed(1)+' / '+s.ram_total_gb.toFixed(1)+' GB'); smBar('ram',s.ram_used_gb/s.ram_total_gb); } else { smVal('ram','-'); smBar('ram',0); }
+}catch(e){} }
+setInterval(pollSys,2000); pollSys();
 
 // chat
 async function sendChat(){ const box=$('chatbox'); const msg=box.value.trim(); if(!msg) return; box.value='';
