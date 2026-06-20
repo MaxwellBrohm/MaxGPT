@@ -139,7 +139,7 @@
     </div>
     <div class="samples" id="samples"><div class="sh">samples · no eval yet</div></div>
   </section>
-  <section class="panel tr"><h3>loss</h3><div class="chart" id="losschart"></div></section>
+  <section class="panel tr"><h3 id="loss-h">loss</h3><div class="chart" id="losschart"></div></section>
   <section class="panel bl"><h3>terminal</h3>
     <div class="blbody">
       <div id="term"></div>
@@ -153,7 +153,7 @@
       </div>
     </div>
   </section>
-  <section class="panel br"><h3>learning rate</h3><div class="chart" id="lrchart"></div></section>
+  <section class="panel br"><h3 id="lr-h">learning rate</h3><div class="chart" id="lrchart"></div></section>
   <div class="hub"><button class="core" id="core" title="play / pause"></button></div>
 
   <div class="chatwrap">
@@ -180,12 +180,18 @@ const term=new Terminal({fontSize:12,theme:{background:'#070910',foreground:'#bf
 let fitAddon=null; try{ fitAddon=new FitAddon.FitAddon(); term.loadAddon(fitAddon); }catch(e){}
 term.open($('term')); if(fitAddon) setTimeout(()=>{try{fitAddon.fit()}catch(e){}},60);
 function axis(){return {stroke:'#5a6072',grid:{stroke:'#11151d'},ticks:{stroke:'#11151d'}};}
-function mkChart(el,label,color,yfmt){ const yc=yfmt?{size:54,values:(u,v)=>v.map(yfmt)}:{};
+function mkChart(el,label,color,yfmt,hid,withTrend){ const yc=yfmt?{size:54,values:(u,v)=>v.map(yfmt)}:{};
   const yL=Object.assign(axis(),yc), yR=Object.assign(axis(),yc,{side:1,scale:'y'});  // mirror y-axis on the right, clear of the center hub
-  return new uPlot({title:label,width:el.clientWidth||420,height:el.clientHeight-26||220,
-    series:[{},{label,stroke:color,width:2,fill:color+'18',points:{show:false}}],axes:[axis(),yL,yR],scales:{x:{time:false}}},[[],[]],el); }
-const lossChart=mkChart($('losschart'),'loss','#33ff9b');
-const lrChart=mkChart($('lrchart'),'learning rate','#7fb2ff',v=>v?v.toExponential(1):'0');
+  const fy=v=> v==null?'':(yfmt?yfmt(v):(+v).toFixed(3));
+  const series=[{},{label,stroke:color,width:2,fill:color+'18',points:{show:false}}];
+  if(withTrend) series.push({stroke:'#ffd166',width:1,dash:[6,4],points:{show:false}});  // last-2k trend line
+  const hook=up=>{ const h=$(hid); if(!h) return; const i=up.cursor.idx;   // hover -> show step + value in the title
+    if(i==null){ h.textContent=h._base||label; }
+    else { const x=up.data[0][i]; h.textContent=label+' · '+(x==null?'':Math.round(x).toLocaleString())+' · '+fy(up.data[1][i]); } };
+  return new uPlot({title:label,width:el.clientWidth||420,height:el.clientHeight-26||220,legend:{show:false},
+    hooks:{setCursor:[hook]},series,axes:[axis(),yL,yR],scales:{x:{time:false}}},withTrend?[[],[],[]]:[[],[]],el); }
+const lossChart=mkChart($('losschart'),'loss','#33ff9b',null,'loss-h',true);
+const lrChart=mkChart($('lrchart'),'learning rate','#7fb2ff',v=>v?v.toExponential(1):'0','lr-h',false);
 addEventListener('resize',()=>{ for(const[c,id]of[[lossChart,'losschart'],[lrChart,'lrchart']]){const e=$(id);c.setSize({width:e.clientWidth,height:e.clientHeight-26});} if(fitAddon){try{fitAddon.fit()}catch(e){}} });
 
 async function api(a){ try{ await fetch('/api/'+a,{method:'POST'}); }catch(e){} }
@@ -219,11 +225,22 @@ let termKey=null, termN=0;
 function renderTerminal(key, lines){ if(key!==termKey){ term.reset(); termKey=key; termN=0; }
   for(let i=termN;i<lines.length;i++) term.writeln(lines[i]); termN=lines.length; }
 
+function linfit(xs,ys,win){ const n=xs.length,s=Math.max(0,n-win),m=n-s; if(m<2)return null;   // least-squares slope/intercept over the last `win` points
+  let sx=0,sy=0,sxx=0,sxy=0; for(let i=s;i<n;i++){const x=xs[i],y=ys[i];sx+=x;sy+=y;sxx+=x*x;sxy+=x*y;}
+  const d=m*sxx-sx*sx; if(d===0)return null; const slope=(m*sxy-sx*sy)/d;
+  return {slope,intercept:(sy-slope*sx)/m,start:s}; }
 function renderMetrics(metrics){
   let meta=null,last=null,lastEval=null; const xs=[],loss=[],lr=[];
   for(const r of metrics){ if(r.event==='meta'){meta=r;continue} if(r.event==='eval'){lastEval=r;continue} if(r.event) continue;
     if(r.step!==undefined&&r.loss!==undefined){xs.push(r.step);loss.push(r.loss);lr.push(r.lr);last=r;} }
-  lossChart.setData([xs,loss]); lrChart.setData([xs,lr]);
+  const fit=linfit(xs,loss,2000);   // trend line over the last ~2k logged points
+  const trend=xs.map((x,i)=> (fit&&i>=fit.start)? fit.slope*x+fit.intercept : null);
+  let lossBase='loss';
+  if(fit){ const r1k=fit.slope*1000; let proj='';
+    if(meta&&meta.total_steps) proj=' · ~'+(fit.slope*meta.total_steps+fit.intercept).toFixed(2)+' est';
+    lossBase='loss · '+(r1k>=0?'+':'')+r1k.toFixed(3)+'/1k'+proj; }
+  const lh=$('loss-h'); if(lh){ lh._base=lossBase; if(!lossChart.cursor||lossChart.cursor.idx==null) lh.textContent=lossBase; }
+  lossChart.setData([xs,loss,trend]); lrChart.setData([xs,lr]);
   const set=(id,v)=>$(id).textContent=v;
   if(last){ set('s-step',last.step.toLocaleString()); set('s-loss',last.loss.toFixed(3));
     set('s-lr',last.lr!=null?last.lr.toExponential(2):'-'); set('s-tps',last.tok_per_s?Math.round(last.tok_per_s).toLocaleString():'-');
