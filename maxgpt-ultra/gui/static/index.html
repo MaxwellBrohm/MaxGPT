@@ -72,7 +72,7 @@
   .progwrap .bar>div{height:100%;width:0%;background:linear-gradient(90deg,var(--green-dim),var(--green));box-shadow:0 0 12px rgba(51,255,155,.6);transition:width .5s}
   .blbody{display:flex;height:calc(100% - 31px)}
   #term{flex:1;min-width:0;padding:6px 8px}
-  .sysmon{width:200px;flex:none;border-left:1px solid #161a24;background:#070910;padding:11px 13px;display:flex;flex-direction:column;gap:13px;overflow:auto}
+  .sysmon{width:200px;flex:none;border-left:1px solid #161a24;background:#070910;padding:72px 13px 13px;display:flex;flex-direction:column;gap:13px;overflow:auto}
   .sm-row{display:flex;flex-direction:column;gap:4px}
   .sm-top{display:flex;justify-content:space-between;align-items:baseline}
   .sm-k{color:var(--mut);font-size:9px;text-transform:uppercase;letter-spacing:.12em}
@@ -180,9 +180,10 @@ const term=new Terminal({fontSize:12,theme:{background:'#070910',foreground:'#bf
 let fitAddon=null; try{ fitAddon=new FitAddon.FitAddon(); term.loadAddon(fitAddon); }catch(e){}
 term.open($('term')); if(fitAddon) setTimeout(()=>{try{fitAddon.fit()}catch(e){}},60);
 function axis(){return {stroke:'#5a6072',grid:{stroke:'#11151d'},ticks:{stroke:'#11151d'}};}
-function mkChart(el,label,color,yfmt){ const y=yfmt?Object.assign(axis(),{size:54,values:(u,v)=>v.map(yfmt)}):axis();
+function mkChart(el,label,color,yfmt){ const yc=yfmt?{size:54,values:(u,v)=>v.map(yfmt)}:{};
+  const yL=Object.assign(axis(),yc), yR=Object.assign(axis(),yc,{side:1,scale:'y'});  // mirror y-axis on the right, clear of the center hub
   return new uPlot({title:label,width:el.clientWidth||420,height:el.clientHeight-26||220,
-    series:[{},{label,stroke:color,width:2,fill:color+'18',points:{show:false}}],axes:[axis(),y],scales:{x:{time:false}}},[[],[]],el); }
+    series:[{},{label,stroke:color,width:2,fill:color+'18',points:{show:false}}],axes:[axis(),yL,yR],scales:{x:{time:false}}},[[],[]],el); }
 const lossChart=mkChart($('losschart'),'loss','#33ff9b');
 const lrChart=mkChart($('lrchart'),'learning rate','#7fb2ff',v=>v?v.toExponential(1):'0');
 addEventListener('resize',()=>{ for(const[c,id]of[[lossChart,'losschart'],[lrChart,'lrchart']]){const e=$(id);c.setSize({width:e.clientWidth,height:e.clientHeight-26});} if(fitAddon){try{fitAddon.fit()}catch(e){}} });
