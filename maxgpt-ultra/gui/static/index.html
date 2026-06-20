@@ -186,14 +186,13 @@ function mkChart(el,label,color,yfmt,hid,withTrend){ const yc=yfmt?{size:54,valu
   const yL=Object.assign(axis(),yc), yR=Object.assign(axis(),yc,{side:1,scale:'y'});  // mirror y-axis on the right, clear of the center hub
   const fy=v=> v==null?'':(yfmt?yfmt(v):(+v).toFixed(3));
   const series=[{},{label,stroke:color,width:2,fill:color+'18',points:{show:false}}];
-  if(withTrend){ series.push({stroke:'#ffd166',width:2.5,dash:[12,6],points:{show:false}});   // straight line (recent rate)
-                 series.push({stroke:'#6fd6ff',width:2,points:{show:false}}); }                // log curve (projection)
+  if(withTrend) series.push({stroke:'#ffd166',width:3,points:{show:false}});   // amber trend curve (recent log fit, also drives the projection)
   const hook=up=>{ const h=$(hid); if(!h) return; const i=up.cursor.idx;   // hover -> show step + value in the title
     if(i==null){ h.textContent=h._base||label; }
     else { const x=up.data[0][i]; h.textContent=label+' · '+(x==null?'':Math.round(x).toLocaleString())+' · '+fy(up.data[1][i]); } };
   const u=new uPlot({title:label,width:el.clientWidth||420,height:el.clientHeight-26||220,legend:{show:false},
     hooks:{setCursor:[hook],setSelect:[up=>{ if(up.select.width>0) ZOOM[hid]=true; }]},   // drag-select -> stay zoomed
-    series,axes:[axis(),yL,yR],scales:{x:{time:false}}},withTrend?[[],[],[],[]]:[[],[]],el);
+    series,axes:[axis(),yL,yR],scales:{x:{time:false}}},withTrend?[[],[],[]]:[[],[]],el);
   el.addEventListener('dblclick',()=>{ ZOOM[hid]=false; u.setData(u.data,true); });   // double-click -> back to full view
   return u; }
 const lossChart=mkChart($('losschart'),'loss','#33ff9b',null,'loss-h',true);
@@ -247,16 +246,15 @@ function renderMetrics(metrics){
   let meta=null,last=null,lastEval=null; const xs=[],loss=[],lr=[];
   for(const r of metrics){ if(r.event==='meta'){meta=r;continue} if(r.event==='eval'){lastEval=r;continue} if(r.event) continue;
     if(r.step!==undefined&&r.loss!==undefined){xs.push(r.step);loss.push(r.loss);lr.push(r.lr);last=r;} }
-  const lf=linfit(xs,loss,500);   // straight line: recent local rate (short window so it hugs recent points)
-  const cf=logfit(xs,loss,1500);  // bending curve over recent history so it hugs the live points
-  const line=xs.map((x,i)=> (lf&&i>=lf.start)? lf.slope*x+lf.intercept : null);
+  const lf=linfit(xs,loss,500);   // recent local rate, for the /1k readout (no longer drawn as a line)
+  const cf=logfit(xs,loss,1500);  // the amber trend curve: recent log fit that hugs the live points + drives the projection
   const curve=xs.map((x,i)=> (cf&&i>=cf.start)? cf.a+cf.b*Math.log(x) : null);
   let lossBase='loss'; const p=[];
   if(lf){ const r=lf.slope*1000; p.push((r>=0?'+':'')+r.toFixed(3)+'/1k'); }
   if(cf&&meta&&meta.total_steps) p.push('~'+(cf.a+cf.b*Math.log(meta.total_steps)).toFixed(2)+' est');
   if(p.length) lossBase='loss · '+p.join(' · ');
   const lh=$('loss-h'); if(lh){ lh._base=lossBase; if(!lossChart.cursor||lossChart.cursor.idx==null) lh.textContent=lossBase; }
-  lossChart.setData([xs,loss,line,curve], !ZOOM['loss-h']); lrChart.setData([xs,lr], !ZOOM['lr-h']);
+  lossChart.setData([xs,loss,curve], !ZOOM['loss-h']); lrChart.setData([xs,lr], !ZOOM['lr-h']);
   const set=(id,v)=>$(id).textContent=v;
   if(last){ set('s-step',last.step.toLocaleString()); set('s-loss',last.loss.toFixed(3));
     set('s-lr',last.lr!=null?last.lr.toExponential(2):'-'); set('s-tps',last.tok_per_s?Math.round(last.tok_per_s).toLocaleString():'-');
