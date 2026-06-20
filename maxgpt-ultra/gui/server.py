@@ -216,6 +216,41 @@ def api_pipeline():
     return PIPE.snapshot()
 
 
+def _read_gpu() -> dict:
+    """GPU stats via nvidia-smi (no extra deps; ships with the NVIDIA driver)."""
+    try:
+        q = "utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw"
+        out = subprocess.run(["nvidia-smi", f"--query-gpu={q}", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=3)
+        vals = [x.strip() for x in out.stdout.strip().splitlines()[0].split(",")]
+        keys = ["gpu_util", "vram_used_mb", "vram_total_mb", "gpu_temp", "gpu_power"]
+        d = {}
+        for k, x in zip(keys, vals):
+            try:
+                d[k] = float(x)
+            except Exception:
+                pass            # a field may report [N/A]; keep the rest
+        return d
+    except Exception:
+        return {}               # no NVIDIA GPU / nvidia-smi not found
+
+
+def _read_cpu_ram() -> dict:
+    """CPU + system RAM via psutil if installed (pip install psutil to enable)."""
+    try:
+        import psutil
+        vm = psutil.virtual_memory()
+        return {"cpu_pct": psutil.cpu_percent(interval=None),
+                "ram_used_gb": vm.used / 1e9, "ram_total_gb": vm.total / 1e9}
+    except Exception:
+        return {}
+
+
+@app.get("/api/sysstats")
+def api_sysstats():
+    return {**_read_gpu(), **_read_cpu_ram()}
+
+
 @app.get("/api/stage/{key}")
 def api_stage(key: str):
     for s in PIPE.stages:
