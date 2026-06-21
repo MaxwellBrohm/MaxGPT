@@ -24,7 +24,7 @@ import yaml
 from model import ModelConfig
 from tokenizer.tokenizer import train_tokenizer, UltraTokenizer
 from data.prepare import tokenize_to_shards, stream_mixed, PRETRAIN_MIX
-from posttrain.sft_data import build_sft_jsonl
+from posttrain.sft_data import build_sft_jsonl, append_oasst_jsonl
 from posttrain.dpo import build_pref_jsonl
 
 SMOKE_DOCS = [
@@ -110,6 +110,11 @@ def main() -> None:
         else:
             print(f"[prepare] building SFT chat data -> {args.sft_out} ...")
             ns = build_sft_jsonl(args.sft_out, n=args.sft_examples)
+            if raw.get("posttrain", {}).get("sft_extra_oasst"):   # ultra only: add OpenAssistant for casual / small-talk
+                print(f"[prepare] adding OpenAssistant (oasst1 + oasst2) on top of UltraChat ...")
+                no = append_oasst_jsonl(args.sft_out)
+                ns += no
+                print(f"[prepare]   +{no:,} OASST conversations")
             print(f"[prepare] building DPO preference data -> {args.pref_out} ...")
             npf = build_pref_jsonl(args.pref_out, n=args.pref_examples)
             print(f"[prepare] sft={ns:,} rows, prefs={npf:,} rows")

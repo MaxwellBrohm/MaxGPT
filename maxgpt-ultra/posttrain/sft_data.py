@@ -123,3 +123,63 @@ def build_sft_jsonl(out_path: str, n: int = 100000,
             if written >= n:
                 break
     return written
+
+
+def _oasst_threads(rows, lang: str = "en") -> list[dict]:
+    """Reconstruct OpenAssistant's message TREE into flat chat threads.
+
+    OASST rows are tree nodes (message_id / parent_id / role / text / rank). We index
+    them, then from each English prompter root we walk down, always taking the best-ranked
+    reply at each step, building [user, assistant, user, ...] threads. Pure function (takes
+    a list of row dicts) so it's testable without the network."""
+    nodes, children = {}, {}
+    for r in rows:
+        if r.get("deleted"):
+            continue
+        if lang and r.get("lang") != lang:
+            continue
+        mid = r.get("message_id")
+        if not mid:
+            continue
+        nodes[mid] = r
+        children.setdefault(r.get("parent_id"), []).append(mid)
+
+    def rank_key(i):                      # rank 0 = best; missing rank sorts last
+        rk = nodes[i].get("rank")
+        return rk if rk is not None else 1e9
+
+    threads = []
+    roots = [m for m in nodes if nodes[m].get("parent_id") is None and nodes[m].get("role") == "prompter"]
+    for root in roots:
+        msgs, cur, expect = [], root, "prompter"
+        while cur in nodes and nodes[cur].get("role") == expect:
+            msgs.append({"role": "user" if expect == "prompter" else "assistant",
+                         "content": nodes[cur].get("text") or ""})
+            nxt = "assistant" if expect == "prompter" else "prompter"
+            kids = [k for k in children.get(cur, []) if k in nodes and nodes[k].get("role") == nxt]
+            if not kids:
+                break
+            cur, expect = sorted(kids, key=rank_key)[0], nxt
+        if len(msgs) >= 2 and msgs[0]["role"] == "user" and msgs[1]["role"] == "assistant":
+            threads.append({"messages": msgs})
+    return threads
+
+
+def append_oasst_jsonl(out_path: str, names=("OpenAssistant/oasst1", "OpenAssistant/oasst2"),
+                       lang: str = "en") -> int:
+    """APPEND OpenAssistant conversations onto an existing SFT jsonl (adds the casual,
+    varied chat that UltraChat lacks). OASST is small, so we take all English threads
+    (PC; needs `datasets`). Returns how many threads were appended."""
+    from datasets import load_dataset
+    written = 0
+    with open(out_path, "a", encoding="utf-8") as f:
+        for name in names:
+            try:
+                ds = load_dataset(name, split="train")
+            except Exception as e:
+                print(f"[sft] WARNING: could not load {name}: {type(e).__name__}: {e}")
+                continue
+            for t in _oasst_threads(list(ds), lang):
+                f.write(json.dumps(t) + "\n")
+                written += 1
+    return written
