@@ -85,6 +85,10 @@
   .sm-bar>div.b{background:linear-gradient(90deg,#274a6b,var(--blue))}
   .chart{height:calc(100% - 31px);padding:8px 10px} .u-title{color:var(--mut)!important}
   .u-select{background:rgba(51,255,155,.12);border:1px solid rgba(51,255,155,.45)}   /* visible drag-to-zoom box */
+  .extbtn{position:absolute;top:6px;left:10px;z-index:6;background:#11151d;border:1px solid #2a2f3a;color:var(--mut);
+    font-family:inherit;font-size:9px;text-transform:uppercase;letter-spacing:.12em;padding:3px 8px;border-radius:6px;cursor:pointer}
+  .extbtn:hover{color:var(--ink);border-color:#3a3f4b}
+  .extbtn.on{color:#06121a;background:var(--amber);border-color:var(--amber)}
 
   /* reactor core */
   .hub{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:4;width:200px;height:200px;border-radius:50%;
@@ -140,7 +144,7 @@
     </div>
     <div class="samples" id="samples"><div class="sh">samples · no eval yet</div></div>
   </section>
-  <section class="panel tr"><h3 id="loss-h">loss</h3><div class="chart" id="losschart"></div></section>
+  <section class="panel tr"><button id="extendBtn" class="extbtn" title="extend the projection curve to the final step">project end</button><h3 id="loss-h">loss</h3><div class="chart" id="losschart"></div></section>
   <section class="panel bl"><h3>terminal</h3>
     <div class="blbody">
       <div id="term"></div>
@@ -188,8 +192,10 @@ function mkChart(el,label,color,yfmt,hid,withTrend){ const yc=yfmt?{size:54,valu
   const series=[{},{label,stroke:color,width:2,fill:color+'18',points:{show:false}}];
   if(withTrend) series.push({stroke:'#ffd166',width:3,points:{show:false}});   // amber trend curve (recent log fit, also drives the projection)
   const hook=up=>{ const h=$(hid); if(!h) return; const i=up.cursor.idx;   // hover -> show step + value in the title
-    if(i==null){ h.textContent=h._base||label; }
-    else { const x=up.data[0][i]; h.textContent=label+' · '+(x==null?'':Math.round(x).toLocaleString())+' · '+fy(up.data[1][i]); } };
+    if(i==null){ h.textContent=h._base||label; return; }
+    const x=up.data[0][i]; let v=up.data[1]?up.data[1][i]:null, lbl=label;
+    if((v==null||(typeof v==='number'&&isNaN(v))) && up.data[2]){ v=up.data[2][i]; lbl=label+' proj'; }  // ungraphed region -> read the projection curve
+    h.textContent=lbl+' · '+(x==null?'':Math.round(x).toLocaleString())+' · '+fy(v); };
   const u=new uPlot({title:label,width:el.clientWidth||420,height:el.clientHeight-26||220,legend:{show:false},
     hooks:{setCursor:[hook],setSelect:[up=>{ if(up.select.width>0) ZOOM[hid]=true; }]},   // drag-select -> stay zoomed
     series,axes:[axis(),yL,yR],scales:{x:{time:false}}},withTrend?[[],[],[]]:[[],[]],el);
@@ -198,6 +204,8 @@ function mkChart(el,label,color,yfmt,hid,withTrend){ const yc=yfmt?{size:54,valu
 const lossChart=mkChart($('losschart'),'loss','#33ff9b',null,'loss-h',true);
 const lrChart=mkChart($('lrchart'),'learning rate','#7fb2ff',v=>v?v.toExponential(1):'0','lr-h',false);
 addEventListener('resize',()=>{ for(const[c,id]of[[lossChart,'losschart'],[lrChart,'lrchart']]){const e=$(id);c.setSize({width:e.clientWidth,height:e.clientHeight-26});} if(fitAddon){try{fitAddon.fit()}catch(e){}} });
+let EXTEND=false;   // toggle: draw the projection curve all the way to the final step
+{ const eb=$('extendBtn'); if(eb) eb.onclick=()=>{ EXTEND=!EXTEND; eb.classList.toggle('on',EXTEND); eb.textContent=EXTEND?'projecting':'project end'; if(typeof pollStage==='function') pollStage(); }; }
 
 async function api(a){ try{ await fetch('/api/'+a,{method:'POST'}); }catch(e){} }
 function energize(on){ running=on; core.innerHTML=on?PAUSE:PLAY; document.body.classList.toggle('live',on); }
@@ -254,7 +262,13 @@ function renderMetrics(metrics){
   if(cf&&meta&&meta.total_steps) p.push('~'+(cf.a+cf.b*Math.log(meta.total_steps)).toFixed(2)+' est');
   if(p.length) lossBase='loss · '+p.join(' · ');
   const lh=$('loss-h'); if(lh){ lh._base=lossBase; if(!lossChart.cursor||lossChart.cursor.idx==null) lh.textContent=lossBase; }
-  lossChart.setData([xs,loss,curve], !ZOOM['loss-h']); lrChart.setData([xs,lr], !ZOOM['lr-h']);
+  let LX=xs, LL=loss, LC=curve;
+  if(EXTEND && cf && meta && meta.total_steps && xs.length){   // extend the projection curve forward to the final step
+    const cur=xs[xs.length-1], end=meta.total_steps;
+    if(end>cur){ const fx=[],fl=[],fc=[],N=80;
+      for(let k=1;k<=N;k++){ const x=cur+(end-cur)*k/N; fx.push(Math.round(x)); fl.push(null); fc.push(cf.a+cf.b*Math.log(x)); }
+      LX=xs.concat(fx); LL=loss.concat(fl); LC=curve.concat(fc); } }
+  lossChart.setData([LX,LL,LC], !ZOOM['loss-h']); lrChart.setData([xs,lr], !ZOOM['lr-h']);
   const set=(id,v)=>$(id).textContent=v;
   if(last){ set('s-step',last.step.toLocaleString()); set('s-loss',last.loss.toFixed(3));
     set('s-lr',last.lr!=null?last.lr.toExponential(2):'-'); set('s-tps',last.tok_per_s?Math.round(last.tok_per_s).toLocaleString():'-');

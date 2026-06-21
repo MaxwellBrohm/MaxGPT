@@ -22,6 +22,8 @@ from typing import Generator
 import streamlit as st
 import torch
 
+import ultra_backend   # MaxGPT-Mini / MaxGPT-Ultra (new-architecture "ultra" family)
+
 
 # ============================================================================
 # Model registry
@@ -47,6 +49,12 @@ class ModelSpec:
     blurb: str                 # 1-3 words shown inside the badge
     summary: str               # one-line architecture summary
     bullets: tuple             # 2-3 bullets explaining what's different vs. the others
+    # --- "ultra" family only (MaxGPT-Mini / MaxGPT-Ultra): new arch, ChatML, 49k tokenizer ---
+    family: str = "legacy"             # "legacy" (GPT-2 style) or "ultra" (MaxGPTUltra)
+    ckpt_candidates: tuple = ()        # checkpoints to try in order (a .pt file or a run dir)
+    tokenizer_candidates: tuple = ()   # UltraTokenizer json paths to try in order
+    config_yaml: object = None         # model config (fallback if the checkpoint lacks one)
+    approx_params: int = 0             # param count for the arch panel (no GPT-2 formula)
 
 
 MODEL_SPECS: dict[str, ModelSpec] = {
@@ -107,6 +115,59 @@ MODEL_SPECS: dict[str, ModelSpec] = {
             "more verbose — base MaxGPT-3 still wins on concise, open-ended single-turn replies.",
         ),
     ),
+    "MaxGPT-Mini": ModelSpec(
+        folder=ROOT / "maxgpt-ultra",
+        checkpoint_filename="",            # ultra family resolves its own checkpoint
+        namespace="maxgpt_mini",
+        color="#06B6D4",  # cyan
+        blurb="modern · compact",
+        summary="113M params · RoPE/RMSNorm/SwiGLU/GQA · 49k vocab · SFT+DPO+RAG",
+        bullets=(
+            "First of the new generation: modern decoder (RoPE, RMSNorm, SwiGLU, GQA, QK-norm) "
+            "instead of the GPT-2-style stack used by MaxGPT-1/2/3.",
+            "Pretrained on FineWeb-Edu + Cosmopedia + code + math (49k tokenizer), then SFT + DPO, "
+            "with retrieval (RAG) available at inference.",
+            "Half the size of MaxGPT-3 (113M vs 235M) but built to punch above it on clean output, "
+            "code, and grounded answers.",
+        ),
+        family="ultra",
+        ckpt_candidates=(
+            ROOT / "maxgpt-ultra" / "models" / "mini.pt",
+            ROOT / "maxgpt-ultra" / "runs" / "dpo",
+            ROOT / "maxgpt-ultra" / "runs" / "sft",
+            ROOT / "maxgpt-ultra" / "runs" / "pretrain",
+        ),
+        tokenizer_candidates=(
+            ROOT / "maxgpt-ultra" / "models" / "mini.tokenizer.json",
+            ROOT / "maxgpt-ultra" / "tokenizer" / "maxgpt-ultra.tokenizer.json",
+        ),
+        config_yaml=ROOT / "maxgpt-ultra" / "configs" / "shakedown.yaml",
+        approx_params=113_000_000,
+    ),
+    "MaxGPT-Ultra": ModelSpec(
+        folder=ROOT / "maxgpt-ultra",
+        checkpoint_filename="",
+        namespace="maxgpt_ultra",
+        color="#EF4444",  # red
+        blurb="modern · flagship",
+        summary="~1.1B params · same modern arch as Mini · ~100B tokens · SFT+DPO+RAG",
+        bullets=(
+            "The flagship: ~1.1B params trained on ~100B tokens of FineWeb-Edu / Cosmopedia / code / math.",
+            "Same modern architecture as MaxGPT-Mini, scaled ~10x. Built to be the first genuinely "
+            "daily-usable model in the lineage.",
+            "Copy its finished checkpoint to maxgpt-ultra/models/ultra.pt (and its tokenizer) to load it here.",
+        ),
+        family="ultra",
+        ckpt_candidates=(
+            ROOT / "maxgpt-ultra" / "models" / "ultra.pt",
+        ),
+        tokenizer_candidates=(
+            ROOT / "maxgpt-ultra" / "models" / "ultra.tokenizer.json",
+            ROOT / "maxgpt-ultra" / "tokenizer" / "maxgpt-ultra.tokenizer.json",
+        ),
+        config_yaml=ROOT / "maxgpt-ultra" / "configs" / "ultra.yaml",
+        approx_params=1_100_000_000,
+    ),
 }
 
 STOP_STRING = "USER:"
@@ -162,6 +223,12 @@ def pick_device() -> str:
 
 def has_files(name: str) -> bool:
     spec = MODEL_SPECS[name]
+    if spec.family == "ultra":
+        if not ultra_backend.available():
+            return False
+        ckpt = ultra_backend.resolve_checkpoint(spec.ckpt_candidates)
+        tok = next((p for p in spec.tokenizer_candidates if Path(p).is_file()), None)
+        return ckpt is not None and tok is not None
     return (
         (spec.folder / "checkpoints" / spec.checkpoint_filename).exists()
         and (spec.folder / "data" / "tokenizer.json").exists()
@@ -179,6 +246,18 @@ def availability() -> dict[str, bool]:
 @st.cache_data(show_spinner=False)
 def arch_info(name: str) -> dict:
     spec = MODEL_SPECS[name]
+    if spec.family == "ultra":
+        p = spec.approx_params
+        info = {"n_params": p, "params_str": (f"{p/1e9:.1f}B" if p >= 1e9 else f"{p/1e6:.0f}M"),
+                "context_window": 0, "hidden_dim": 0, "num_blocks": 0, "num_heads": 0}
+        try:                                    # dims from the config YAML (always present in the repo)
+            if ultra_backend.available() and spec.config_yaml and Path(spec.config_yaml).exists():
+                cfg = ultra_backend._mod().ModelConfig.from_yaml(str(spec.config_yaml))
+                info.update(context_window=cfg.seq_len, hidden_dim=cfg.d_model,
+                            num_blocks=cfg.n_layers, num_heads=cfg.n_heads)
+        except Exception:
+            pass
+        return info
     classes = load_model_classes(spec.folder, spec.namespace)
     cfg = classes.Config()
     V, D, L = cfg.vocab_size, cfg.hidden_dim, cfg.num_blocks
@@ -207,11 +286,22 @@ class LoadedModel:
     context_window: int
     device: str
     checkpoint_step: int
+    family: str = "legacy"            # "ultra" routes generation/prompting through ultra_backend
+    stop_id: int | None = None        # ultra: token id to stop on (<|im_end|>)
 
 
 @st.cache_resource(show_spinner=False)
 def load_model(name: str, device: str) -> LoadedModel:
     spec = MODEL_SPECS[name]
+    if spec.family == "ultra":
+        ckpt = ultra_backend.resolve_checkpoint(spec.ckpt_candidates)
+        tok = next((p for p in spec.tokenizer_candidates if Path(p).is_file()), None)
+        if ckpt is None or tok is None:
+            raise FileNotFoundError(f"{name}: checkpoint or tokenizer not found yet")
+        u = ultra_backend.load(ckpt, tok, spec.config_yaml, device)
+        return LoadedModel(name=name, model=u["model"], tokenizer=u["tokenizer"],
+                           context_window=u["context_window"], device=device,
+                           checkpoint_step=u["step"], family="ultra", stop_id=u["stop_id"])
     classes = load_model_classes(spec.folder, spec.namespace)
     config = classes.Config()
 
@@ -299,6 +389,13 @@ def streaming_generate(
     repetition_window: int = 64,
     stop_string: str = STOP_STRING,
 ) -> Generator[str, None, None]:
+    if loaded.family == "ultra":            # MaxGPT-Mini / MaxGPT-Ultra: delegate to the ultra backend
+        yield from ultra_backend.stream(
+            loaded.model, loaded.tokenizer, prompt, loaded.device, loaded.context_window,
+            max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k,
+            repetition_penalty=repetition_penalty, repetition_window=repetition_window,
+            stop_id=loaded.stop_id)
+        return
     model = loaded.model
     tokenizer = loaded.tokenizer
     device = loaded.device
@@ -369,6 +466,8 @@ def build_chat_prompt(
     max_new_tokens: int,
 ) -> tuple[str, int]:
     """Returns (prompt, num_turns_dropped)."""
+    if hasattr(tokenizer, "render_chat"):     # ultra family (UltraTokenizer) -> ChatML prompt
+        return ultra_backend.render_chatml(history, user_input, tokenizer, context_window, max_new_tokens)
     def render(turns: list[dict]) -> str:
         parts = [f"USER: {t['user']}\nASSISTANT: {t['assistant']}\n" for t in turns]
         parts.append(f"USER: {user_input}\nASSISTANT:")
@@ -564,6 +663,20 @@ CSS = """
   [data-testid="stSidebar"] [role="radiogroup"] label[data-baseweb="radio"] {
       padding: 0.15rem 0;
   }
+
+  /* ---------- Family groupings (Classic / Neo) in the hero ---------- */
+  .mg-hero { border: 1px solid rgba(255,255,255,0.08); }
+  .mg-hero .tagline { max-width: 60rem; line-height: 1.5; }
+  .mg-fam { margin-top: 0.95rem; }
+  .mg-fam-label {
+      display: block;
+      font-size: 0.7rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.14em;
+      color: rgba(255,255,255,0.6);
+      margin-bottom: 0.45rem;
+  }
+  .mg-fam-sub { font-weight: 500; text-transform: none; letter-spacing: 0; opacity: 0.65; }
+  .mg-fam .pills { margin-top: 0; }
 </style>
 """
 
@@ -571,19 +684,28 @@ CSS = """
 # ---------- HTML render helpers ----------
 
 def hero(active_set: dict[str, bool]) -> str:
-    pills = []
-    for n, spec in MODEL_SPECS.items():
+    def pill(n: str) -> str:
+        spec = MODEL_SPECS[n]
         muted = "" if active_set[n] else " muted"
-        pills.append(
-            f'<span class="pill{muted}">'
-            f'<span class="mg-hero-dot" style="--c: {spec.color};"></span>{n}'
-            f'</span>'
-        )
+        return (f'<span class="pill{muted}">'
+                f'<span class="mg-hero-dot" style="--c: {spec.color};"></span>{n}</span>')
+
+    classic = "".join(pill(n) for n, s in MODEL_SPECS.items() if s.family == "legacy")
+    neo = "".join(pill(n) for n, s in MODEL_SPECS.items() if s.family == "ultra")
     return f"""
     <div class="mg-hero">
       <h1>MaxGPT</h1>
-      <div class="tagline">Four from-scratch language models — chat with one, race a few.</div>
-      <div class="pills">{''.join(pills)}</div>
+      <div class="tagline">A family of language models built from scratch in PyTorch &mdash; my own
+      tokenizer, transformer, and training loop. No pretrained weights, no transformers library.
+      Chat with one, or race them side by side.</div>
+      <div class="mg-fam">
+        <span class="mg-fam-label">Classic <span class="mg-fam-sub">&middot; the GPT-2-style lineage</span></span>
+        <div class="pills">{classic}</div>
+      </div>
+      <div class="mg-fam">
+        <span class="mg-fam-label">Neo <span class="mg-fam-sub">&middot; modern architecture &middot; retrieval-augmented</span></span>
+        <div class="pills">{neo}</div>
+      </div>
     </div>
     """
 
@@ -642,9 +764,12 @@ def about_panel(name: str) -> None:
         st.markdown(f"**{spec.summary}**")
         for b in spec.bullets:
             st.markdown(f"- {b}")
+        heads = info['num_heads'] or 1
+        fam = "Neo" if spec.family == "ultra" else "Classic"
+        vocab = "49,152 (byte-level BPE)" if spec.family == "ultra" else "16,000 (BPE)"
         st.caption(
-            f"{info['num_heads']} attention heads · head dim "
-            f"{info['hidden_dim'] // info['num_heads']} · vocab 16,000 (BPE)"
+            f"{fam} family · {info['num_heads']} attention heads · head dim "
+            f"{info['hidden_dim'] // heads} · vocab {vocab}"
         )
 
 
@@ -679,8 +804,9 @@ with st.sidebar:
     def picker_label(name: str) -> str:
         info = arch_info(name)
         spec = MODEL_SPECS[name]
+        fam = "Neo" if spec.family == "ultra" else "Classic"
         suffix = "" if avail[name] else "   (no checkpoint)"
-        return f"{name}  ·  {info['params_str']}  ·  {spec.blurb}{suffix}"
+        return f"{name}  ·  {fam}  ·  {info['params_str']}{suffix}"
 
     if mode == "Chat":
         options = list(MODEL_SPECS.keys())
@@ -898,10 +1024,15 @@ else:
 
         q: queue.Queue = queue.Queue()
         for name in selected_models:
-            prompt = f"USER: {user_input}\nASSISTANT:"
+            lm = loaded_map[name]
+            if lm.family == "ultra":          # build each model's prompt in its own format
+                prompt, _ = ultra_backend.render_chatml([], user_input, lm.tokenizer,
+                                                        lm.context_window, gen_kwargs["max_new_tokens"])
+            else:
+                prompt = f"USER: {user_input}\nASSISTANT:"
             threading.Thread(
                 target=compare_worker,
-                args=(loaded_map[name], prompt, gen_kwargs, q),
+                args=(lm, prompt, gen_kwargs, q),
                 daemon=True,
             ).start()
 
