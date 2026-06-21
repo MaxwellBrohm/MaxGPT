@@ -40,3 +40,10 @@ io:
   autosave_minutes: 15
   keep_last_k: 3
   keep_best: true
+
+posttrain:
+  # Blend OpenAssistant (oasst1 + oasst2) into the SFT data on top of UltraChat.
+  # UltraChat is all long instructional turns; OASST adds the casual/varied chat and
+  # greetings it lacks, so the model handles small talk naturally. Ultra only (the
+  # shakedown's SFT data is intentionally left as-is).
+  sft_extra_oasst: true
