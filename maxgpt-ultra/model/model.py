@@ -216,6 +216,42 @@ class MaxGPTUltra(nn.Module):
             else:
                 x = block(x, cos, sin)
         x = self.norm(x)
+
+        # --- chunked loss (training, opt-in via self.loss_chunk) ---------------------------
+        # Compute CE (+ z-loss) over slices of positions, each slice checkpointed so its
+        # [chunk, vocab] logits are recomputed in backward instead of retained. The full
+        # [B*T, vocab] logits tensor (the single biggest VRAM block, ~GBs at 49k vocab) never
+        # materializes, which frees room for a larger micro_batch. Numerically identical to the
+        # full path below (sum the per-token loss, divide by the token count). Returns no logits
+        # (every targets-given caller discards them); targets=None still returns full logits.
+        chunk = getattr(self, "loss_chunk", 0)
+        if targets is not None and chunk:
+            xf = x.reshape(-1, x.size(-1))
+            tf = targets.reshape(-1)
+            zw = z_loss_weight
+
+            def _chunk_loss(xc, tc):
+                lc = self.lm_head(xc).float()
+                ce = F.cross_entropy(lc, tc, ignore_index=-100, reduction="sum")
+                z = ((torch.logsumexp(lc, dim=-1).pow(2) * (tc != -100).float()).sum()
+                     if zw > 0.0 else lc.new_zeros(()))
+                return ce, z
+
+            ce_sum, z_sum, n_tok = xf.new_zeros(()), xf.new_zeros(()), xf.new_zeros(())
+            for i in range(0, xf.size(0), chunk):
+                xc, tc = xf[i:i + chunk], tf[i:i + chunk]
+                ce, z = (grad_checkpoint(_chunk_loss, xc, tc, use_reentrant=False)
+                         if self.training else _chunk_loss(xc, tc))
+                ce_sum = ce_sum + ce
+                z_sum = z_sum + z
+                n_tok = n_tok + (tc != -100).sum()
+            denom = n_tok.clamp(min=1)
+            loss = ce_sum / denom
+            if zw > 0.0:
+                loss = loss + zw * (z_sum / denom)
+            return None, loss
+        # ------------------------------------------------------------------------------------
+
         logits = self.lm_head(x)
 
         loss = None

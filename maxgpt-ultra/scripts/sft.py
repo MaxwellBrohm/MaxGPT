@@ -12,6 +12,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # maxgpt-ultra/
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")  # less VRAM fragmentation
 
 import torch
 
@@ -56,9 +57,16 @@ def main() -> None:
             "total_tokens": total_tokens, "warmup_tokens": int(0.03 * total_tokens),
             "lr": args.lr, "decay_frac": 0.1, "z_loss": 0.0, "grad_clip": 1.0,
             "autosave_minutes": 15, "log_every": 10, "keep_last_k": 2,
-            "grad_checkpointing": False, "optimizer_8bit": False}
+            "grad_checkpointing": False, "optimizer_8bit": False,
+            "compile": True, "eval_every": 200, "loss_chunk": 2048}
 
-    trainer = Trainer(model, ds, tcfg, device, args.out, seed=0, stop_file=args.stop_file)
+    # chat-formatted sample prompts so the dashboard shows the assistant's replies improving
+    from eval.harness import evaluate
+    _prompts = ["Hello! How are you?", "Explain photosynthesis in one sentence.",
+                "Write a haiku about the ocean.", "def fizzbuzz(n):"]
+    eval_fn = lambda m, step: evaluate(m, tokenizer=tok, sample_prompts=_prompts, device=device, chat=True)
+
+    trainer = Trainer(model, ds, tcfg, device, args.out, eval_fn=eval_fn, seed=0, stop_file=args.stop_file)
     resumed = trainer.resume_if_available()
 
     import signal

@@ -46,9 +46,9 @@ def dpo_loss(policy, ref, batch, beta: float = 0.1):
         ref_r = sequence_logprobs(ref, rids, rm)
     logits = beta * ((pol_c - pol_r) - (ref_c - ref_r))
     loss = -F.logsigmoid(logits).mean()
-    chosen_reward = float((beta * (pol_c - ref_c)).mean())
-    rejected_reward = float((beta * (pol_r - ref_r)).mean())
-    stats = {"dpo_loss": float(loss), "reward_margin": chosen_reward - rejected_reward,
+    chosen_reward = float((beta * (pol_c - ref_c)).mean().detach())   # stats are logging-only -> detach
+    rejected_reward = float((beta * (pol_r - ref_r)).mean().detach())
+    stats = {"dpo_loss": float(loss.detach()), "reward_margin": chosen_reward - rejected_reward,
              "chosen_reward": chosen_reward, "rejected_reward": rejected_reward,
              "acc": float((logits > 0).float().mean())}
     return loss, stats
@@ -101,7 +101,8 @@ class DPODataset:
 
 class DPOTrainer:
     def __init__(self, policy, ref, data: DPODataset, tcfg: dict, device: str, out_dir: str,
-                 beta: float = 0.1, seed: int = 0, stop_file: str | None = None):
+                 beta: float = 0.1, seed: int = 0, stop_file: str | None = None,
+                 eval_fn=None, eval_every: int = 0):
         self.policy = policy.to(device)
         self.ref = ref.to(device)
         for p in self.ref.parameters():
@@ -129,6 +130,10 @@ class DPOTrainer:
         self.policy.grad_checkpointing = bool(tcfg.get("grad_checkpointing", False))
         self.optimizer = make_optimizer(self.policy, self.max_lr, tuple(tcfg.get("betas", [0.9, 0.95])),
                                         float(tcfg.get("weight_decay", 0.0)), bool(tcfg.get("optimizer_8bit", False)))
+        self.eval_fn = eval_fn
+        self.eval_every = int(eval_every or tcfg.get("eval_every", 0))
+        from train.trainer import _enable_fast_math
+        _enable_fast_math()
         self.step = 0
         self._last_save = time.time()
         self._stop = False
@@ -178,6 +183,10 @@ class DPOTrainer:
 
     def train(self, max_steps: int | None = None):
         target = self.total_steps if max_steps is None else min(self.total_steps, self.step + max_steps)
+        # meta line so the dashboard can draw the projection + progress bar + ETA for DPO too
+        tps = self.batch_size * self.grad_accum * 2 * self.data.seq_len   # chosen+rejected tokens/step
+        self._log({"step": self.step, "event": "meta", "total_steps": self.total_steps, "tokens_per_step": tps})
+        t0 = time.time()
         while self.step < target:
             if self._stop or (self.stop_file and os.path.exists(self.stop_file)):
                 self._log({"step": self.step, "event": "paused"})
@@ -189,7 +198,13 @@ class DPOTrainer:
                     raise RuntimeError("DPO diverged with no checkpoint to roll back to")
                 continue
             if self.step % self.log_every == 0:
+                dt = time.time() - t0
+                t0 = time.time()
+                rec["tok_per_s"] = tps * self.log_every / max(dt, 1e-6)
                 self._log(rec)
+            if self.eval_every and self.eval_fn and self.step % self.eval_every == 0:
+                self._log({"step": self.step, "event": "eval", **self.eval_fn(self.policy, self.step)})
+                self.policy.train()
             if time.time() - self._last_save >= self.autosave_s:
                 self.save()
         self.save()

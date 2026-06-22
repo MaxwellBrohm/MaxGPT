@@ -61,11 +61,14 @@ def eval_multiple_choice(model, tokenizer, examples, device: str = "cpu") -> dic
 
 @torch.no_grad()
 def run_sample_prompts(model, tokenizer, prompts, device: str = "cpu", max_new_tokens: int = 48,
-                       temperature: float = 0.8, top_p: float = 0.95) -> list[dict]:
+                       temperature: float = 0.8, top_p: float = 0.95, chat: bool = False) -> list[dict]:
     model.eval()
     out = []
     for p in prompts:
-        ids = torch.tensor([tokenizer.encode(p)], device=device)
+        # chat=True wraps the prompt in ChatML so SFT/DPO samples show the assistant's reply
+        text = (tokenizer.render_chat([{"role": "user", "content": p}], add_generation_prompt=True)
+                if chat and hasattr(tokenizer, "render_chat") else p)
+        ids = torch.tensor([tokenizer.encode(text)], device=device)
         t0 = time.time()
         gen = generate(model, ids, max_new_tokens=max_new_tokens, temperature=temperature,
                        top_p=top_p, eos_id=tokenizer.eos_id)
@@ -87,7 +90,8 @@ def evaluate(model, tokenizer=None, val_data=None, mc_examples=None, sample_prom
         m.update(eval_multiple_choice(model, tokenizer, mc_examples, device=device))
     if sample_prompts and tokenizer is not None:
         m["samples"] = run_sample_prompts(model, tokenizer, sample_prompts, device=device,
-                                          max_new_tokens=kw.get("max_new_tokens", 48))
+                                          max_new_tokens=kw.get("max_new_tokens", 48),
+                                          chat=kw.get("chat", False))
     return m
 
 
