@@ -62,6 +62,9 @@ class PackedShardDataset:
                 self.epoch += 1
         x = torch.from_numpy(np.stack(xs))
         y = torch.from_numpy(np.stack(ys))
+        if device == "cuda":            # pinned + async copy overlaps the host->device transfer with compute
+            return (x.pin_memory().to(device, non_blocking=True),
+                    y.pin_memory().to(device, non_blocking=True))
         return x.to(device), y.to(device)
 
     # --- resume support (data-position tracking) ---

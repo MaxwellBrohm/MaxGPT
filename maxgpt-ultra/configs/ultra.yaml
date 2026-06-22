@@ -35,6 +35,9 @@ train:
   grad_accum: 64         # ~0.5M tokens/step effective at seq 2048
   grad_checkpointing: true
   optimizer_8bit: true   # 8-bit AdamW so optimizer states fit in 12GB
+  compile: true          # torch.compile fuses kernels for a big throughput win (auto-falls back to eager if it can't compile)
+  compile_modes: [max-autotune, default]   # try the aggressive mode first, drop a tier at a time on failure
+  loss_chunk: 2048       # compute the loss in 2048-position chunks (checkpointed) so the huge logits tensor never materializes -> frees VRAM for a bigger micro_batch
 
 io:
   autosave_minutes: 15

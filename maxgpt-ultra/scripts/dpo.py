@@ -16,6 +16,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # maxgpt-ultra/
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")  # less VRAM fragmentation
 
 import torch
 
@@ -61,8 +62,12 @@ def main() -> None:
             "warmup_steps": max(1, steps // 20), "lr": args.lr, "decay_frac": 0.1,
             "grad_checkpointing": args.grad_checkpointing, "weight_decay": 0.0,
             "autosave_minutes": 15, "log_every": 10}
+    from eval.harness import evaluate
+    _prompts = ["Hello! How are you?", "What is the capital of France?",
+                "Write a short poem about stars.", "def reverse(s):"]
+    eval_fn = lambda m, step: evaluate(m, tokenizer=tok, sample_prompts=_prompts, device=device, chat=True)
     trainer = DPOTrainer(policy, ref, data, tcfg, device, args.out, beta=args.beta,
-                         seed=0, stop_file=args.stop_file)
+                         seed=0, stop_file=args.stop_file, eval_fn=eval_fn, eval_every=100)
     resumed = trainer.resume_if_available()
 
     import signal

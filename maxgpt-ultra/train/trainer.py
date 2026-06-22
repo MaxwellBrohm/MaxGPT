@@ -39,6 +39,18 @@ def make_optimizer(model, lr, betas, weight_decay, use_8bit=False):
     return torch.optim.AdamW(groups, lr=lr, betas=betas)
 
 
+def _enable_fast_math() -> None:
+    """TF32 matmuls + cuDNN autotuning. Faster on Ampere/Blackwell at negligible precision
+    cost (we already train in bf16). No-op / harmless on CPU."""
+    try:
+        torch.set_float32_matmul_precision("high")
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        torch.backends.cudnn.benchmark = True
+    except Exception:
+        pass
+
+
 class Trainer:
     def __init__(self, model, data, tcfg: dict, device: str, out_dir: str,
                  eval_fn=None, seed: int = 0, stop_file: str | None = None):
@@ -71,14 +83,36 @@ class Trainer:
         self.eval_every = int(tcfg.get("eval_every", 0))
 
         self.model.grad_checkpointing = bool(tcfg.get("grad_checkpointing", False))
+        self.model.loss_chunk = int(tcfg.get("loss_chunk", 0))   # >0 -> chunked, memory-light loss
         self.use_amp = (device == "cuda")
         self.optimizer = make_optimizer(self.model, self.max_lr, self.betas, self.wd,
                                         bool(tcfg.get("optimizer_8bit", False)))
+        _enable_fast_math()
+        # torch.compile fuses kernels for a large throughput win (CUDA only). It shares params
+        # with self.model, so the optimizer / save / load keep using the uncompiled handle. We try
+        # the most aggressive mode first and drop a tier at a time on failure
+        # (max-autotune -> default -> eager), so we always end up running.
+        self._compile_modes = (list(tcfg.get("compile_modes", ["max-autotune", "default"]))
+                               if bool(tcfg.get("compile", False)) and device == "cuda" else [])
+        self.fwd = self._make_fwd()
         self.step = 0
         self._last_save = time.time()
         self._t0 = time.time()
         self._stop = False           # set by request_stop() (e.g. Ctrl-C)
         self.stop_file = stop_file    # GUI pause: presence of this file => checkpoint + exit
+
+    def _make_fwd(self):
+        """Compile self.model with the next available mode; eager if none left."""
+        while self._compile_modes:
+            mode = self._compile_modes[0]
+            try:
+                f = torch.compile(self.model, mode=(None if mode == "default" else mode), dynamic=False)
+                print(f"[train] torch.compile(mode={mode})")
+                return f
+            except Exception as e:
+                print(f"[train] compile setup mode={mode} failed ({type(e).__name__}); next tier")
+                self._compile_modes.pop(0)
+        return self.model
 
     def request_stop(self) -> None:
         self._stop = True
@@ -96,7 +130,17 @@ class Trainer:
         ctx = (torch.autocast(device_type="cuda", dtype=torch.bfloat16)
                if self.use_amp else nullcontext())
         with ctx:
-            _, loss = self.model(x, y, z_loss_weight=self.z_loss)
+            while True:
+                try:
+                    _, loss = self.fwd(x, y, z_loss_weight=self.z_loss)
+                    break
+                except Exception as e:
+                    if self._compile_modes:             # a compiled mode failed at runtime -> next tier
+                        print(f"[train] compiled forward failed ({type(e).__name__}); dropping a compile tier")
+                        self._compile_modes.pop(0)
+                        self.fwd = self._make_fwd()
+                    else:
+                        raise
         return loss
 
     def _log(self, rec: dict) -> None:
@@ -109,13 +153,14 @@ class Trainer:
                     decay_frac=self.decay_frac, max_lr=self.max_lr)
         self._set_lr(lr)
         self.optimizer.zero_grad(set_to_none=True)
-        loss_sum = 0.0
+        loss_sum = None
         for _ in range(self.grad_accum):
             loss = self._micro_forward()
             (loss / self.grad_accum).backward()
-            loss_sum += loss.item()
+            # accumulate on-device (detached); one GPU->CPU sync per step instead of per micro-step
+            loss_sum = loss.detach() if loss_sum is None else loss_sum + loss.detach()
         gnorm = float(torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip))
-        loss_avg = loss_sum / self.grad_accum
+        loss_avg = float(loss_sum) / self.grad_accum
         diverged = not (math.isfinite(loss_avg) and math.isfinite(gnorm))
         if not diverged:
             self.optimizer.step()
@@ -166,6 +211,7 @@ class Trainer:
                 self._log(rec)
             if self.eval_every and self.eval_fn and self.step % self.eval_every == 0:
                 self._log({"step": self.step, "event": "eval", **self.eval_fn(self.model, self.step)})
+                self.model.train()      # eval_fn flips to eval(); restore train so chunked-loss/checkpoint stay active
             if time.time() - self._last_save >= self.autosave_s:
                 self.save()
         self.save()  # final checkpoint
