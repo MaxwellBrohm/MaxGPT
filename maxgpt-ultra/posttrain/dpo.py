@@ -13,8 +13,10 @@ Examples: {"prompt": [messages up to the user turn], "chosen": str, "rejected": 
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
+from contextlib import nullcontext
 
 import numpy as np
 import torch
@@ -26,24 +28,39 @@ from train.trainer import make_optimizer
 from train.checkpoint import CheckpointManager, load_checkpoint
 
 
-def sequence_logprobs(model, ids: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+def sequence_logprobs(model, ids: torch.Tensor, mask: torch.Tensor, chunk: int = 0) -> torch.Tensor:
     """Sum of log-probs of the response tokens (where mask is True) for each sequence.
     Right-padding is safe: causal attention means pad tokens never affect earlier tokens,
-    and padded positions are masked out of the sum."""
+    and padded positions are masked out of the sum. chunk>0 reads each token's logprob as
+    (gather - logsumexp) in row-chunks, so the full [B,T,vocab] float softmax never forms."""
     logits, _ = model(ids)
-    logp = torch.log_softmax(logits.float(), dim=-1)
-    tok_logp = logp[:, :-1, :].gather(-1, ids[:, 1:, None]).squeeze(-1)   # logprob of each next token
+    logits = logits[:, :-1, :]                       # position t predicts token t+1
+    tgt = ids[:, 1:, None]
+    if chunk:
+        flat = logits.reshape(-1, logits.size(-1))
+        tflat = ids[:, 1:].reshape(-1, 1)
+        parts = []
+        for i in range(0, flat.size(0), chunk):
+            lc = flat[i:i + chunk].float()
+            parts.append(lc.gather(-1, tflat[i:i + chunk]).squeeze(-1) - torch.logsumexp(lc, dim=-1))
+        tok_logp = torch.cat(parts).reshape(logits.size(0), logits.size(1))
+    else:
+        logp = torch.log_softmax(logits.float(), dim=-1)
+        tok_logp = logp.gather(-1, tgt).squeeze(-1)
     m = mask[:, 1:].to(tok_logp.dtype)
     return (tok_logp * m).sum(-1)
 
 
-def dpo_loss(policy, ref, batch, beta: float = 0.1):
-    cids, cm, rids, rm = batch
-    pol_c = sequence_logprobs(policy, cids, cm)
-    pol_r = sequence_logprobs(policy, rids, rm)
-    with torch.no_grad():
-        ref_c = sequence_logprobs(ref, cids, cm)
-        ref_r = sequence_logprobs(ref, rids, rm)
+def dpo_loss(policy, ref, batch, beta: float = 0.1, chunk: int = 0):
+    cids, cm, rids, rm = batch[:4]
+    # batch carries precomputed (ref_c, ref_r) when the frozen reference was cached up front
+    ref_c, ref_r = (batch[4], batch[5]) if len(batch) >= 6 else (None, None)
+    pol_c = sequence_logprobs(policy, cids, cm, chunk)
+    pol_r = sequence_logprobs(policy, rids, rm, chunk)
+    if ref_c is None:
+        with torch.no_grad():
+            ref_c = sequence_logprobs(ref, cids, cm, chunk)
+            ref_r = sequence_logprobs(ref, rids, rm, chunk)
     logits = beta * ((pol_c - pol_r) - (ref_c - ref_r))
     loss = -F.logsigmoid(logits).mean()
     chosen_reward = float((beta * (pol_c - ref_c)).mean().detach())   # stats are logging-only -> detach
@@ -72,6 +89,8 @@ class DPODataset:
             rid, rm = build(ex["rejected"])
             self.items.append((cid, cm, rid, rm))
         self.pos = 0
+        self.ref_c = None   # per-item cached reference logprobs (filled by precompute_ref)
+        self.ref_r = None
 
     def __len__(self):
         return len(self.items)
@@ -86,11 +105,40 @@ class DPODataset:
         return torch.from_numpy(ids), torch.from_numpy(mk)
 
     def next_batch(self, bs: int, device: str = "cpu"):
-        batch = [self.items[(self.pos + i) % len(self.items)] for i in range(bs)]
+        idx = [(self.pos + i) % len(self.items) for i in range(bs)]
+        batch = [self.items[i] for i in idx]
         self.pos = (self.pos + bs) % len(self.items)
         cids, cm = self._pad([b[0] for b in batch], [b[1] for b in batch])
         rids, rm = self._pad([b[2] for b in batch], [b[3] for b in batch])
-        return (cids.to(device), cm.to(device), rids.to(device), rm.to(device))
+        out = [cids.to(device), cm.to(device), rids.to(device), rm.to(device)]
+        if self.ref_c is not None:   # precomputed reference logprobs -> the ref forwards are skipped
+            out.append(torch.tensor([self.ref_c[i] for i in idx], dtype=torch.float32, device=device))
+            out.append(torch.tensor([self.ref_r[i] for i in idx], dtype=torch.float32, device=device))
+        return tuple(out)
+
+    @torch.no_grad()
+    def precompute_ref(self, ref_model, device: str = "cpu", batch_size: int = 8,
+                       chunk: int = 0, autocast: bool = False) -> int:
+        """Compute + cache the frozen reference logprobs for every pair, once.
+        Right-padding + causal attention make sequence_logprobs padding-invariant, so a pair's
+        value is identical regardless of how it is batched. Caching it here is therefore exactly
+        what the loop would compute on the fly, just done a single time instead of every step."""
+        ref_model.eval()
+        n = len(self.items)
+        rc, rr = np.empty(n, dtype=np.float32), np.empty(n, dtype=np.float32)
+        ctx = (torch.autocast("cuda", dtype=torch.bfloat16)
+               if autocast and device == "cuda" else nullcontext())
+        for s in range(0, n, batch_size):
+            items = self.items[s:s + batch_size]
+            cids, cm = self._pad([b[0] for b in items], [b[1] for b in items])
+            rids, rm = self._pad([b[2] for b in items], [b[3] for b in items])
+            with ctx:
+                c = sequence_logprobs(ref_model, cids.to(device), cm.to(device), chunk)
+                r = sequence_logprobs(ref_model, rids.to(device), rm.to(device), chunk)
+            rc[s:s + len(items)] = c.float().cpu().numpy()
+            rr[s:s + len(items)] = r.float().cpu().numpy()
+        self.ref_c, self.ref_r = rc, rr
+        return n
 
     def state_dict(self):
         return {"pos": self.pos}
@@ -134,6 +182,15 @@ class DPOTrainer:
         self.eval_every = int(eval_every or tcfg.get("eval_every", 0))
         from train.trainer import _enable_fast_math
         _enable_fast_math()
+        self.use_amp = (device == "cuda")
+        self.logp_chunk = int(tcfg.get("logp_chunk", 0))
+        # the reference never changes, so compute its logprobs once and free the model (big VRAM win)
+        if bool(tcfg.get("precompute_ref", True)):
+            self._precompute_reference()
+        # tiered torch.compile of the policy (CUDA only); it shares params, so save/load use self.policy
+        self._compile_modes = (list(tcfg.get("compile_modes", ["max-autotune", "default"]))
+                               if bool(tcfg.get("compile", False)) and device == "cuda" else [])
+        self.fwd = self._make_fwd()
         self.step = 0
         self._last_save = time.time()
         self._stop = False
@@ -145,6 +202,69 @@ class DPOTrainer:
         with open(self.log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
 
+    def _make_fwd(self):
+        # variable padded lengths per batch -> compile dynamic so it doesn't recompile every shape
+        while self._compile_modes:
+            mode = self._compile_modes[0]
+            try:
+                f = torch.compile(self.policy, mode=(None if mode == "default" else mode), dynamic=True)
+                print(f"[dpo] torch.compile(mode={mode})")
+                return f
+            except Exception as e:
+                print(f"[dpo] compile setup mode={mode} failed ({type(e).__name__}); next tier")
+                self._compile_modes.pop(0)
+        return self.policy
+
+    def _ref_fingerprint(self) -> float:
+        with torch.no_grad():
+            ps = list(self.ref.parameters())
+            return sum(float(p.detach().float().sum()) for p in (ps[:4] + ps[-4:]))
+
+    def _drop_ref(self) -> None:
+        self.ref = None
+        if self.device == "cuda":
+            torch.cuda.empty_cache()
+
+    def _precompute_reference(self) -> None:
+        n = len(self.data)
+        fp = self._ref_fingerprint()
+        cache = os.path.join(self.out_dir, "ref_logps.npz")
+        if os.path.exists(cache):   # reuse across resumes; fingerprint guards against a changed SFT init
+            try:
+                d = np.load(cache)
+                if len(d["c"]) == n and abs(float(d["fp"]) - fp) < 1e-2:
+                    self.data.ref_c = d["c"].astype(np.float32)
+                    self.data.ref_r = d["r"].astype(np.float32)
+                    print(f"[dpo] loaded cached reference logprobs ({n} pairs)")
+                    self._drop_ref()
+                    return
+            except Exception:
+                pass
+        t = time.time()
+        print(f"[dpo] precomputing frozen-reference logprobs for {n} pairs (one-time) ...")
+        self.data.precompute_ref(self.ref, self.device, batch_size=max(1, self.batch_size),
+                                 chunk=self.logp_chunk, autocast=self.use_amp)
+        try:
+            np.savez(cache, c=self.data.ref_c, r=self.data.ref_r, fp=np.float32(fp))
+        except Exception:
+            pass
+        print(f"[dpo] reference logprobs ready in {time.time() - t:.0f}s (reference model freed)")
+        self._drop_ref()
+
+    def _dpo_forward(self, batch):
+        ctx = (torch.autocast("cuda", dtype=torch.bfloat16) if self.use_amp else nullcontext())
+        while True:
+            try:
+                with ctx:
+                    return dpo_loss(self.fwd, self.ref, batch, self.beta, self.logp_chunk)
+            except Exception as e:
+                if self._compile_modes:           # a compiled mode failed at runtime -> drop a tier
+                    print(f"[dpo] compiled forward failed ({type(e).__name__}); dropping a compile tier")
+                    self._compile_modes.pop(0)
+                    self.fwd = self._make_fwd()
+                else:
+                    raise
+
     def step_once(self) -> dict:
         lr = wsd_lr(self.step, total_steps=self.total_steps, warmup_steps=self.warmup_steps,
                     decay_frac=self.decay_frac, max_lr=self.max_lr)
@@ -153,12 +273,11 @@ class DPOTrainer:
         self.optimizer.zero_grad(set_to_none=True)
         agg = {}
         for _ in range(self.grad_accum):
-            loss, stats = dpo_loss(self.policy, self.ref, self.data.next_batch(self.batch_size, self.device), self.beta)
+            loss, stats = self._dpo_forward(self.data.next_batch(self.batch_size, self.device))
             (loss / self.grad_accum).backward()
             for k, v in stats.items():
                 agg[k] = agg.get(k, 0.0) + v / self.grad_accum
         gnorm = float(torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.grad_clip))
-        import math
         if not (math.isfinite(agg["dpo_loss"]) and math.isfinite(gnorm)):
             return {"step": self.step, "diverged": True, **agg}
         self.optimizer.step()

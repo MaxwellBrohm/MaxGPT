@@ -50,3 +50,11 @@ posttrain:
   # greetings it lacks, so the model handles small talk naturally. Ultra only (the
   # shakedown's SFT data is intentionally left as-is).
   sft_extra_oasst: true
+  dpo:
+    # DPO speedups (no quality change): run it in bf16 + torch.compile like pretrain/SFT,
+    # compute the frozen reference's logprobs once then free that whole model, and chunk the
+    # 49k-wide logprob math so the giant softmax table never materializes. ~3-5x faster.
+    compile: true
+    compile_modes: [max-autotune, default]
+    precompute_ref: true
+    logp_chunk: 2048

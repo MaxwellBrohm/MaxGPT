@@ -45,6 +45,9 @@ def main() -> None:
     args = ap.parse_args()
 
     mcfg = ModelConfig.from_yaml(args.config)
+    import yaml
+    _raw = yaml.safe_load(open(args.config, encoding="utf-8"))
+    _dpo = ((_raw.get("posttrain", {}) or {}).get("dpo", {}) or {})   # optional DPO speed knobs
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(0)
 
@@ -61,7 +64,13 @@ def main() -> None:
     tcfg = {"batch_size": args.batch_size, "grad_accum": args.grad_accum, "total_steps": steps,
             "warmup_steps": max(1, steps // 20), "lr": args.lr, "decay_frac": 0.1,
             "grad_checkpointing": args.grad_checkpointing, "weight_decay": 0.0,
-            "autosave_minutes": 15, "log_every": 10}
+            "autosave_minutes": 15, "log_every": 10,
+            # speed (all loss-free): bf16 + compile like pretrain/SFT, cache the frozen reference
+            # once then free it, and chunk the 49k-wide logprob math. Overridable per-config.
+            "compile": _dpo.get("compile", True),
+            "compile_modes": _dpo.get("compile_modes", ["max-autotune", "default"]),
+            "precompute_ref": _dpo.get("precompute_ref", True),
+            "logp_chunk": int(_dpo.get("logp_chunk", 0))}
     from eval.harness import evaluate
     _prompts = ["Hello! How are you?", "What is the capital of France?",
                 "Write a short poem about stars.", "def reverse(s):"]
