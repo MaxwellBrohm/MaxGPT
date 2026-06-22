@@ -104,7 +104,8 @@ class Attention(nn.Module):
             self.q_norm = RMSNorm(self.head_dim, cfg.rms_eps)
             self.k_norm = RMSNorm(self.head_dim, cfg.rms_eps)
 
-    def forward(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor,
+                past=None, use_cache: bool = False):
         B, T, _ = x.shape
         q = self.q_proj(x).view(B, T, self.n_heads, self.head_dim)
         k = self.k_proj(x).view(B, T, self.n_kv_heads, self.head_dim)
@@ -120,16 +121,30 @@ class Attention(nn.Module):
         k = k.transpose(1, 2)  # (B, n_kv_heads, T, hd)
         v = v.transpose(1, 2)
 
+        # RoPE uses absolute positions; cos/sin are pre-sliced to this chunk's positions (offset
+        # past the cache during incremental decode), so new tokens rotate at the right angle.
         q = apply_rope(q, cos, sin)
         k = apply_rope(k, cos, sin)
 
-        k = repeat_kv(k, self.n_rep)
-        v = repeat_kv(v, self.n_rep)
+        if past is not None:                       # prepend cached keys/values (post-RoPE, pre-GQA-repeat)
+            pk, pv = past
+            k = torch.cat([pk, k], dim=2)
+            v = torch.cat([pv, v], dim=2)
+        new_kv = (k, v) if use_cache else None
 
-        # Causal flash/SDPA attention.
-        out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        kr = repeat_kv(k, self.n_rep)
+        vr = repeat_kv(v, self.n_rep)
+        if past is None:
+            out = F.scaled_dot_product_attention(q, kr, vr, is_causal=True)   # prefill / training
+        elif q.size(2) == 1:
+            out = F.scaled_dot_product_attention(q, kr, vr)                   # 1 new token attends to all cached
+        else:
+            Tq, Tk = q.size(2), kr.size(2)                                    # several new tokens: causal among them
+            mask = torch.ones(Tq, Tk, dtype=torch.bool, device=q.device).tril(diagonal=Tk - Tq)
+            out = F.scaled_dot_product_attention(q, kr, vr, attn_mask=mask)
         out = out.transpose(1, 2).contiguous().view(B, T, self.n_heads * self.head_dim)
-        return self.o_proj(out)
+        out = self.o_proj(out)
+        return (out, new_kv) if use_cache else out
 
 
 # --------------------------------------------------------------------------- #
@@ -161,8 +176,14 @@ class Block(nn.Module):
         self.mlp_norm = RMSNorm(cfg.d_model, cfg.rms_eps)
         self.mlp = SwiGLU(cfg)
 
-    def forward(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor,
+                past=None, use_cache: bool = False):
         # Pre-norm residuals: normalize the input to each sublayer, add the result back.
+        if use_cache:
+            a, kv = self.attn(self.attn_norm(x), cos, sin, past, True)
+            x = x + a
+            x = x + self.mlp(self.mlp_norm(x))
+            return x, kv
         x = x + self.attn(self.attn_norm(x), cos, sin)
         x = x + self.mlp(self.mlp_norm(x))
         return x
@@ -203,19 +224,29 @@ class MaxGPTUltra(nn.Module):
             nn.init.normal_(module.weight, mean=0.0, std=self.cfg.init_std)
 
     def forward(self, idx: torch.Tensor, targets: torch.Tensor | None = None,
-                z_loss_weight: float = 0.0):
+                z_loss_weight: float = 0.0, past=None, use_cache: bool = False):
         B, T = idx.shape
-        assert T <= self.cfg.seq_len, f"sequence length {T} exceeds seq_len {self.cfg.seq_len}"
+        past_len = past[0][0].size(2) if past is not None else 0   # cached key length (incremental decode)
+        assert past_len + T <= self.cfg.seq_len, \
+            f"sequence length {past_len + T} exceeds seq_len {self.cfg.seq_len}"
 
         x = self.tok_emb(idx)
-        cos = self.rope_cos[:T].to(x.dtype)
-        sin = self.rope_sin[:T].to(x.dtype)
-        for block in self.blocks:
+        cos = self.rope_cos[past_len:past_len + T].to(x.dtype)     # positions offset past the cache
+        sin = self.rope_sin[past_len:past_len + T].to(x.dtype)
+        new_caches = [] if use_cache else None
+        for i, block in enumerate(self.blocks):
             if self.grad_checkpointing and self.training:
                 x = grad_checkpoint(block, x, cos, sin, use_reentrant=False)
+            elif use_cache:
+                x, kv = block(x, cos, sin, (past[i] if past is not None else None), True)
+                new_caches.append(kv)
             else:
                 x = block(x, cos, sin)
         x = self.norm(x)
+
+        # incremental-decode path: just logits + the updated KV cache (generation needs no loss)
+        if use_cache:
+            return self.lm_head(x), new_caches
 
         # --- chunked loss (training, opt-in via self.loss_chunk) ---------------------------
         # Compute CE (+ z-loss) over slices of positions, each slice checkpointed so its
