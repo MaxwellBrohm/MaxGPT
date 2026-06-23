@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import platform
 import time
 from contextlib import nullcontext
 
@@ -33,13 +34,14 @@ def make_optimizer(model, lr, betas, weight_decay, use_8bit=False):
     if use_8bit and torch.cuda.is_available():
         try:
             import bitsandbytes as bnb
-            try:
-                # Paged: optimizer state lives in host RAM and is paged onto the GPU only for the
-                # update step (it is "cold", touched once per optimizer step), freeing ~2 bytes/param
-                # of dedicated VRAM. Same math as AdamW8bit -> zero quality change.
-                return bnb.optim.PagedAdamW8bit(groups, lr=lr, betas=betas)
-            except Exception:
-                return bnb.optim.AdamW8bit(groups, lr=lr, betas=betas)   # non-paged 8-bit
+            # Paged 8-bit pages optimizer state to host RAM via CUDA unified memory, which only
+            # oversubscribes on Linux. On Windows it cannot page and OOMs, so use plain 8-bit there.
+            if platform.system() != "Windows":
+                try:
+                    return bnb.optim.PagedAdamW8bit(groups, lr=lr, betas=betas)   # frees ~2B/param of VRAM
+                except Exception:
+                    pass
+            return bnb.optim.AdamW8bit(groups, lr=lr, betas=betas)
         except Exception:
             pass  # bitsandbytes unavailable -> regular AdamW
     return torch.optim.AdamW(groups, lr=lr, betas=betas)
