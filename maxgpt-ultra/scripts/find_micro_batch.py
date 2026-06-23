@@ -34,21 +34,24 @@ os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")    
 
 def run_probe(micro_batch: int, args) -> None:
     """One trial in THIS process. Exit code: 0 = fit, 2 = OOM, 3 = no-CUDA/other error."""
-    import torch
-    import yaml
+    try:
+        import torch
+        import yaml
+    except Exception as e:
+        print(f"ERROR {type(e).__name__}: {e}  (is torch installed in THIS python? use your training env)")
+        sys.exit(3)
     if not torch.cuda.is_available():
         print("NOCUDA")
         sys.exit(3)
-    from model import ModelConfig, MaxGPTUltra
-    from train.trainer import make_optimizer, _enable_fast_math
-
-    raw = yaml.safe_load(open(args.config, encoding="utf-8"))
-    t = raw.get("train", {})
-    mcfg = ModelConfig.from_yaml(args.config)
-    seq_len = args.seq_len or mcfg.seq_len
-    dev = "cuda"
-    _enable_fast_math()
     try:
+        from model import ModelConfig, MaxGPTUltra
+        from train.trainer import make_optimizer, _enable_fast_math
+        raw = yaml.safe_load(open(args.config, encoding="utf-8"))
+        t = raw.get("train", {})
+        mcfg = ModelConfig.from_yaml(args.config)
+        seq_len = args.seq_len or mcfg.seq_len
+        dev = "cuda"
+        _enable_fast_math()
         torch.cuda.reset_peak_memory_stats()
         model = MaxGPTUltra(mcfg).to(dev)
         model.grad_checkpointing = bool(t.get("grad_checkpointing", False))
@@ -79,6 +82,9 @@ def run_probe(micro_batch: int, args) -> None:
         if "out of memory" in str(e).lower():
             print("OOM")
             sys.exit(2)
+        print(f"ERROR {type(e).__name__}: {e}")
+        sys.exit(3)
+    except Exception as e:                              # config not found, bad import, etc. -> not an OOM
         print(f"ERROR {type(e).__name__}: {e}")
         sys.exit(3)
 
