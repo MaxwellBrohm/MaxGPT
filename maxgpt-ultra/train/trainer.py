@@ -33,9 +33,15 @@ def make_optimizer(model, lr, betas, weight_decay, use_8bit=False):
     if use_8bit and torch.cuda.is_available():
         try:
             import bitsandbytes as bnb
-            return bnb.optim.AdamW8bit(groups, lr=lr, betas=betas)
+            try:
+                # Paged: optimizer state lives in host RAM and is paged onto the GPU only for the
+                # update step (it is "cold", touched once per optimizer step), freeing ~2 bytes/param
+                # of dedicated VRAM. Same math as AdamW8bit -> zero quality change.
+                return bnb.optim.PagedAdamW8bit(groups, lr=lr, betas=betas)
+            except Exception:
+                return bnb.optim.AdamW8bit(groups, lr=lr, betas=betas)   # non-paged 8-bit
         except Exception:
-            pass  # fall back to regular AdamW if bitsandbytes is unavailable
+            pass  # bitsandbytes unavailable -> regular AdamW
     return torch.optim.AdamW(groups, lr=lr, betas=betas)
 
 
