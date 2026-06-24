@@ -37,6 +37,28 @@ SMOKE_SFT = [{"messages": [{"role": "user", "content": "hi"}, {"role": "assistan
 SMOKE_PREF = [{"prompt": [{"role": "user", "content": "say a"}], "chosen": "a", "rejected": "b"}] * 20
 
 
+def _make_progress_writer(path, total_tokens):
+    """Return on_progress(done) that writes GUI-readable progress (tokens as the unit) to `path`,
+    so the dashboard's existing progress bar + ETA render for the data stage too. Throttled to ~5s."""
+    import time
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:        # fresh file + meta line so the bar knows the target
+        f.write(json.dumps({"step": 0, "event": "meta",
+                            "total_steps": int(total_tokens), "tokens_per_step": 1}) + "\n")
+    state = {"t": time.time(), "tok": 0}
+
+    def on_progress(done, force=False):
+        now = time.time()
+        if not force and now - state["t"] < 5.0:
+            return
+        rate = (done - state["tok"]) / max(now - state["t"], 1e-6)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"step": int(done), "tok_per_s": rate}) + "\n")
+        state["t"], state["tok"] = now, done
+
+    return on_progress
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="configs/ultra.yaml")
@@ -46,6 +68,7 @@ def main() -> None:
     ap.add_argument("--pref-out", default="data/prefs.jsonl")
     ap.add_argument("--max-tokens", type=float, default=None, help="pretrain token budget (default: config total_tokens)")
     ap.add_argument("--max-docs", type=int, default=None, help="hard cap on docs (optional; for quick tests)")
+    ap.add_argument("--metrics-out", default=None, help="write tokens-done progress here (powers the GUI data progress bar)")
     ap.add_argument("--tokenizer-sample-docs", type=int, default=2_000_000)
     ap.add_argument("--shard-size", type=int, default=100_000_000)
     ap.add_argument("--vocab-size", type=int, default=None)
@@ -87,8 +110,11 @@ def main() -> None:
 
     # 2) pretrain shards (proportional mix, capped at the token budget)
     print(f"[prepare] tokenizing the mix -> {args.shards_out}/  (budget ~{max_tokens:,} tokens) ...")
+    on_progress = _make_progress_writer(args.metrics_out, max_tokens) if args.metrics_out else None
     meta = tokenize_to_shards(tagged_stream(args.max_docs), tok, args.shards_out,
-                              shard_size=shard_size, max_tokens=max_tokens)
+                              shard_size=shard_size, max_tokens=max_tokens, on_progress=on_progress)
+    if on_progress:
+        on_progress(meta["total_tokens"], force=True)   # final 100% point
     tot = meta["total_tokens"]
     print(f"[prepare] pretrain: {tot:,} tokens in {len(meta['shards'])} shard(s). mix:")
     for src, n in sorted(meta["by_source"].items(), key=lambda kv: -kv[1]):

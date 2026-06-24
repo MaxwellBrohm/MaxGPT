@@ -256,7 +256,7 @@ def api_stage(key: str):
     for s in PIPE.stages:
         if s.key == key:
             return {"key": s.key, "label": s.label, "status": s.status, "kind": s.kind,
-                    "log": s.lines(), "metrics": s.metrics() if s.kind == "train" else []}
+                    "log": s.lines(), "metrics": s.metrics() if s.kind in ("train", "data") else []}
     return JSONResponse({"error": "no such stage"}, status_code=404)
 
 
@@ -323,7 +323,8 @@ def build_default_pipeline(config, tokenizer, shards, sft_data, pref_data, runs)
                 and os.path.exists(os.path.join(ROOT, pref_data)))
 
     stages = [
-        Stage("data", "Data", lambda: [py, "scripts/prepare_data.py", "--config", config],
+        Stage("data", "Data", lambda: [py, "scripts/prepare_data.py", "--config", config,
+              "--metrics-out", os.path.join(runs, "data", "metrics.jsonl")],
               os.path.join(runs, "data"), kind="data", done_when=data_done),
         Stage("pretrain", "Pretrain", lambda: [py, "scripts/train.py", "--config", config,
               "--data", shards, "--out", os.path.join(runs, "pretrain"), "--tokenizer", tokenizer,

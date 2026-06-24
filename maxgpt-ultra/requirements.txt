@@ -5,6 +5,7 @@ tokenizers
 numpy
 fastapi
 uvicorn[standard]
+psutil
 
 # installed on the 5070 box for the real run:
 #   datasets       (FineWeb-Edu etc. download + streaming)

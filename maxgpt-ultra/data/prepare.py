@@ -141,7 +141,7 @@ def stream_mixed(specs=PRETRAIN_MIX, seed: int = 0) -> MixedStream:
 
 def tokenize_to_shards(items, tokenizer, out_dir: str, shard_size: int = 100_000_000,
                        eot_id: int | None = None, max_tokens: int | None = None,
-                       resume: bool = True) -> dict:
+                       resume: bool = True, on_progress=None) -> dict:
     """Encode `items` (each a str, or a (text, source) tuple), append an EOT after each doc, and
     write uint16 shards + a meta.json index. Stops at `max_tokens` if set.
 
@@ -204,7 +204,12 @@ def tokenize_to_shards(items, tokenizer, out_dir: str, shard_size: int = 100_000
     if pending is not None:                             # re-feed the doc that was in flight at the crash
         src_iter = itertools.chain([(pending["text"], pending["source"])], src_iter)
 
+    docs = 0
     for item in src_iter:
+        if on_progress:                                 # report tokens-done (the callback throttles to ~5s)
+            docs += 1
+            if docs % 256 == 0:
+                on_progress(total)
         text, source = item if isinstance(item, tuple) else (item, None)
         ids = tokenizer.encode(text)
         ids.append(eot_id)
