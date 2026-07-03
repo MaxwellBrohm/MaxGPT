@@ -323,7 +323,7 @@ def build_default_pipeline(config, tokenizer, shards, sft_data, pref_data, runs)
                 and os.path.exists(os.path.join(ROOT, pref_data)))
 
     stages = [
-        Stage("data", "Data", lambda: [py, "scripts/prepare_data.py", "--config", config,
+        Stage("data", "Data", lambda: [py, "-u", "scripts/prepare_data.py", "--config", config,
               "--metrics-out", os.path.join(runs, "data", "metrics.jsonl")],
               os.path.join(runs, "data"), kind="data", done_when=data_done),
         Stage("pretrain", "Pretrain", lambda: [py, "scripts/train.py", "--config", config,

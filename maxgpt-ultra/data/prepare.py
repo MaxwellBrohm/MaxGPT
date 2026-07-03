@@ -105,14 +105,25 @@ class MixedStream:
     def __iter__(self):
         self._open()
         src = self._sources
+        fails = {e["name"]: 0 for e in src}            # consecutive stream errors per source
         while any(e["alive"] for e in src):
             alive = [e for e in src if e["alive"]]
             e = self._rng.choices(alive, weights=[x["w"] for x in alive], k=1)[0]
             try:
                 ex = next(e["it"])
             except StopIteration:
+                print(f"[data] source exhausted: {e['name']}", flush=True)
                 e["alive"] = False
                 continue
+            except Exception as err:                   # a network / HF error must not kill the whole build
+                fails[e["name"]] += 1
+                print(f"[data] WARNING: {e['name']} stream error "
+                      f"({type(err).__name__}: {err}); fail {fails[e['name']]}/10", flush=True)
+                if fails[e["name"]] >= 10:
+                    print(f"[data] dropping {e['name']} after repeated errors; continuing on the rest", flush=True)
+                    e["alive"] = False
+                continue
+            fails[e["name"]] = 0
             text = ex.get(e["field"]) if isinstance(ex, dict) else None
             if text:
                 yield text, e["name"]

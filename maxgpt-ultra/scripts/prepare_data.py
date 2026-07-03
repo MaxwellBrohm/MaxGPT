@@ -45,7 +45,7 @@ def _make_progress_writer(path, total_tokens):
     with open(path, "w", encoding="utf-8") as f:        # fresh file + meta line so the bar knows the target
         f.write(json.dumps({"step": 0, "event": "meta",
                             "total_steps": int(total_tokens), "tokens_per_step": 1}) + "\n")
-    state = {"t": time.time(), "tok": 0}
+    state = {"t": time.time(), "tok": 0, "print_t": time.time()}
 
     def on_progress(done, force=False):
         now = time.time()
@@ -54,9 +54,25 @@ def _make_progress_writer(path, total_tokens):
         rate = (done - state["tok"]) / max(now - state["t"], 1e-6)
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps({"step": int(done), "tok_per_s": rate}) + "\n")
+        if force or now - state["print_t"] >= 60.0:     # console heartbeat (less chatty than the metrics file)
+            pct = 100.0 * done / max(int(total_tokens), 1)
+            print(f"[data] {done:,} tokens (~{pct:.1f}%), {rate:,.0f} tok/s", flush=True)
+            state["print_t"] = now
         state["t"], state["tok"] = now, done
 
     return on_progress
+
+
+def _counting(it, label, every=50_000):
+    """Yield from `it`, printing a heartbeat every `every` items so a long silent stream shows life."""
+    import time
+    n, t0 = 0, time.time()
+    for x in it:
+        n += 1
+        if n % every == 0:
+            print(f"[prepare] {label}: {n:,} docs ({n / max(time.time() - t0, 1e-6):,.0f}/s)", flush=True)
+        yield x
+    print(f"[prepare] {label}: done, {n:,} docs", flush=True)
 
 
 def main() -> None:
@@ -69,7 +85,8 @@ def main() -> None:
     ap.add_argument("--max-tokens", type=float, default=None, help="pretrain token budget (default: config total_tokens)")
     ap.add_argument("--max-docs", type=int, default=None, help="hard cap on docs (optional; for quick tests)")
     ap.add_argument("--metrics-out", default=None, help="write tokens-done progress here (powers the GUI data progress bar)")
-    ap.add_argument("--tokenizer-sample-docs", type=int, default=2_000_000)
+    ap.add_argument("--tokenizer-sample-docs", type=int, default=1_000_000,
+                    help="docs to train the BPE on (1M is well past saturation for a 49k vocab)")
     ap.add_argument("--shard-size", type=int, default=100_000_000)
     ap.add_argument("--vocab-size", type=int, default=None)
     ap.add_argument("--sft-examples", type=int, default=100_000)
@@ -99,12 +116,17 @@ def main() -> None:
         it = (((d, "smoke") for d in SMOKE_DOCS)) if args.smoke else stream_mixed(PRETRAIN_MIX)
         return itertools.islice(it, limit) if limit else it
 
+    if not args.smoke and not (os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")):
+        print("[prepare] note: no HuggingFace token detected. Anonymous streaming is rate-limited and "
+              "slower; run `huggingface-cli login` or set HF_TOKEN for faster, steadier downloads.", flush=True)
+
     # 1) tokenizer
     if os.path.exists(args.tokenizer_out):
         print(f"[prepare] tokenizer already at {args.tokenizer_out}; skipping training")
     else:
-        print(f"[prepare] training {vocab}-vocab tokenizer on up to {sample_docs:,} docs ...")
-        train_tokenizer(text_stream(sample_docs), vocab_size=vocab, out_path=args.tokenizer_out)
+        print(f"[prepare] training {vocab}-vocab tokenizer on up to {sample_docs:,} docs ...", flush=True)
+        train_tokenizer(_counting(text_stream(sample_docs), "tokenizer sample"),
+                        vocab_size=vocab, out_path=args.tokenizer_out)
     tok = UltraTokenizer(args.tokenizer_out)
     print(f"[prepare] tokenizer ready: vocab={tok.vocab_size}")
 
