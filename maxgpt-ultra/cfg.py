@@ -26,3 +26,31 @@ def load_yaml(path: str) -> dict:
         return raw
     base_path = base if os.path.isabs(base) else os.path.join(os.path.dirname(os.path.abspath(path)), base)
     return _deep_merge(load_yaml(base_path), raw)
+
+
+def configure_triton_ptxas() -> str | None:
+    """Old NVIDIA drivers (< 525, CUDA 11.x era) cannot load the kernels Triton builds with its
+    bundled CUDA 12 ptxas ("device kernel image is invalid"), which silently costs the whole
+    torch.compile speedup. If such a driver is found and the CUDA 11.8 ptxas is installed in this
+    environment (pip: nvidia-cuda-nvcc-cu11), point Triton at it. Returns the path used, or None.
+    Torch-free and cheap, so every training script can call it first thing."""
+    import glob
+    import subprocess
+    import sys
+    if os.environ.get("TRITON_PTXAS_PATH"):
+        return os.environ["TRITON_PTXAS_PATH"]
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+                             capture_output=True, text=True, timeout=5).stdout.strip().splitlines()
+        major = int(out[0].split(".")[0]) if out else 0
+    except Exception:
+        return None
+    if major == 0 or major >= 525:
+        return None
+    hits = glob.glob(os.path.join(sys.prefix, "lib", "python*", "site-packages", "nvidia", "cuda_nvcc", "bin", "ptxas"))
+    if not hits:
+        print(f"[setup] driver {major} is too old for Triton's ptxas; install nvidia-cuda-nvcc-cu11==11.8.89 "
+              f"to get torch.compile (running without it)", flush=True)
+        return None
+    os.environ["TRITON_PTXAS_PATH"] = hits[0]
+    return hits[0]
