@@ -28,7 +28,7 @@ from .checkpoint import CheckpointManager, load_checkpoint
 from . import dist as D
 
 
-def make_optimizer(model, lr, betas, weight_decay, use_8bit=False):
+def make_optimizer(model, lr, betas, weight_decay, use_8bit=False, kind="adamw", muon_opts=None):
     # weight decay on 2D+ tensors (matmuls/embeddings), none on 1D (norms/gains)
     decay, no_decay = [], []
     for p in model.parameters():
@@ -38,6 +38,24 @@ def make_optimizer(model, lr, betas, weight_decay, use_8bit=False):
     groups = [{"params": decay, "weight_decay": weight_decay},
               {"params": no_decay, "weight_decay": 0.0}]
     on_cuda = torch.cuda.is_available() and any(p.is_cuda for g in groups for p in g["params"])
+    if kind in ("muon", "normuon"):
+        from .muon import Muon
+        opts = dict(muon_opts or {})
+        # Muon for the block matrices; AdamW (same lr / decay rules) for embeddings, head, and 1D
+        emb = {id(p) for n, p in model.named_parameters()
+               if n.startswith(("tok_emb", "lm_head")) or n.endswith(("tok_emb.weight", "lm_head.weight"))}
+        mats = [p for p in decay if id(p) not in emb]
+        embs = [p for p in decay if id(p) in emb]
+        groups = [{"params": mats, "weight_decay": weight_decay, "use_muon": True},
+                  {"params": embs, "weight_decay": weight_decay, "use_muon": False},
+                  {"params": no_decay, "weight_decay": 0.0, "use_muon": False}]
+        ns_dtype = None
+        if on_cuda:
+            ns_dtype = torch.bfloat16 if cuda_has_native_bf16() else torch.float16
+        return Muon(groups, lr=lr, weight_decay=weight_decay, betas=betas,
+                    normalize=(kind == "normuon") or bool(opts.get("normalize", False)),
+                    cautious=bool(opts.get("cautious_wd", False)), momentum=float(opts.get("momentum", 0.95)),
+                    ns_dtype=ns_dtype)
     if use_8bit and on_cuda:
         try:
             import bitsandbytes as bnb
@@ -159,9 +177,14 @@ class Trainer:
         self.scaler = torch.amp.GradScaler(device, enabled=use_scaler,
                                            init_scale=float(tcfg.get("loss_scale_init", 2.0 ** 16)))
         self.optimizer = make_optimizer(self.model, self.max_lr, self.betas, self.wd,
-                                        bool(tcfg.get("optimizer_8bit", False)))
+                                        bool(tcfg.get("optimizer_8bit", False)),
+                                        kind=str(tcfg.get("optimizer", "adamw")).lower(),
+                                        muon_opts={"cautious_wd": tcfg.get("cautious_wd", False),
+                                                   "momentum": tcfg.get("muon_momentum", 0.95)})
         _enable_fast_math()
         self.net = D.wrap_ddp(self.model)                   # DDP wrapper (or the model itself)
+        self._ddp = self.net is not self.model
+        self._grads_bound = False    # DDP: True once .grad tensors are views into the all-reduce buckets
         # torch.compile fuses kernels for a large throughput win (CUDA only). It shares params
         # with self.model, so the optimizer / save / load keep using the uncompiled handle. We try
         # the most aggressive mode first and drop a tier at a time on failure
@@ -244,12 +267,20 @@ class Trainer:
         lr = wsd_lr(self.step, total_steps=self.total_steps, warmup_steps=self.warmup_steps,
                     decay_frac=self.decay_frac, max_lr=self.max_lr)
         self._set_lr(lr)
-        self.optimizer.zero_grad(set_to_none=True)
+        # DDP memory: under no_sync autograd would allocate a second, standalone copy of every
+        # gradient (a whole model's worth) next to DDP's all-reduce buckets. So we (1) sync on the
+        # very first micro-step of the run, which binds each .grad to its bucket view, and (2) zero
+        # grads in place instead of dropping them, so every later micro-step accumulates straight
+        # into the buckets. Same math: the first micro-step's mean is identical on every rank, so
+        # the final all-reduce of (that + the local rest) is still the exact all-rank average.
+        self.optimizer.zero_grad(set_to_none=not self._ddp)
+        bind = self._ddp and not self._grads_bound
         loss_sum = None
         for i in range(self.grad_accum):
-            loss = self._micro_forward(sync=(i == self.grad_accum - 1))
+            loss = self._micro_forward(sync=(i == self.grad_accum - 1) or (bind and i == 0))
             # accumulate on-device (detached); one GPU->CPU sync per step instead of per micro-step
             loss_sum = loss if loss_sum is None else loss_sum + loss
+        self._grads_bound = True
         self.scaler.unscale_(self.optimizer)                # grads back to true scale before clipping
         gnorm = float(torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip))
         loss_avg = float(D.all_reduce_mean(loss_sum / self.grad_accum))   # the same number on every rank
