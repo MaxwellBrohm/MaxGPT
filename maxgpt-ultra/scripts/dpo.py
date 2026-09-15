@@ -16,8 +16,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # maxgpt-ultra/
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")  # less VRAM fragmentation
-from cfg import configure_triton_ptxas
+from cfg import configure_triton_ptxas, cuda_alloc_conf
+cuda_alloc_conf()            # expandable-segments allocator where the driver handles it (less VRAM fragmentation)
 configure_triton_ptxas()   # old driver + CUDA 11.8 ptxas -> torch.compile still works (Lambda box)
 
 import torch
