@@ -82,7 +82,7 @@ def run_dpo(out):
 
 def worker(mode: str) -> None:
     """Runs inside each torchrun process."""
-    info = D.init_distributed()
+    info = D.init_distributed("cpu")     # CPU ranks even on a GPU box (gloo)
     out = os.path.join(OUT, mode)
     if mode == "pause":
         stop = os.path.join(out, "STOP")
@@ -177,7 +177,9 @@ def main() -> None:
     print("=" * 72)
     print("MaxGPT-Ultra multi-GPU (DDP) test: 2 CPU processes vs 1")
     print("=" * 72)
-    print("\n[setup] tiny tokenizer + shards")
+    print("\n[setup] tiny tokenizer + shards (fresh: a stale run dir would hand DPO a cached reference table)")
+    import shutil
+    shutil.rmtree(OUT, ignore_errors=True)
     train_tokenizer(iter(DOCS), vocab_size=1200, out_path=TOK)
     tok = UltraTokenizer(TOK)
     tokenize_to_shards(DOCS, tok, SHARDS, shard_size=1024)

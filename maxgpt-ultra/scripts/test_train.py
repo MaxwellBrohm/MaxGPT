@@ -148,6 +148,23 @@ def main() -> None:
     assert t_fp16.scaler.get_scale() == 2.0 ** 12, t_fp16.scaler.get_scale()
     print("  scale restored from the checkpoint ✓")
 
+    print("\n[8] precision resolver: a card with only EMULATED bf16 (Turing) must get fp16")
+    from train import trainer as T
+    saved = (torch.cuda.is_available, torch.cuda.is_bf16_supported)
+    try:
+        torch.cuda.is_available = lambda: True
+        def fake_bf16(including_emulation=True):    # what PyTorch reports on a Titan RTX / T4
+            return True if including_emulation else False
+        torch.cuda.is_bf16_supported = fake_bf16
+        assert T.amp_dtype("auto", "cuda") == torch.float16, T.amp_dtype("auto", "cuda")
+        assert T.amp_dtype("bf16", "cuda") == torch.float16      # explicit bf16 degrades to fp16 there
+        assert T.amp_dtype("fp32", "cuda") is None and T.amp_dtype("auto", "cpu") is None
+        torch.cuda.is_bf16_supported = lambda including_emulation=True: True   # an Ampere+ card
+        assert T.amp_dtype("auto", "cuda") == torch.bfloat16
+    finally:
+        torch.cuda.is_available, torch.cuda.is_bf16_supported = saved
+    print("  Turing -> fp16, Ampere+ -> bf16, fp32/cpu -> none ✓")
+
     print("\n" + "=" * 72)
     print("ALL CHECKS PASSED ✅")
     print("=" * 72)

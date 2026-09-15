@@ -56,6 +56,19 @@ def make_optimizer(model, lr, betas, weight_decay, use_8bit=False):
     return torch.optim.AdamW(groups, lr=lr, betas=betas, fused=on_cuda)
 
 
+def cuda_has_native_bf16() -> bool:
+    """True only when the GPU's tensor cores do bf16 (Ampere sm_80 and newer). PyTorch's
+    is_bf16_supported() also says True for cards that merely EMULATE bf16 (Turing, Volta), and
+    emulated bf16 is many times slower than fp16 there, so we ask about real hardware only."""
+    if not torch.cuda.is_available():
+        return False
+    try:
+        return bool(torch.cuda.is_bf16_supported(including_emulation=False))
+    except TypeError:                                   # older torch: decide by compute capability
+        major, _ = torch.cuda.get_device_capability()
+        return major >= 8
+
+
 def amp_dtype(precision: str | None, device: str):
     """Resolve the autocast dtype for this machine, or None for plain fp32.
 
@@ -68,7 +81,7 @@ def amp_dtype(precision: str | None, device: str):
     p = (precision or "auto").lower()
     if device != "cuda" or p == "fp32":
         return None
-    has_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+    has_bf16 = cuda_has_native_bf16()
     if p == "fp16":
         return torch.float16
     if p == "bf16" and not has_bf16:
@@ -237,7 +250,7 @@ class Trainer:
             loss = self._micro_forward(sync=(i == self.grad_accum - 1))
             # accumulate on-device (detached); one GPU->CPU sync per step instead of per micro-step
             loss_sum = loss if loss_sum is None else loss_sum + loss
-        pass  # MUTATION: gradients left scaled
+        self.scaler.unscale_(self.optimizer)                # grads back to true scale before clipping
         gnorm = float(torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip))
         loss_avg = float(D.all_reduce_mean(loss_sum / self.grad_accum))   # the same number on every rank
         loss_ok, grad_ok = math.isfinite(loss_avg), math.isfinite(gnorm)
