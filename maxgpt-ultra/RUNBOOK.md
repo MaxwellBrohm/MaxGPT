@@ -80,6 +80,13 @@ Creates `models/ultra.pt` + `models/ultra.tokenizer.json` for the webui.
 ---
 
 ## Notes
+
+- **Batch semantics after the multi-GPU change:** `micro_batch` is per GPU; `grad_accum` is the
+  TOTAL number of micro-steps per optimizer step across all GPUs (must divide by the GPU
+  count). tokens/step = micro_batch x grad_accum x seq_len on 1 GPU or 8, so the LR schedule
+  never changes with the hardware. `precision: auto` = bf16 on the 5070, fp16 + loss scaling
+  on cards without native bf16. `gpus: auto` makes the GUI launch every visible card with
+  torchrun. For the school server see LAMBDA.md.
 - **Mini** lives on your old Windows checkout (from the shakedown). Nothing to wipe, Ultra trains
   fresh in WSL2. To show Mini in the webui later, run `save_model --name mini` on the Windows side and
   we'll wire it up then.
