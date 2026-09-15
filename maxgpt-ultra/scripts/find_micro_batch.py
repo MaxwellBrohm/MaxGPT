@@ -34,6 +34,8 @@ import subprocess
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # maxgpt-ultra/
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")     # match the real run
+from cfg import configure_triton_ptxas
+configure_triton_ptxas()   # same Triton setup as the real run
 
 
 def run_probe(micro_batch: int, args) -> None:

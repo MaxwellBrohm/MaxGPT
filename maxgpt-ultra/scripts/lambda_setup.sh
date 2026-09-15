@@ -42,6 +42,12 @@ else                          CU=cu118     # pre-CUDA-12 driver
 fi
 step "torch ($CU for driver $DRV)"
 uv pip install --python "$VENV/bin/python" --index-url "https://download.pytorch.org/whl/$CU" torch
+if [ "$CU" = cu118 ]; then
+    # Triton's bundled CUDA 12 ptxas makes kernels this driver cannot load ("device kernel image is
+    # invalid"); the scripts point Triton at this CUDA 11.8 ptxas instead (cfg.configure_triton_ptxas)
+    uv pip install --python "$VENV/bin/python" "nvidia-cuda-nvcc-cu11==11.8.89"
+    rm -rf "$HOME/.triton/cache"
+fi
 
 # 4) project deps (+ the two the 5070 box installs by hand)
 step "project deps"
