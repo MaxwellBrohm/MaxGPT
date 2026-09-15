@@ -247,14 +247,18 @@ class Trainer:
                 except Exception as e:
                     if self._compile_modes:             # a compiled mode failed at runtime -> next tier
                         if self.is_main:
-                            print(f"[train] compiled forward failed ({type(e).__name__}); dropping a compile tier", flush=True)
+                            print(f"[train] compiled forward failed ({type(e).__name__}: "
+                                  f"{str(e).splitlines()[0][:160]}); dropping a compile tier", flush=True)
                         self._compile_modes.pop(0)
                         self.fwd = self._make_fwd()
                     else:
                         raise
             loss_scaled = self.scaler.scale(loss / self.grad_accum)
             loss_scaled.backward()
-        return loss.detach()
+        # clone: under max-autotune the forward is a CUDA graph whose output buffers are reused by
+        # the next replay; keeping the raw output alive across micro-steps raises "accessing tensor
+        # output of CUDAGraphs that has been overwritten" (found on the Lambda box)
+        return loss.detach().clone()
 
     def _log(self, rec: dict) -> None:
         if not self.is_main:

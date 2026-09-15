@@ -65,7 +65,10 @@ print("torch", torch.__version__, "| cuda", torch.cuda.is_available(), "| built 
 for i in range(torch.cuda.device_count()):
     p = torch.cuda.get_device_properties(i)
     print(f"  visible gpu{i}: {p.name}  {p.total_memory / 2**30:.1f}GB  sm_{p.major}{p.minor}")
-print("bf16 supported:", torch.cuda.is_bf16_supported())
+try:
+    print("native bf16:", torch.cuda.is_bf16_supported(including_emulation=False), "(Turing = False -> the trainer uses fp16 + loss scaling)")
+except TypeError:
+    print("native bf16:", torch.cuda.get_device_capability()[0] >= 8)
 
 def test(name, fn):                      # each test reports on its own; one failure must not hide the others
     try:
