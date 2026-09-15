@@ -13,12 +13,12 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # maxgpt-ultra/
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")  # less VRAM fragmentation
 
-import yaml
 import torch
 
-from model import ModelConfig, MaxGPTUltra
+from model import ModelConfig, MaxGPTUltra, load_yaml
 from data import PackedShardDataset
 from train.trainer import Trainer
+from train import dist as D
 
 
 def main() -> None:
@@ -35,8 +35,8 @@ def main() -> None:
     ap.add_argument("--tokenizer", default=None, help="tokenizer json (enables sample generations in eval)")
     args = ap.parse_args()
 
-    with open(args.config, encoding="utf-8") as f:
-        raw = yaml.safe_load(f)
+    dinfo = D.init_distributed()          # multi-GPU when launched by torchrun; else a no-op
+    raw = load_yaml(args.config)
     mcfg = ModelConfig.from_yaml(args.config)
     tcfg = raw["train"]
 
@@ -45,9 +45,10 @@ def main() -> None:
 
     meta_path = os.path.join(args.data, "meta.json")
     if not os.path.exists(meta_path):
-        print(f"\n  ERROR: model / data not found  (no shards at '{args.data}').")
-        print("  Nothing has been trained yet on this machine.")
-        print("  Run  python scripts/prepare_data.py  to build the data, then press play again.\n")
+        if D.is_main():
+            print(f"\n  ERROR: model / data not found  (no shards at '{args.data}').")
+            print("  Nothing has been trained yet on this machine.")
+            print("  Run  python scripts/prepare_data.py  to build the data, then press play again.\n")
         sys.exit(1)
 
     model = MaxGPTUltra(mcfg)
@@ -78,11 +79,14 @@ def main() -> None:
     except (ValueError, OSError):
         pass
 
-    print(f"[train] device={device} params={model.num_params()/1e6:.1f}M "
-          f"total_steps={trainer.total_steps} tokens/step={trainer.tokens_per_step} "
-          f"resumed={resumed} (from step {trainer.step})")
+    if D.is_main():
+        print(f"[train] device={device} gpus={dinfo['world']} params={model.num_params()/1e6:.1f}M "
+              f"total_steps={trainer.total_steps} tokens/step={trainer.tokens_per_step} "
+              f"resumed={resumed} (from step {trainer.step})", flush=True)
     trainer.train(max_steps=args.max_steps)
-    print(f"[train] done at step {trainer.step}; checkpoints + metrics in {args.out}")
+    if D.is_main():
+        print(f"[train] done at step {trainer.step}; checkpoints + metrics in {args.out}", flush=True)
+    D.cleanup()
 
 
 if __name__ == "__main__":

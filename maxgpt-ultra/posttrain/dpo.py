@@ -24,8 +24,9 @@ import torch.nn.functional as F
 
 from tokenizer.tokenizer import IM_END
 from train.schedule import wsd_lr
-from train.trainer import make_optimizer
+from train.trainer import make_optimizer, amp_dtype
 from train.checkpoint import CheckpointManager, load_checkpoint
+from train import dist as D
 
 
 def sequence_logprobs(model, ids: torch.Tensor, mask: torch.Tensor, chunk: int = 0) -> torch.Tensor:
@@ -89,8 +90,16 @@ class DPODataset:
             rid, rm = build(ex["rejected"])
             self.items.append((cid, cm, rid, rm))
         self.pos = 0
+        self.rank, self.world = 0, 1   # multi-GPU: see shard()
         self.ref_c = None   # per-item cached reference logprobs (filled by precompute_ref)
         self.ref_r = None
+
+    def shard(self, rank: int, world: int) -> None:
+        """Multi-GPU: of every `world` consecutive batches, rank r takes the r-th. `pos` stays
+        the global position (identical on every rank), so one optimizer step across all ranks
+        consumes exactly the pairs a single GPU would have."""
+        assert 0 <= rank < world
+        self.rank, self.world = rank, world
 
     def __len__(self):
         return len(self.items)
@@ -105,9 +114,10 @@ class DPODataset:
         return torch.from_numpy(ids), torch.from_numpy(mk)
 
     def next_batch(self, bs: int, device: str = "cpu"):
-        idx = [(self.pos + i) % len(self.items) for i in range(bs)]
+        base = self.pos + self.rank * bs
+        idx = [(base + i) % len(self.items) for i in range(bs)]
         batch = [self.items[i] for i in idx]
-        self.pos = (self.pos + bs) % len(self.items)
+        self.pos = (self.pos + self.world * bs) % len(self.items)
         cids, cm = self._pad([b[0] for b in batch], [b[1] for b in batch])
         rids, rm = self._pad([b[2] for b in batch], [b[3] for b in batch])
         out = [cids.to(device), cm.to(device), rids.to(device), rm.to(device)]
@@ -118,17 +128,21 @@ class DPODataset:
 
     @torch.no_grad()
     def precompute_ref(self, ref_model, device: str = "cpu", batch_size: int = 8,
-                       chunk: int = 0, autocast: bool = False) -> int:
+                       chunk: int = 0, amp_dtype=None, rank: int = 0, world: int = 1) -> int:
         """Compute + cache the frozen reference logprobs for every pair, once.
         Right-padding + causal attention make sequence_logprobs padding-invariant, so a pair's
         value is identical regardless of how it is batched. Caching it here is therefore exactly
-        what the loop would compute on the fly, just done a single time instead of every step."""
+        what the loop would compute on the fly, just done a single time instead of every step.
+        Multi-GPU: batches are dealt round-robin over ranks (rank r does batches r, r+world, ...);
+        the untouched entries stay 0 so the caller can simply SUM the ranks' arrays."""
         ref_model.eval()
         n = len(self.items)
-        rc, rr = np.empty(n, dtype=np.float32), np.empty(n, dtype=np.float32)
-        ctx = (torch.autocast("cuda", dtype=torch.bfloat16)
-               if autocast and device == "cuda" else nullcontext())
-        for s in range(0, n, batch_size):
+        rc, rr = np.zeros(n, dtype=np.float32), np.zeros(n, dtype=np.float32)
+        ctx = (torch.autocast("cuda", dtype=amp_dtype)
+               if amp_dtype is not None and device == "cuda" else nullcontext())
+        for bi, s in enumerate(range(0, n, batch_size)):
+            if bi % world != rank:
+                continue
             items = self.items[s:s + batch_size]
             cids, cm = self._pad([b[0] for b in items], [b[1] for b in items])
             rids, rm = self._pad([b[2] for b in items], [b[3] for b in items])
@@ -151,6 +165,7 @@ class DPOTrainer:
     def __init__(self, policy, ref, data: DPODataset, tcfg: dict, device: str, out_dir: str,
                  beta: float = 0.1, seed: int = 0, stop_file: str | None = None,
                  eval_fn=None, eval_every: int = 0):
+        self.world, self.rank, self.is_main = D.world_size(), D.rank(), D.is_main()
         self.policy = policy.to(device)
         self.ref = ref.to(device)
         for p in self.ref.parameters():
@@ -166,7 +181,10 @@ class DPOTrainer:
         self.ckpt = CheckpointManager(os.path.join(out_dir, "checkpoints"), keep_last=int(tcfg.get("keep_last_k", 2)))
         self.log_path = os.path.join(out_dir, "metrics.jsonl")
 
-        self.batch_size = int(tcfg.get("batch_size", 8))
+        # batch_size = pairs per micro-step ACROSS all GPUs (each rank takes its share);
+        # grad_accum = micro-steps per optimizer step, which every rank runs in full.
+        # pairs/step = batch_size * grad_accum whatever the GPU count.
+        self.batch_size = max(1, int(tcfg.get("batch_size", 8)) // self.world)
         self.grad_accum = int(tcfg.get("grad_accum", 1))
         self.total_steps = int(tcfg["total_steps"])
         self.warmup_steps = int(tcfg.get("warmup_steps", max(1, self.total_steps // 20)))
@@ -182,11 +200,17 @@ class DPOTrainer:
         self.eval_every = int(eval_every or tcfg.get("eval_every", 0))
         from train.trainer import _enable_fast_math
         _enable_fast_math()
-        self.use_amp = (device == "cuda")
+        self.amp_dtype = amp_dtype(tcfg.get("precision", "auto"), device)
+        self.use_amp = self.amp_dtype is not None
+        use_scaler = (self.amp_dtype == torch.float16) or \
+                     (device == "cpu" and str(tcfg.get("precision", "")).lower() == "fp16")
+        self.scaler = torch.amp.GradScaler(device, enabled=use_scaler)   # fp16 loss scaling (see Trainer)
         self.logp_chunk = int(tcfg.get("logp_chunk", 0))
+        self.data.shard(self.rank, self.world)
         # the reference never changes, so compute its logprobs once and free the model (big VRAM win)
         if bool(tcfg.get("precompute_ref", True)):
             self._precompute_reference()
+        self.net = D.wrap_ddp(self.policy)      # DDP wrapper when multi-GPU (shares the policy's params)
         # tiered torch.compile of the policy (CUDA only); it shares params, so save/load use self.policy
         self._compile_modes = (list(tcfg.get("compile_modes", ["max-autotune", "default"]))
                                if bool(tcfg.get("compile", False)) and device == "cuda" else [])
@@ -194,11 +218,17 @@ class DPOTrainer:
         self.step = 0
         self._last_save = time.time()
         self._stop = False
+        if self.is_main:
+            prec = {None: "fp32", torch.bfloat16: "bf16", torch.float16: "fp16 + loss scaling"}[self.amp_dtype]
+            print(f"[dpo] precision={prec} gpus={self.world} pairs/micro-step={self.batch_size}/gpu "
+                  f"grad_accum={self.grad_accum}/gpu -> {self.batch_size * self.grad_accum * self.world} pairs/step", flush=True)
 
     def request_stop(self):
         self._stop = True
 
     def _log(self, rec):
+        if not self.is_main:
+            return
         with open(self.log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
 
@@ -207,13 +237,15 @@ class DPOTrainer:
         while self._compile_modes:
             mode = self._compile_modes[0]
             try:
-                f = torch.compile(self.policy, mode=(None if mode == "default" else mode), dynamic=True)
-                print(f"[dpo] torch.compile(mode={mode})")
+                f = torch.compile(self.net, mode=(None if mode == "default" else mode), dynamic=True)
+                if self.is_main:
+                    print(f"[dpo] torch.compile(mode={mode})", flush=True)
                 return f
             except Exception as e:
-                print(f"[dpo] compile setup mode={mode} failed ({type(e).__name__}); next tier")
+                if self.is_main:
+                    print(f"[dpo] compile setup mode={mode} failed ({type(e).__name__}); next tier", flush=True)
                 self._compile_modes.pop(0)
-        return self.policy
+        return self.net
 
     def _ref_fingerprint(self) -> float:
         with torch.no_grad():
@@ -229,34 +261,49 @@ class DPOTrainer:
         n = len(self.data)
         fp = self._ref_fingerprint()
         cache = os.path.join(self.out_dir, "ref_logps.npz")
+        D.barrier()                 # every rank must see the same cache state before deciding
         if os.path.exists(cache):   # reuse across resumes; fingerprint guards against a changed SFT init
             try:
                 d = np.load(cache)
                 if len(d["c"]) == n and abs(float(d["fp"]) - fp) < 1e-2:
                     self.data.ref_c = d["c"].astype(np.float32)
                     self.data.ref_r = d["r"].astype(np.float32)
-                    print(f"[dpo] loaded cached reference logprobs ({n} pairs)")
+                    if self.is_main:
+                        print(f"[dpo] loaded cached reference logprobs ({n} pairs)", flush=True)
                     self._drop_ref()
                     return
             except Exception:
                 pass
         t = time.time()
-        print(f"[dpo] precomputing frozen-reference logprobs for {n} pairs (one-time) ...")
+        if self.is_main:
+            print(f"[dpo] precomputing frozen-reference logprobs for {n} pairs (one-time"
+                  f"{f', split across {self.world} GPUs' if self.world > 1 else ''}) ...", flush=True)
         self.data.precompute_ref(self.ref, self.device, batch_size=max(1, self.batch_size),
-                                 chunk=self.logp_chunk, autocast=self.use_amp)
-        try:
-            np.savez(cache, c=self.data.ref_c, r=self.data.ref_r, fp=np.float32(fp))
-        except Exception:
-            pass
-        print(f"[dpo] reference logprobs ready in {time.time() - t:.0f}s (reference model freed)")
+                                 chunk=self.logp_chunk, amp_dtype=self.amp_dtype,
+                                 rank=self.rank, world=self.world)
+        if self.world > 1:          # each rank filled a disjoint share (zeros elsewhere): sum them up
+            both = torch.stack([torch.from_numpy(self.data.ref_c), torch.from_numpy(self.data.ref_r)]).to(D.reduce_device())
+            D.all_reduce_sum(both)
+            self.data.ref_c, self.data.ref_r = both[0].cpu().numpy(), both[1].cpu().numpy()
+        if self.is_main:
+            try:                    # atomic write so a rank can never read a half-written cache
+                with open(cache + ".tmp", "wb") as f:
+                    np.savez(f, c=self.data.ref_c, r=self.data.ref_r, fp=np.float32(fp))
+                os.replace(cache + ".tmp", cache)
+            except Exception:
+                pass
+            print(f"[dpo] reference logprobs ready in {time.time() - t:.0f}s (reference model freed)", flush=True)
         self._drop_ref()
 
-    def _dpo_forward(self, batch):
-        ctx = (torch.autocast("cuda", dtype=torch.bfloat16) if self.use_amp else nullcontext())
+    def _dpo_forward(self, batch, sync: bool = True):
+        ctx = (torch.autocast("cuda", dtype=self.amp_dtype) if self.use_amp else nullcontext())
+        nosync = self.net.no_sync() if (not sync and hasattr(self.net, "no_sync")) else nullcontext()
         while True:
             try:
-                with ctx:
-                    return dpo_loss(self.fwd, self.ref, batch, self.beta, self.logp_chunk)
+                with ctx, nosync:
+                    loss, stats = dpo_loss(self.fwd, self.ref, batch, self.beta, self.logp_chunk)
+                    self.scaler.scale(loss / self.grad_accum).backward()
+                    return stats
             except Exception as e:
                 if self._compile_modes:           # a compiled mode failed at runtime -> drop a tier
                     print(f"[dpo] compiled forward failed ({type(e).__name__}); dropping a compile tier")
@@ -272,22 +319,37 @@ class DPOTrainer:
             g["lr"] = lr
         self.optimizer.zero_grad(set_to_none=True)
         agg = {}
-        for _ in range(self.grad_accum):
-            loss, stats = self._dpo_forward(self.data.next_batch(self.batch_size, self.device))
-            (loss / self.grad_accum).backward()
+        for i in range(self.grad_accum):
+            stats = self._dpo_forward(self.data.next_batch(self.batch_size, self.device),
+                                      sync=(i == self.grad_accum - 1))
             for k, v in stats.items():
                 agg[k] = agg.get(k, 0.0) + v / self.grad_accum
+        if self.world > 1:          # average the logging stats so every rank sees (and decides on) the same numbers
+            keys = sorted(agg)
+            vals = D.all_reduce_mean(torch.tensor([agg[k] for k in keys], dtype=torch.float64, device=D.reduce_device()))
+            agg = dict(zip(keys, vals.tolist()))
+        self.scaler.unscale_(self.optimizer)
         gnorm = float(torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.grad_clip))
-        if not (math.isfinite(agg["dpo_loss"]) and math.isfinite(gnorm)):
+        loss_ok, grad_ok = math.isfinite(agg["dpo_loss"]), math.isfinite(gnorm)
+        overflow = self.scaler.is_enabled() and loss_ok and not grad_ok   # fp16: skip + shrink scale, not a divergence
+        if (not loss_ok) or (not grad_ok and not overflow):
             return {"step": self.step, "diverged": True, **agg}
-        self.optimizer.step()
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
         self.step += 1
-        return {"step": self.step, "loss": agg["dpo_loss"], "lr": lr, "grad_norm": gnorm, "diverged": False, **agg}
+        rec = {"step": self.step, "loss": agg["dpo_loss"], "lr": lr, "grad_norm": gnorm, "diverged": False, **agg}
+        if self.scaler.is_enabled():
+            rec["loss_scale"] = float(self.scaler.get_scale())
+            if overflow:
+                rec["overflow"] = True
+        return rec
 
     def save(self):
-        self.ckpt.save(model=self.policy, optimizer=self.optimizer, step=self.step,
-                       data_state=self.data.state_dict(), model_cfg=dict(vars(self.policy.cfg)),
-                       train_cfg={"dpo": True, "beta": self.beta}, seed=self.seed)
+        if self.is_main:
+            self.ckpt.save(model=self.policy, optimizer=self.optimizer, step=self.step,
+                           data_state=self.data.state_dict(), model_cfg=dict(vars(self.policy.cfg)),
+                           train_cfg={"dpo": True, "beta": self.beta}, seed=self.seed,
+                           extra={"scaler": self.scaler.state_dict()} if self.scaler.is_enabled() else None)
         self._last_save = time.time()
 
     def resume_if_available(self) -> bool:
@@ -298,17 +360,20 @@ class DPOTrainer:
         self.step = int(ck["step"])
         if ck.get("data_state"):
             self.data.load_state_dict(ck["data_state"])
+        sc = (ck.get("extra") or {}).get("scaler")
+        if sc and self.scaler.is_enabled():
+            self.scaler.load_state_dict(sc)
         return True
 
     def train(self, max_steps: int | None = None):
         target = self.total_steps if max_steps is None else min(self.total_steps, self.step + max_steps)
         # meta line so the dashboard can draw the projection + progress bar + ETA for DPO too
-        tps = self.batch_size * self.grad_accum * 2 * self.data.seq_len   # chosen+rejected tokens/step
+        tps = self.batch_size * self.grad_accum * self.world * 2 * self.data.seq_len   # chosen+rejected tokens/step, all GPUs
         self._log({"step": self.step, "event": "meta", "total_steps": self.total_steps, "tokens_per_step": tps})
         t0 = time.time()
         while self.step < target:
-            if self._stop or (self.stop_file and os.path.exists(self.stop_file)):
-                self._log({"step": self.step, "event": "paused"})
+            if D.broadcast_flag(self._stop or (self.stop_file and os.path.exists(self.stop_file))):
+                self._log({"step": self.step, "event": "paused"})   # rank 0 decides; unanimous by broadcast
                 break
             rec = self.step_once()
             if rec.get("diverged"):
@@ -322,8 +387,10 @@ class DPOTrainer:
                 rec["tok_per_s"] = tps * self.log_every / max(dt, 1e-6)
                 self._log(rec)
             if self.eval_every and self.eval_fn and self.step % self.eval_every == 0:
-                self._log({"step": self.step, "event": "eval", **self.eval_fn(self.policy, self.step)})
-                self.policy.train()
+                if self.is_main:
+                    self._log({"step": self.step, "event": "eval", **self.eval_fn(self.policy, self.step)})
+                    self.policy.train()
+                D.barrier()
             if time.time() - self._last_save >= self.autosave_s:
                 self.save()
         self.save()

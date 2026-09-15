@@ -35,6 +35,15 @@ class PackedShardDataset:
         assert self.total > self.seq_len + 1, "not enough tokens for even one window"
         self.pos = 0
         self.epoch = 0
+        self.rank, self.world = 0, 1     # multi-GPU: see shard()
+
+    def shard(self, rank: int, world: int) -> None:
+        """Multi-GPU: rank r reads window r, r+world, r+2*world, ... of the stream. `pos` stays
+        the GLOBAL stream position (identical on every rank, so checkpoints are the same file
+        regardless of the GPU count), and one optimizer step across all ranks consumes exactly
+        the windows a single GPU would have, so the gradient is the same average."""
+        assert 0 <= rank < world
+        self.rank, self.world = rank, world
 
     def _read(self, start: int, n: int) -> np.ndarray:
         """Read n tokens starting at global index `start`, wrapping across shards/end."""
@@ -53,10 +62,10 @@ class PackedShardDataset:
         import torch
         xs, ys = [], []
         for _ in range(batch_size):
-            chunk = self._read(self.pos, self.seq_len + 1).astype(np.int64)
+            chunk = self._read(self.pos + self.rank * self.seq_len, self.seq_len + 1).astype(np.int64)
             xs.append(chunk[:-1])
             ys.append(chunk[1:])
-            self.pos += self.seq_len
+            self.pos += self.world * self.seq_len
             if self.pos >= self.total:
                 self.pos -= self.total
                 self.epoch += 1
