@@ -329,8 +329,72 @@ float) keeps fp32's range, so it's fast *and* stable with no loss-scaling.
 halves memory and speeds up matmuls with no stability hacks. Enabled on CUDA; falls back
 to fp32 on CPU so the Mac tests still run.
 
-- ☐ **Muon optimizer** (optional): a newer optimizer that orthogonalizes the update for faster convergence; a candidate to try
-- ☐ **torch.compile**: fuse the graph for a speedup once the loop is stable on the GPU
+**fp16 + dynamic loss scaling (cards without bf16).**
+*What it is:* On GPUs whose tensor cores predate bf16 (Turing, Volta: the school's Titan
+RTXs), autocast runs in float16 instead. fp16 has bf16's speed but a tiny exponent range,
+so small gradients underflow to zero. The fix (Micikevicius et al., 2017) multiplies the
+loss by a large scale before backward and divides the gradients by it afterwards; if a
+step's gradients overflow to inf, that step is skipped and the scale is halved, and it
+grows back slowly. `precision: auto` picks bf16 where the hardware has it and fp16 + a
+`GradScaler` otherwise (`train/trainer.py`).
+*Why we use it here:* The master weights, optimizer state and accumulation stay fp32 in
+both modes, so the model is the same; only the matmul dtype changes. Verified that a
+loss-scaled run produces bit-identical weights to an unscaled one (scaling by powers of
+two is exact), that an overflow skips the update without counting as divergence, and that
+the scaler state survives checkpoint + resume (`scripts/test_train.py` [5]-[8]). Gotcha
+found on the Titans: `torch.cuda.is_bf16_supported()` says True there because bf16 is
+*emulated*, many times slower; we ask for native support only.
+
+**Multi-GPU data parallelism (DDP).**
+*What it is:* One process per GPU (`torchrun`), each holding a full model replica and
+training on its own slice of every step's data; PyTorch's DistributedDataParallel
+all-reduces the gradients (NCCL) before the optimizer step, so every replica applies the
+identical update. `train/dist.py`; the loaders deal windows round-robin over ranks with a
+shared global position, so the set of windows per optimizer step is exactly what one GPU
+would have read, and checkpoints are the same file whatever the GPU count.
+*Why it was developed:* The standard way to spend more GPUs on one model when the model
+fits on each: near-linear speedup for a 1B on a handful of cards.
+*Why we use it here:* 8 Titan RTXs turn the 5-6 month single-5070 run into ~3-4 weeks.
+Details that matter: `grad_accum` is the TOTAL across GPUs, so tokens/step and the LR
+schedule do not change with the GPU count; the all-reduce runs only on the last
+micro-step of a step (`no_sync` otherwise); gradients accumulate directly in the
+all-reduce buckets (under `no_sync` PyTorch would otherwise keep a second full copy,
++4.4GB on the 1.1B, which is exactly what overflowed 24GB in the first 2-GPU test); the
+loss is all-reduced so every rank makes the same divergence decision; rank 0 alone logs,
+evaluates and saves; a pause is broadcast from rank 0 so no rank is left waiting in a
+collective. `scripts/test_ddp.py` runs 2 CPU ranks and checks they agree bit for bit,
+match single-process training, and that fp16 DDP == fp32 DDP.
+
+**Muon / NorMuon optimizer (option, A/B'd on the shakedown before use).**
+*What it is:* For the transformer's matrix weights, replace Adam's per-coordinate
+normalization with an *orthogonalized* momentum: five Newton-Schulz iterations map the
+momentum matrix to the nearest orthogonal matrix, so every direction of the weight space
+moves by the same amount instead of a few dominant ones (Jordan et al., 2024). Moonlight
+(2025) made it scale with decoupled weight decay and an update scale that matches AdamW's
+RMS, so AdamW's LR and decay carry over. NorMuon (2025) adds a per-row second moment;
+cautious weight decay (ICLR 2026) decays a weight only where the step already shrinks it.
+Embeddings, the head and 1D params keep AdamW. `train/muon.py`; `optimizer: muon|normuon`,
+`cautious_wd: true`.
+*Why we consider it:* Reported ~2x compute efficiency vs AdamW (Moonlight), 22% fewer
+steps at 1.1B (NorMuon), and IMU-1 (Feb 2026) trained a 430M model on 72B tokens to
+match ~4T-token models with NorMuon + cautious decay. Memory is lower than AdamW (one
+state), the Newton-Schulz cost is negligible next to a 0.5M-token step. Under DDP each
+rank sees identical gradients, so no extra communication. We do not switch the 1B to it
+on faith: the shakedown A/B (`configs/ab/`) decides, on held-out loss.
+
+**Attention gate, value residual, norm scaling (options, same A/B).**
+*What they are:* Three small block-level changes from the 2025/26 small-model
+literature, each an exact identity at init: a per-head sigmoid gate on the attention
+output (Qwen "Gated Attention", NeurIPS 2025 best paper; in Qwen3-Next); a normalized
+value residual mixing layer 1's values into every later layer (Value Residual Learning,
+2024; IMU-1's normalized form); and a 1/sqrt(depth) scale on each block's pre-norm output.
+IMU-1's ablation: about -1.6% loss combined at 70M. `model.attn_gate`,
+`model.value_residual`, `model.norm_scaling`; KV-cache decode verified identical to the
+full forward with all three on (`scripts/test_train.py` [10]).
+
+- ☑ **torch.compile**: tiered max-autotune -> default -> eager, in every trainer. On drivers
+  older than 525 Triton's bundled ptxas builds kernels the driver cannot load; the scripts
+  point Triton at a CUDA 11.8 ptxas instead (`cfg.configure_triton_ptxas`).
 - ☐ **Checkpoint averaging / model soup** (optional): average a few late checkpoints for a small, near-free final bump
 - ☑ **FlashAttention / SDPA**: used by the model (see the Attention kernel note in §1)
 
@@ -358,7 +422,8 @@ that ~4x with negligible quality loss.
 beside weights, grads, and activations on a 12GB card; 8-bit states (~2GB) make the 1B
 trainable here. The prototype uses plain AdamW.
 
-- ☐ **Micro-batch + accumulation tuning**: measure and saturate the card (set on the 5070)
+- ☑ **Micro-batch + accumulation tuning**: `scripts/find_micro_batch.py` (subprocess-isolated OOM search + compile confirm)
+- ☑ **Multi-core data build**: the shard builder encodes 256 docs per tokenizer call so the Rust tokenizer uses every core (single-core 0.5M tok/s -> 1.8M tok/s on the 64-core Lambda box; resume still byte-identical)
 - ☐ **Activation / dtype bookkeeping**: confirm what lives where in VRAM during a real run
 
 ## 6. Post-training  ◐ (SFT in `posttrain/`, verified by `scripts/test_sft.py`)
