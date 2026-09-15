@@ -20,10 +20,11 @@ os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")  # 
 
 import torch
 
-from model import ModelConfig, MaxGPTUltra
+from model import ModelConfig, MaxGPTUltra, load_yaml
 from tokenizer.tokenizer import UltraTokenizer
 from posttrain.dpo import DPODataset, DPOTrainer
 from train.checkpoint import load_checkpoint
+from train import dist as D
 
 
 def main() -> None:
@@ -44,9 +45,10 @@ def main() -> None:
     ap.add_argument("--stop-file", default=None)
     args = ap.parse_args()
 
+    dinfo = D.init_distributed()          # multi-GPU when launched by torchrun; else a no-op
+    world = dinfo["world"]
     mcfg = ModelConfig.from_yaml(args.config)
-    import yaml
-    _raw = yaml.safe_load(open(args.config, encoding="utf-8"))
+    _raw = load_yaml(args.config)
     _dpo = ((_raw.get("posttrain", {}) or {}).get("dpo", {}) or {})   # optional DPO speed knobs
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(0)
@@ -60,8 +62,17 @@ def main() -> None:
     load_checkpoint(args.init, policy, optimizer=None, map_location=device)
     ref = copy.deepcopy(policy)   # frozen reference = the SFT model
 
-    steps = max(1, int(args.epochs * len(data) / args.batch_size))
-    tcfg = {"batch_size": args.batch_size, "grad_accum": args.grad_accum, "total_steps": steps,
+    # --batch-size is pairs per micro-step across all GPUs (each rank takes its share, at least 1);
+    # every rank runs all --grad-accum micro-steps. pairs/step is the same on 1 card or 8.
+    bs_total = max(1, args.batch_size // world) * world
+    ga_total = args.grad_accum
+    pairs_per_step = bs_total * ga_total
+    if D.is_main() and pairs_per_step != args.batch_size * args.grad_accum:
+        print(f"[dpo] note: {args.batch_size * args.grad_accum} pairs/step does not split evenly over "
+              f"{world} GPUs; using {pairs_per_step}", flush=True)
+    steps = max(1, int(args.epochs * len(data) / pairs_per_step))
+    tcfg = {"batch_size": bs_total, "grad_accum": ga_total, "total_steps": steps,
+            "precision": _raw.get("train", {}).get("precision", "auto"),
             "warmup_steps": max(1, steps // 20), "lr": args.lr, "decay_frac": 0.1,
             "grad_checkpointing": args.grad_checkpointing, "weight_decay": 0.0,
             "autosave_minutes": 15, "log_every": 10,
@@ -85,9 +96,12 @@ def main() -> None:
         signal.signal(signal.SIGTERM, lambda *_: trainer.request_stop())
     except (ValueError, OSError):
         pass
-    print(f"[dpo] device={device} pairs={len(data)} steps={steps} beta={args.beta} resumed={resumed}")
+    if D.is_main():
+        print(f"[dpo] device={device} gpus={world} pairs={len(data)} steps={steps} beta={args.beta} resumed={resumed}", flush=True)
     trainer.train(max_steps=args.max_steps)
-    print(f"[dpo] done at step {trainer.step}; checkpoints in {args.out}")
+    if D.is_main():
+        print(f"[dpo] done at step {trainer.step}; checkpoints in {args.out}", flush=True)
+    D.cleanup()
 
 
 if __name__ == "__main__":

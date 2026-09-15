@@ -20,7 +20,8 @@ model:
   # ~1.1B parameters
 
 train:
-  precision: bf16
+  precision: auto        # bf16 on Ampere+/Blackwell (the 5070); fp16 + loss scaling on older cards (Lambda's Titans). Same fp32 master weights either way
+  gpus: auto             # GPUs per run: 'auto' = every card in CUDA_VISIBLE_DEVICES (torchrun DDP), or a number. 1 on the 5070 box
   optimizer: adamw       # 'muon' optional (see PLAN.md)
   lr: 3.0e-4
   betas: [0.9, 0.95]
@@ -31,8 +32,8 @@ train:
   total_tokens: 1.0e11   # ~100B target (time-no-object); ship earlier via decay
   decay_frac: 0.15
   z_loss: 1.0e-4
-  micro_batch: 4         # tune to fit 12GB
-  grad_accum: 64         # ~0.5M tokens/step effective at seq 2048
+  micro_batch: 4         # per GPU; tune to fit 12GB
+  grad_accum: 64         # TOTAL micro-steps per optimizer step across all GPUs: 4*64*2048 = ~0.5M tokens/step (the LR schedule is set by this, so it must not change with the GPU count)
   grad_checkpointing: true
   optimizer_8bit: true   # 8-bit AdamW so optimizer states fit in 12GB
   compile: true          # torch.compile fuses kernels for a big throughput win (auto-falls back to eager if it can't compile)

@@ -19,9 +19,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # maxgpt-ultra/
 
-import yaml
-
-from model import ModelConfig
+from model import ModelConfig, load_yaml
 from tokenizer.tokenizer import train_tokenizer, UltraTokenizer
 from data.prepare import tokenize_to_shards, stream_mixed, PRETRAIN_MIX
 from posttrain.sft_data import build_sft_jsonl, append_oasst_jsonl
@@ -95,7 +93,7 @@ def main() -> None:
     ap.add_argument("--smoke", action="store_true", help="tiny local dry-run, no network")
     args = ap.parse_args()
 
-    raw = yaml.safe_load(open(args.config, encoding="utf-8"))
+    raw = load_yaml(args.config)
     mcfg = ModelConfig.from_yaml(args.config)
     vocab = args.vocab_size or mcfg.vocab_size
     max_tokens = int(args.max_tokens) if args.max_tokens else int(float(raw.get("train", {}).get("total_tokens", 1e11)))

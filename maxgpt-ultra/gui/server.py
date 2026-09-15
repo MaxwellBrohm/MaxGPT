@@ -24,6 +24,40 @@ import uvicorn
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+sys.path.insert(0, ROOT)
+from cfg import load_yaml   # torch-free config reader (handles `extends:`)
+
+
+def visible_gpu_count() -> int:
+    """How many GPUs a stage may use: CUDA_VISIBLE_DEVICES if set (the etiquette knob on a
+    shared box), else every card nvidia-smi lists; 1 when there is no NVIDIA GPU."""
+    vis = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if vis is not None:
+        return max(1, len([v for v in vis.split(",") if v.strip() != ""]))
+    try:
+        out = subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True, timeout=5)
+        return max(1, len([l for l in out.stdout.splitlines() if l.startswith("GPU ")]))
+    except Exception:
+        return 1
+
+
+def resolve_gpus(setting) -> int:
+    """train.gpus from the config: an int, or 'auto' (= every visible card)."""
+    if isinstance(setting, bool) or setting is None:
+        return 1
+    if isinstance(setting, int):
+        return max(1, setting)
+    return visible_gpu_count() if str(setting).lower() == "auto" else max(1, int(setting))
+
+
+def launch_cmd(py, script_and_args, n_gpus, run_out):
+    """Single process for 1 GPU; torchrun (one process per GPU, DDP) for more. Rank 0's output
+    is what the dashboard shows; every rank's full log lands in <run_out>/ranks/."""
+    if n_gpus <= 1:
+        return [py] + script_and_args
+    return [py, "-m", "torch.distributed.run", "--nnodes=1", "--rdzv-backend=c10d",
+            "--rdzv-endpoint=127.0.0.1:0", f"--nproc_per_node={n_gpus}",
+            "--redirects", "3", "--tee", "0:3", "--log-dir", os.path.join(run_out, "ranks")] + script_and_args
 
 
 class Stage:
@@ -114,8 +148,9 @@ class Pipeline:
             pass
         st.append("$ " + " ".join(cmd))
         st.status = "running"
+        env = {**os.environ, "PYTHONUNBUFFERED": "1"}     # live logs even through torchrun's pipe
         self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                     text=True, bufsize=1, cwd=ROOT)
+                                     text=True, bufsize=1, cwd=ROOT, env=env)
         threading.Thread(target=self._read, args=(st, self.proc), daemon=True).start()
         threading.Thread(target=self._wait, args=(i, self.proc), daemon=True).start()
 
@@ -217,19 +252,35 @@ def api_pipeline():
 
 
 def _read_gpu() -> dict:
-    """GPU stats via nvidia-smi (no extra deps; ships with the NVIDIA driver)."""
+    """GPU stats via nvidia-smi (no extra deps; ships with the NVIDIA driver). On a multi-GPU
+    box the cards in CUDA_VISIBLE_DEVICES (all of them if unset) are aggregated: utilization
+    averaged, VRAM and power summed, temperature max."""
     try:
-        q = "utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw"
+        q = "index,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw"
         out = subprocess.run(["nvidia-smi", f"--query-gpu={q}", "--format=csv,noheader,nounits"],
                              capture_output=True, text=True, timeout=3)
-        vals = [x.strip() for x in out.stdout.strip().splitlines()[0].split(",")]
+        rows = [[x.strip() for x in line.split(",")] for line in out.stdout.strip().splitlines() if line.strip()]
+        vis = os.environ.get("CUDA_VISIBLE_DEVICES")
+        if vis is not None:
+            want = {v.strip() for v in vis.split(",") if v.strip() != ""}
+            rows = [r for r in rows if r[0] in want] or rows
         keys = ["gpu_util", "vram_used_mb", "vram_total_mb", "gpu_temp", "gpu_power"]
+        cols = {k: [] for k in keys}
+        for r in rows:
+            for k, x in zip(keys, r[1:]):
+                try:
+                    cols[k].append(float(x))
+                except Exception:
+                    pass            # a field may report [N/A]; keep the rest
         d = {}
-        for k, x in zip(keys, vals):
-            try:
-                d[k] = float(x)
-            except Exception:
-                pass            # a field may report [N/A]; keep the rest
+        if cols["gpu_util"]:
+            d["gpu_util"] = sum(cols["gpu_util"]) / len(cols["gpu_util"])
+        for k in ("vram_used_mb", "vram_total_mb", "gpu_power"):
+            if cols[k]:
+                d[k] = sum(cols[k])
+        if cols["gpu_temp"]:
+            d["gpu_temp"] = max(cols["gpu_temp"])
+        d["gpu_count"] = len(rows)
         return d
     except Exception:
         return {}               # no NVIDIA GPU / nvidia-smi not found
@@ -309,6 +360,14 @@ def _load_chat_model():
 
 def build_default_pipeline(config, tokenizer, shards, sft_data, pref_data, runs) -> Pipeline:
     py = sys.executable
+    try:
+        n_gpus = resolve_gpus((load_yaml(os.path.join(ROOT, config)).get("train") or {}).get("gpus", 1))
+    except Exception:
+        n_gpus = 1
+    print(f"[gui] training stages will use {n_gpus} GPU(s)" + (" via torchrun" if n_gpus > 1 else ""), flush=True)
+
+    def train_cmd(script_and_args, run_out):
+        return launch_cmd(py, script_and_args, n_gpus, run_out)
 
     def latest_ckpt(run_dir):
         latest = os.path.join(ROOT, run_dir, "checkpoints", "latest.json")
@@ -326,20 +385,20 @@ def build_default_pipeline(config, tokenizer, shards, sft_data, pref_data, runs)
         Stage("data", "Data", lambda: [py, "-u", "scripts/prepare_data.py", "--config", config,
               "--metrics-out", os.path.join(runs, "data", "metrics.jsonl")],
               os.path.join(runs, "data"), kind="data", done_when=data_done),
-        Stage("pretrain", "Pretrain", lambda: [py, "scripts/train.py", "--config", config,
+        Stage("pretrain", "Pretrain", lambda: train_cmd(["scripts/train.py", "--config", config,
               "--data", shards, "--out", os.path.join(runs, "pretrain"), "--tokenizer", tokenizer,
               "--eval-data", shards, "--eval-every", "500",
-              "--stop-file", os.path.join(runs, "pretrain", "STOP")],
+              "--stop-file", os.path.join(runs, "pretrain", "STOP")], os.path.join(runs, "pretrain")),
               os.path.join(runs, "pretrain")),
-        Stage("sft", "SFT", lambda: [py, "scripts/sft.py", "--config", config,
+        Stage("sft", "SFT", lambda: train_cmd(["scripts/sft.py", "--config", config,
               "--init", latest_ckpt(os.path.join(runs, "pretrain")), "--tokenizer", tokenizer,
               "--data", sft_data, "--out", os.path.join(runs, "sft"),
-              "--stop-file", os.path.join(runs, "sft", "STOP")],
+              "--stop-file", os.path.join(runs, "sft", "STOP")], os.path.join(runs, "sft")),
               os.path.join(runs, "sft")),
-        Stage("dpo", "DPO", lambda: [py, "scripts/dpo.py", "--config", config,
+        Stage("dpo", "DPO", lambda: train_cmd(["scripts/dpo.py", "--config", config,
               "--init", latest_ckpt(os.path.join(runs, "sft")), "--tokenizer", tokenizer,
               "--data", pref_data, "--out", os.path.join(runs, "dpo"),
-              "--stop-file", os.path.join(runs, "dpo", "STOP")],
+              "--stop-file", os.path.join(runs, "dpo", "STOP")], os.path.join(runs, "dpo")),
               os.path.join(runs, "dpo")),
         Stage("chat", "Chat", lambda: [], os.path.join(runs, "dpo"), kind="chat"),
     ]

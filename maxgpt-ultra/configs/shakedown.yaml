@@ -21,7 +21,7 @@ model:
   # ~113M parameters (measured by scripts/smoke_test.py)
 
 train:
-  precision: bf16
+  precision: auto        # bf16 where the card has it, else fp16 + loss scaling
   optimizer: adamw       # 'muon' optional (see PLAN.md)
   lr: 6.0e-4
   betas: [0.9, 0.95]
