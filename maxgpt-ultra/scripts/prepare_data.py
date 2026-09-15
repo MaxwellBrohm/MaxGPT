@@ -17,6 +17,8 @@ import json
 import os
 import sys
 
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "true")   # batch encoding across every core
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # maxgpt-ultra/
 
 from model import ModelConfig, load_yaml
