@@ -33,8 +33,8 @@ import sys
 import subprocess
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # maxgpt-ultra/
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")     # match the real run
-from cfg import configure_triton_ptxas
+from cfg import configure_triton_ptxas, cuda_alloc_conf
+cuda_alloc_conf()            # same allocator choice as the real run
 configure_triton_ptxas()   # same Triton setup as the real run
 
 

@@ -308,7 +308,9 @@ class DPOTrainer:
                     return stats
             except Exception as e:
                 if self._compile_modes:           # a compiled mode failed at runtime -> drop a tier
-                    print(f"[dpo] compiled forward failed ({type(e).__name__}); dropping a compile tier")
+                    if self.is_main:
+                        print(f"[dpo] compiled forward failed ({type(e).__name__}: "
+                              f"{str(e).splitlines()[0][:160]}); dropping a compile tier", flush=True)
                     self._compile_modes.pop(0)
                     self.fwd = self._make_fwd()
                 else:

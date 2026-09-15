@@ -54,3 +54,26 @@ def configure_triton_ptxas() -> str | None:
         return None
     os.environ["TRITON_PTXAS_PATH"] = hits[0]
     return hits[0]
+
+
+def _driver_major() -> int:
+    import subprocess
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+                             capture_output=True, text=True, timeout=5).stdout.strip().splitlines()
+        return int(out[0].split(".")[0]) if out else 0
+    except Exception:
+        return 0
+
+
+def cuda_alloc_conf() -> None:
+    """Enable PyTorch's expandable-segments allocator (less fragmentation, so a bigger micro_batch
+    fits) on drivers that support it well. On old drivers (< 525) it reports a near-OOM as
+    "CUDA driver error: invalid argument" and can corrupt the allocator after a failed kernel
+    launch (seen on the Lambda box), so there we keep the default allocator. Never overrides an
+    explicit PYTORCH_CUDA_ALLOC_CONF."""
+    if "PYTORCH_CUDA_ALLOC_CONF" in os.environ:
+        return
+    major = _driver_major()
+    if major == 0 or major >= 525:
+        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
