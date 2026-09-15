@@ -1,0 +1,19 @@
+# MaxGPT-Ultra on the school Lambda server: 10x NVIDIA TITAN RTX (24GB, Turing, no bf16),
+# driver 470 / CUDA 11.4 -> the cu118 torch build. See LAMBDA.md.
+#
+# `extends` pulls in configs/ultra.yaml (the model block and everything not overridden here),
+# so the architecture is the same object and checkpoints are interchangeable with the home
+# box. Only the machine-specific training knobs change.
+extends: ultra.yaml
+name: maxgpt-ultra
+
+train:
+  precision: auto            # Turing has no bf16 -> resolves to fp16 + dynamic loss scaling
+  gpus: auto                 # every card in CUDA_VISIBLE_DEVICES (set that first; leave some for others)
+  micro_batch: 2             # per GPU. Retune: python scripts/find_micro_batch.py --config configs/ultra_lambda.yaml --compile
+  grad_accum: 128            # TOTAL across GPUs: 2 * 128 * 2048 = ~0.5M tokens/step, identical to home (must be a multiple of the GPU count)
+  grad_checkpointing: false  # 24GB has room to keep the activations -> no recompute in backward, ~25% faster steps
+  optimizer_8bit: true       # falls back to fused fp32 AdamW automatically if bitsandbytes has no build for this driver
+  compile: true              # tiered: max-autotune -> default -> eager, whatever this Triton/driver combination can do
+  compile_modes: [max-autotune, default]
+  loss_chunk: 2048

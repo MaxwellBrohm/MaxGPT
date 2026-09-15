@@ -53,21 +53,29 @@ class SFTDataset:
         assert self.n > seq_len + 1, "not enough SFT tokens for one window"
         self.pos = 0
         self.epoch = 0
+        self.rank, self.world = 0, 1     # multi-GPU: see shard()
+
+    def shard(self, rank: int, world: int) -> None:
+        """Multi-GPU: rank r reads window r of every group of `world` consecutive windows; `pos`
+        stays the global position (same on every rank). Same scheme as PackedShardDataset."""
+        assert 0 <= rank < world
+        self.rank, self.world = rank, world
 
     def next_batch(self, batch_size: int, device: str = "cpu"):
         xs, ys = [], []
         for _ in range(batch_size):
-            if self.pos + self.seq_len + 1 > self.n:
+            if self.pos + self.world * self.seq_len + 1 > self.n:   # the whole rank-group must fit
                 self.pos = 0
                 self.epoch += 1
-            wt = self.tokens[self.pos:self.pos + self.seq_len + 1]
-            ws = self.sup[self.pos:self.pos + self.seq_len + 1]
+            s = self.pos + self.rank * self.seq_len
+            wt = self.tokens[s:s + self.seq_len + 1]
+            ws = self.sup[s:s + self.seq_len + 1]
             x = wt[:-1].copy()
             y = wt[1:].copy()
             y[~ws[1:]] = -100                    # supervise only assistant tokens
             xs.append(x)
             ys.append(y)
-            self.pos += self.seq_len
+            self.pos += self.world * self.seq_len
         x = torch.from_numpy(np.stack(xs))
         y = torch.from_numpy(np.stack(ys))
         return x.to(device), y.to(device)

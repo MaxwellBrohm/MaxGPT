@@ -8,7 +8,9 @@ your machine.
 
 How it works: it runs REAL training steps (forward + backward + optimizer.step) at each
 candidate size, using THIS config's exact memory settings (grad_checkpointing, 8-bit
-optimizer, chunked loss, bf16 autocast), so the number it finds matches real training. It
+optimizer, chunked loss, the resolved precision: bf16, or fp16 + loss scaling on cards
+without bf16), so the number it finds matches real training. Per-GPU number: under DDP
+each GPU holds the same model + optimizer, so one card's max is every card's max. It
 doubles the batch (1, 2, 4, 8, ...) until the first OOM, then binary-searches between the
 last size that fit and the first that didn't for the exact maximum.
 
@@ -22,6 +24,8 @@ Options:
   --max-batch N don't probe past N (default 128)
   --seq-len N   override the sequence length (default: the config's)
   --steps N     train steps per trial (default 4; >=2 so the 8-bit optimizer state allocates)
+  --gpus N      GPUs the real run will use (default: the config's train.gpus); the suggested
+                grad_accum is rounded to a multiple of it, as the trainer requires
 """
 import argparse
 import os
@@ -36,7 +40,7 @@ def run_probe(micro_batch: int, args) -> None:
     """One trial in THIS process. Exit code: 0 = fit, 2 = OOM, 3 = no-CUDA/other error."""
     try:
         import torch
-        import yaml
+        from contextlib import nullcontext
     except Exception as e:
         print(f"ERROR {type(e).__name__}: {e}  (is torch installed in THIS python? use your training env)")
         sys.exit(3)
@@ -44,9 +48,9 @@ def run_probe(micro_batch: int, args) -> None:
         print("NOCUDA")
         sys.exit(3)
     try:
-        from model import ModelConfig, MaxGPTUltra
-        from train.trainer import make_optimizer, _enable_fast_math
-        raw = yaml.safe_load(open(args.config, encoding="utf-8"))
+        from model import ModelConfig, MaxGPTUltra, load_yaml
+        from train.trainer import make_optimizer, _enable_fast_math, amp_dtype
+        raw = load_yaml(args.config)
         t = raw.get("train", {})
         mcfg = ModelConfig.from_yaml(args.config)
         seq_len = args.seq_len or mcfg.seq_len
@@ -62,14 +66,18 @@ def run_probe(micro_batch: int, args) -> None:
         fwd = torch.compile(model, mode="max-autotune") if args.compile else model
         z = float(t.get("z_loss", 0.0))
         V = mcfg.vocab_size
+        dtype = amp_dtype(t.get("precision", "auto"), dev)                  # same resolution as the trainer
+        scaler = torch.amp.GradScaler("cuda", enabled=(dtype == torch.float16))
         for _ in range(args.steps):
             x = torch.randint(0, V, (micro_batch, seq_len), device=dev)
             y = torch.randint(0, V, (micro_batch, seq_len), device=dev)
             opt.zero_grad(set_to_none=True)
-            with torch.autocast("cuda", dtype=torch.bfloat16):
+            with (torch.autocast("cuda", dtype=dtype) if dtype is not None else nullcontext()):
                 _, loss = fwd(x, y, z_loss_weight=z)
-            loss.backward()
-            opt.step()
+            scaler.scale(loss).backward()
+            scaler.unscale_(opt)
+            scaler.step(opt)
+            scaler.update()
         torch.cuda.synchronize()
         peak = torch.cuda.max_memory_allocated() / 1e9
         total = torch.cuda.get_device_properties(0).total_memory / 1e9
@@ -155,6 +163,8 @@ def main() -> None:
     ap.add_argument("--seq-len", type=int, default=None, help="override seq_len (default: config)")
     ap.add_argument("--compile", action="store_true",
                     help="confirm under real max-autotune compile (the authoritative number; minutes per trial)")
+    ap.add_argument("--gpus", type=int, default=None,
+                    help="GPUs the real run uses (default: config train.gpus; 'auto' = visible cards)")
     ap.add_argument("--probe", type=int, default=None, help=argparse.SUPPRESS)  # internal: one trial
     args = ap.parse_args()
 
@@ -233,12 +243,23 @@ def main() -> None:
         rec = max(1, best - 1)
         reason = "  (backed off 1: peak was within ~7% of total VRAM)"
 
-    # suggest a grad_accum that keeps the SAME effective batch (so the LR schedule is unchanged)
-    raw = __import__("yaml").safe_load(open(args.config, encoding="utf-8"))
-    t = raw.get("train", {})
+    # suggest a grad_accum that keeps the SAME effective batch (so the LR schedule is unchanged),
+    # rounded to a multiple of the GPU count (grad_accum is the total across GPUs)
+    from model import load_yaml
+    t = load_yaml(args.config).get("train", {})
     cur_mb, cur_ga = int(t.get("micro_batch", 1)), int(t.get("grad_accum", 1))
     eff = cur_mb * cur_ga
+    gpus = args.gpus
+    if gpus is None:
+        g = t.get("gpus", 1)
+        if str(g).lower() == "auto":
+            vis = os.environ.get("CUDA_VISIBLE_DEVICES")
+            gpus = (len([v for v in vis.split(",") if v.strip()]) if vis is not None
+                    else __import__("torch").cuda.device_count()) or 1
+        else:
+            gpus = int(g)
     new_ga = max(1, round(eff / rec))
+    new_ga = max(gpus, ((new_ga + gpus - 1) // gpus) * gpus)
 
     print("\n[autotune] RESULT" + ("  (max-autotune compile -- the real-run number)" if tested_compiled
                                    else "  (eager estimate)"))
@@ -249,7 +270,8 @@ def main() -> None:
         print(f"        so for the authoritative number re-run with --compile.")
     print(f"\n  In {args.config} set:")
     print(f"      micro_batch: {rec}")
-    print(f"      grad_accum:  {new_ga}      # keeps effective batch ~{rec * new_ga} (was {eff}): same dynamics, just faster")
+    print(f"      grad_accum:  {new_ga}      # keeps effective batch ~{rec * new_ga} windows/step (was {eff}): same dynamics, just faster"
+          + (f"; {gpus} GPUs x {new_ga // gpus} micro-steps each" if gpus > 1 else ""))
 
 
 if __name__ == "__main__":

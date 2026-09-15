@@ -9,7 +9,7 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass
 
-import yaml
+from cfg import load_yaml
 
 
 @dataclass
@@ -42,8 +42,7 @@ class ModelConfig:
 
     @classmethod
     def from_yaml(cls, path: str) -> "ModelConfig":
-        with open(path, encoding="utf-8") as f:
-            raw = yaml.safe_load(f)
+        raw = load_yaml(path)
         m = dict(raw.get("model", {}))
         # These are design commitments, not knobs - assert the YAML agrees.
         assert m.pop("norm", "rmsnorm") == "rmsnorm", "this architecture is RMSNorm-only"

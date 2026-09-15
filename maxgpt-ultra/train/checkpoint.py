@@ -35,7 +35,8 @@ class CheckpointManager:
         os.makedirs(out_dir, exist_ok=True)
 
     def save(self, *, model, optimizer, step: int, data_state: dict, model_cfg: dict,
-             train_cfg: dict, seed: int, best: bool = False, metrics: dict | None = None) -> str:
+             train_cfg: dict, seed: int, best: bool = False, metrics: dict | None = None,
+             extra: dict | None = None) -> str:
         payload = {
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
@@ -46,6 +47,7 @@ class CheckpointManager:
             "seed": seed,
             "rng_torch": torch.get_rng_state(),
             "metrics": metrics or {},
+            "extra": extra or {},        # e.g. the fp16 loss-scaler state
         }
         if torch.cuda.is_available():
             payload["rng_cuda"] = torch.cuda.get_rng_state_all()

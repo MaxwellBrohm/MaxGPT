@@ -21,6 +21,7 @@ from tokenizer.tokenizer import UltraTokenizer
 from posttrain.sft_data import SFTDataset, load_chat_jsonl
 from train.trainer import Trainer
 from train.checkpoint import load_checkpoint
+from train import dist as D
 
 
 def main() -> None:
@@ -39,6 +40,8 @@ def main() -> None:
     ap.add_argument("--stop-file", default=None)
     args = ap.parse_args()
 
+    dinfo = D.init_distributed()          # multi-GPU when launched by torchrun; else a no-op
+    world = dinfo["world"]
     mcfg = ModelConfig.from_yaml(args.config)
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(0)
@@ -51,9 +54,17 @@ def main() -> None:
     if args.init:
         load_checkpoint(args.init, model, optimizer=None, map_location=device)  # pretrained weights only
 
-    tokens_per_step = args.micro_batch * args.grad_accum * mcfg.seq_len
+    # --micro-batch x --grad-accum is the number of windows per optimizer step (what sets the
+    # dynamics). Split it over the GPUs: each rank does grad_accum/world micro-steps of
+    # micro_batch/... windows so the total per step stays the same on 1 or 8 cards.
+    windows = args.micro_batch * args.grad_accum
+    ga_per_rank = max(1, args.grad_accum // world)
+    mb_per_rank = max(1, windows // (world * ga_per_rank))
+    if D.is_main() and mb_per_rank * ga_per_rank * world != windows:
+        print(f"[sft] note: {windows} windows/step does not split evenly over {world} GPUs; "
+              f"using {mb_per_rank * ga_per_rank * world}", flush=True)
     total_tokens = int(args.epochs * ds.n)
-    tcfg = {"micro_batch": args.micro_batch, "grad_accum": args.grad_accum,
+    tcfg = {"micro_batch": mb_per_rank, "grad_accum": ga_per_rank * world,
             "total_tokens": total_tokens, "warmup_tokens": int(0.03 * total_tokens),
             "lr": args.lr, "decay_frac": 0.1, "z_loss": 0.0, "grad_clip": 1.0,
             "autosave_minutes": 15, "log_every": 10, "keep_last_k": 2,
@@ -76,10 +87,13 @@ def main() -> None:
     except (ValueError, OSError):
         pass
 
-    print(f"[sft] device={device} examples={len(examples)} sft_tokens={ds.n:,} "
-          f"steps={trainer.total_steps} resumed={resumed} init={'yes' if args.init else 'no'}")
+    if D.is_main():
+        print(f"[sft] device={device} gpus={world} examples={len(examples)} sft_tokens={ds.n:,} "
+              f"steps={trainer.total_steps} resumed={resumed} init={'yes' if args.init else 'no'}", flush=True)
     trainer.train(max_steps=args.max_steps)
-    print(f"[sft] done at step {trainer.step}; checkpoints in {args.out}")
+    if D.is_main():
+        print(f"[sft] done at step {trainer.step}; checkpoints in {args.out}", flush=True)
+    D.cleanup()
 
 
 if __name__ == "__main__":

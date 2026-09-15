@@ -7,6 +7,7 @@ NaN and rolls back.
 
 Run from maxgpt-ultra/:  ../venv/bin/python scripts/test_train.py
 """
+import math
 import os
 import sys
 
@@ -88,7 +89,7 @@ def main() -> None:
     safe_step = trainer.step
     p0 = next(p for p in model.parameters() if p.dim() >= 2).detach().clone()
     orig = trainer._micro_forward
-    trainer._micro_forward = lambda: torch.tensor(float("nan"), requires_grad=True)
+    trainer._micro_forward = lambda sync=True: torch.tensor(float("nan"))   # a NaN loss, no backward
     rec = trainer.train_step()
     assert rec["diverged"] and trainer.step == safe_step, rec
     print(f"  NaN loss flagged diverged, step held at {safe_step} ✓")
@@ -100,6 +101,52 @@ def main() -> None:
     p1 = next(p for p in model.parameters() if p.dim() >= 2).detach()
     assert torch.allclose(p1, p0), "rollback did not restore weights"
     print("  rollback restored the last good weights ✓")
+
+    print("\n[5] fp16 loss scaling is exact (same weights as the fp32 run, bit for bit)")
+    # On CPU precision=fp16 runs the loss scaler without autocast: scaling by a power of two
+    # commutes with every rounding, so after unscaling the gradients (and thus the weights) must
+    # be identical to an unscaled run, not merely close.
+    torch.manual_seed(1)
+    m_plain = MaxGPTUltra(cfg)
+    m_fp16 = MaxGPTUltra(cfg)
+    m_fp16.load_state_dict(m_plain.state_dict())
+    base = {**tcfg, "log_every": 1000}
+    t_plain = Trainer(m_plain, PackedShardDataset(SHARDS, seq_len), {**base, "precision": "fp32"},
+                      device="cpu", out_dir=OUT + "_plain", seed=0)
+    t_fp16 = Trainer(m_fp16, PackedShardDataset(SHARDS, seq_len), {**base, "precision": "fp16"},
+                     device="cpu", out_dir=OUT + "_fp16", seed=0)
+    assert not t_plain.scaler.is_enabled() and t_fp16.scaler.is_enabled()
+    for _ in range(8):
+        r1, r2 = t_plain.train_step(), t_fp16.train_step()
+    assert "loss_scale" in r2 and r2["loss_scale"] == 2.0 ** 16, r2
+    for (n1, p1), (n2, p2) in zip(m_plain.named_parameters(), m_fp16.named_parameters()):
+        assert torch.equal(p1, p2), f"{n1} differs between plain and loss-scaled runs"
+    assert r1["loss"] == r2["loss"], (r1["loss"], r2["loss"])
+    print(f"  8 steps, loss {r1['loss']:.4f} both ways, every weight tensor bit-identical ✓")
+
+    print("\n[6] fp16 gradient overflow: step skipped, scale halved, NOT a divergence")
+    before = [p.detach().clone() for p in m_fp16.parameters()]
+    t_fp16.scaler.update(new_scale=2.0 ** 127)          # loss * 2^127 overflows fp32 -> inf grads
+    step_before = t_fp16.step
+    rec = t_fp16.train_step()
+    assert rec.get("overflow") is True and rec["diverged"] is False, rec
+    assert t_fp16.step == step_before + 1, "an overflow skips the update but still counts the step"
+    assert rec["loss_scale"] == 2.0 ** 126, rec["loss_scale"]
+    for p, b in zip(m_fp16.parameters(), before):
+        assert torch.equal(p, b), "weights changed on an overflowed step"
+    print(f"  overflow flagged, weights untouched, scale 2^127 -> 2^126 ✓")
+    t_fp16.scaler.update(new_scale=2.0 ** 16)
+    rec = t_fp16.train_step()
+    assert not rec.get("overflow") and math.isfinite(rec["grad_norm"]), rec
+    print("  next step trains normally ✓")
+
+    print("\n[7] loss-scaler state survives checkpoint + resume")
+    t_fp16.scaler.update(new_scale=2.0 ** 12)
+    t_fp16.save()
+    t_fp16.scaler.update(new_scale=2.0 ** 20)
+    assert t_fp16.resume_if_available()
+    assert t_fp16.scaler.get_scale() == 2.0 ** 12, t_fp16.scaler.get_scale()
+    print("  scale restored from the checkpoint ✓")
 
     print("\n" + "=" * 72)
     print("ALL CHECKS PASSED ✅")
