@@ -19,16 +19,18 @@ import torch
 import torch.distributed as dist
 
 
-def init_distributed() -> dict:
+def init_distributed(device: str | None = None) -> dict:
     """Join the torchrun process group if we were launched by torchrun; else single-process.
-    Pins this process to its GPU (LOCAL_RANK) so a plain "cuda" device means the right card."""
+    `device` is what the model will run on ("cuda" -> NCCL and pin this process to its card,
+    LOCAL_RANK, so a plain "cuda" means the right one; "cpu" -> gloo, even on a GPU box)."""
     world = int(os.environ.get("WORLD_SIZE", "1"))
     if world <= 1 or "RANK" not in os.environ:
         return {"rank": 0, "world": 1, "local_rank": 0, "distributed": False}
     rank = int(os.environ["RANK"])
     local_rank = int(os.environ.get("LOCAL_RANK", rank))
-    backend = "nccl" if torch.cuda.is_available() else "gloo"
-    if torch.cuda.is_available():
+    on_cuda = (device == "cuda") if device else torch.cuda.is_available()
+    backend = "nccl" if on_cuda else "gloo"
+    if on_cuda:
         torch.cuda.set_device(local_rank)
     # a long timeout: rank 0 alone runs eval + checkpoint saves while the others wait at the
     # next all-reduce, and a 1B checkpoint to a busy shared disk can take a while
@@ -88,7 +90,8 @@ def wrap_ddp(model: torch.nn.Module):
     if not is_distributed():
         return model
     from torch.nn.parallel import DistributedDataParallel as DDP
-    dev_ids = [torch.cuda.current_device()] if torch.cuda.is_available() else None
+    on_cuda = next(model.parameters()).is_cuda          # decide by where the MODEL lives, not the box
+    dev_ids = [torch.cuda.current_device()] if on_cuda else None
     # gradient_as_bucket_view: the all-reduce buckets ARE the .grad tensors (no second copy);
     # broadcast_buffers off: the only buffers are the RoPE tables, identical everywhere already
     return DDP(model, device_ids=dev_ids, gradient_as_bucket_view=True, broadcast_buffers=False,

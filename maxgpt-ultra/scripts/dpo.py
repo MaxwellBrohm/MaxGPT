@@ -45,12 +45,12 @@ def main() -> None:
     ap.add_argument("--stop-file", default=None)
     args = ap.parse_args()
 
-    dinfo = D.init_distributed()          # multi-GPU when launched by torchrun; else a no-op
+    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    dinfo = D.init_distributed(device)    # multi-GPU when launched by torchrun; else a no-op
     world = dinfo["world"]
     mcfg = ModelConfig.from_yaml(args.config)
     _raw = load_yaml(args.config)
     _dpo = ((_raw.get("posttrain", {}) or {}).get("dpo", {}) or {})   # optional DPO speed knobs
-    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(0)
 
     tok = UltraTokenizer(args.tokenizer)

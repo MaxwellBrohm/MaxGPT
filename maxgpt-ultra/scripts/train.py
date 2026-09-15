@@ -35,12 +35,12 @@ def main() -> None:
     ap.add_argument("--tokenizer", default=None, help="tokenizer json (enables sample generations in eval)")
     args = ap.parse_args()
 
-    dinfo = D.init_distributed()          # multi-GPU when launched by torchrun; else a no-op
+    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    dinfo = D.init_distributed(device)    # multi-GPU when launched by torchrun; else a no-op
     raw = load_yaml(args.config)
     mcfg = ModelConfig.from_yaml(args.config)
     tcfg = raw["train"]
 
-    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.seed)
 
     meta_path = os.path.join(args.data, "meta.json")
