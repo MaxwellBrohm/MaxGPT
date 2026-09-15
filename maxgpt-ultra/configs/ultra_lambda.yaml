@@ -15,5 +15,5 @@ train:
   grad_checkpointing: false  # 24GB has room to keep the activations -> no recompute in backward, ~25% faster steps
   optimizer_8bit: true       # falls back to fused fp32 AdamW automatically if bitsandbytes has no build for this driver
   compile: true              # tiered: max-autotune -> default -> eager, whatever this Triton/driver combination can do
-  compile_modes: [max-autotune, default]
+  compile_modes: [max-autotune-no-cudagraphs, default]   # autotuned kernels without the CUDA-graph memory pool: at 1B the graph saves nothing and costs VRAM
   loss_chunk: 2048
