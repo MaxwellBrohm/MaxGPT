@@ -220,6 +220,20 @@ class Trainer:
                 self._compile_modes.pop(0)
         return self.net
 
+    @staticmethod
+    def _release_compile_memory() -> None:
+        """A failed compiled attempt can leave autotune workspaces / a CUDA-graph pool behind;
+        give that VRAM back before the next tier runs (a real OOM must not cascade)."""
+        import gc
+        try:
+            import torch._dynamo
+            torch._dynamo.reset()
+        except Exception:
+            pass
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
     def request_stop(self) -> None:
         self._stop = True
 
@@ -250,6 +264,7 @@ class Trainer:
                             print(f"[train] compiled forward failed ({type(e).__name__}: "
                                   f"{str(e).splitlines()[0][:160]}); dropping a compile tier", flush=True)
                         self._compile_modes.pop(0)
+                        self._release_compile_memory()
                         self.fwd = self._make_fwd()
                     else:
                         raise
