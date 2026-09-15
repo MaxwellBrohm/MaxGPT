@@ -79,6 +79,53 @@ def main() -> None:
     assert ds3.epoch == 1, "epoch should have ticked over after wraparound"
     print(f"  window across the end read cleanly; epoch -> {ds3.epoch} ✓")
 
+    print("\n[5] shard build: crash in the middle of an encode chunk + resume is byte-identical")
+    import glob, json as _json, shutil
+
+    class FakeStream:                       # a resumable doc source, like the real MixedStream
+        def __init__(self, docs, crash_after=None):
+            self.docs, self.i, self.crash_after = docs, 0, crash_after
+
+        def __iter__(self):
+            while self.i < len(self.docs):
+                if self.crash_after is not None and self.i >= self.crash_after:
+                    raise RuntimeError("simulated crash")
+                d = self.docs[self.i]
+                self.i += 1
+                yield (d, "fake")
+
+        def state_dict(self):
+            return {"i": self.i}
+
+        def load_state_dict(self, st):
+            self.i = int(st["i"])
+
+    docs5 = [f"doc {i}: " + " ".join(DOCS[(i * 7 + k) % len(DOCS)] for k in range(1 + i % 3)) for i in range(300)]
+
+    def build(out, stream):
+        shutil.rmtree(out, ignore_errors=True)
+        # shard_size small and batch_docs large, so shard boundaries fall INSIDE encode chunks
+        return tokenize_to_shards(stream, tok, out, shard_size=700, batch_docs=32)
+
+    def shard_bytes(out):
+        return b"".join(open(f, "rb").read() for f in sorted(glob.glob(os.path.join(out, "shard_*.bin"))))
+
+    ref = build(SHARDS + "_ref", FakeStream(docs5))
+    out5 = SHARDS + "_crash"
+    try:
+        build(out5, FakeStream(docs5, crash_after=150))
+        raise AssertionError("the simulated crash did not fire")
+    except RuntimeError:
+        pass
+    prog = _json.load(open(os.path.join(out5, "progress.json")))
+    assert len(prog["pending"]) > 1, "expected several pulled-but-unwritten docs pending mid-chunk"
+    resumed = tokenize_to_shards(FakeStream(docs5), tok, out5, shard_size=700, batch_docs=32)
+    assert resumed["total_tokens"] == ref["total_tokens"], (resumed["total_tokens"], ref["total_tokens"])
+    assert shard_bytes(out5) == shard_bytes(SHARDS + "_ref"), "resumed build differs from the uninterrupted one"
+    assert not os.path.exists(os.path.join(out5, "progress.json")), "finished build should drop progress.json"
+    print(f"  {len(prog['pending'])} docs were pending at the crash; resumed build identical "
+          f"({ref['total_tokens']} tokens, {len(ref['shards'])} shards) ✓")
+
     print("\n" + "=" * 72)
     print("ALL CHECKS PASSED ✅")
     print("=" * 72)

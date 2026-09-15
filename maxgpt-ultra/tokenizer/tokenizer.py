@@ -76,6 +76,12 @@ class UltraTokenizer:
     def encode(self, text: str) -> list[int]:
         return self.tok.encode(text).ids
 
+    def encode_batch(self, texts: list[str]) -> list[list[int]]:
+        """Encode many docs at once: the Rust tokenizer spreads a batch over every CPU core
+        (TOKENIZERS_PARALLELISM), which is what turns a single-core data build into a
+        download-bound one on a big box. Same ids as encode(), doc by doc."""
+        return [e.ids for e in self.tok.encode_batch(texts)]
+
     def decode(self, ids: list[int], skip_special: bool = False) -> str:
         return self.tok.decode(ids, skip_special_tokens=skip_special)
 
