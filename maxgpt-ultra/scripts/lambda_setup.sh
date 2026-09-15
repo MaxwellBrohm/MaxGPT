@@ -53,19 +53,39 @@ step "smoke tests"
 FREE_GPU=$(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits | sort -t, -k2 -n | head -1 | cut -d, -f1 | tr -d ' ')
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-$FREE_GPU}"
 echo "using CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
-python - <<'PYEOF'
+python - <<'PYEOF' || echo "(a smoke test failed; the summary below still matters)"
 import torch
 print("torch", torch.__version__, "| cuda", torch.cuda.is_available(), "| built for CUDA", torch.version.cuda)
 for i in range(torch.cuda.device_count()):
     p = torch.cuda.get_device_properties(i)
     print(f"  visible gpu{i}: {p.name}  {p.total_memory / 2**30:.1f}GB  sm_{p.major}{p.minor}")
 print("bf16 supported:", torch.cuda.is_bf16_supported())
+
+def test(name, fn):                      # each test reports on its own; one failure must not hide the others
+    try:
+        print(f"{name}: OK", fn() or "")
+    except Exception as e:
+        print(f"{name}: FAILED  {type(e).__name__}: {str(e).splitlines()[0][:160]}")
+
 m = torch.nn.Linear(8, 8).cuda()
-print("compile:", tuple(torch.compile(m)(torch.randn(4, 8, device="cuda")).shape))
-import bitsandbytes as bnb
-opt = bnb.optim.PagedAdamW8bit(m.parameters(), lr=1e-3)
-m(torch.randn(4, 8, device="cuda")).sum().backward(); opt.step()
-print("paged 8-bit AdamW: OK (bitsandbytes", bnb.__version__ + ")")
+x = torch.randn(4, 8, device="cuda")
+def fp16():
+    with torch.autocast("cuda", dtype=torch.float16):
+        return tuple(m(x).shape)
+test("fp16 autocast", fp16)
+test("compile", lambda: tuple(torch.compile(torch.nn.Linear(8, 8).cuda())(x).shape))
+def sdpa():
+    from torch.nn.attention import sdpa_kernel, SDPBackend
+    q = torch.randn(1, 4, 64, 32, device="cuda", dtype=torch.float16)
+    with sdpa_kernel([SDPBackend.EFFICIENT_ATTENTION]):
+        return tuple(torch.nn.functional.scaled_dot_product_attention(q, q, q, is_causal=True).shape)
+test("efficient attention (fp16)", sdpa)
+def bnb_test():
+    import bitsandbytes as bnb
+    opt = bnb.optim.PagedAdamW8bit(m.parameters(), lr=1e-3)
+    m(x).sum().backward(); opt.step()
+    return "bitsandbytes " + bnb.__version__
+test("paged 8-bit AdamW", bnb_test)
 PYEOF
 
 # 6) summary to paste back
