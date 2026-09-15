@@ -30,6 +30,11 @@ class ModelConfig:
     rms_eps: float = 1e-5        # RMSNorm epsilon
     init_std: float = 0.02       # std for the normal weight init
 
+    # --- optional tweaks from the 2025/26 small-model literature (all off by default; A/B'd before use) ---
+    attn_gate: bool = False      # per-head sigmoid gate on the attention output (Qwen "Gated Attention" 2025, IMU-1 2026)
+    value_residual: bool = False # normalized value residual: mix layer 1's values into every later layer (IMU-1 2026)
+    norm_scaling: bool = False   # scale each block's pre-norm outputs by 1/sqrt(layer index) ("LayerNorm scaling", IMU-1)
+
     @property
     def head_dim(self) -> int:
         assert self.d_model % self.n_heads == 0, "d_model must be divisible by n_heads"

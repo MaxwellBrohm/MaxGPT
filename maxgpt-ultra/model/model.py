@@ -87,7 +87,7 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
 # Attention (GQA + QK-norm + RoPE)
 # --------------------------------------------------------------------------- #
 class Attention(nn.Module):
-    def __init__(self, cfg: ModelConfig):
+    def __init__(self, cfg: ModelConfig, layer_idx: int = 0):
         super().__init__()
         self.n_heads = cfg.n_heads
         self.n_kv_heads = cfg.n_kv_heads
@@ -104,8 +104,25 @@ class Attention(nn.Module):
             self.q_norm = RMSNorm(self.head_dim, cfg.rms_eps)
             self.k_norm = RMSNorm(self.head_dim, cfg.rms_eps)
 
+        # Gated attention: one sigmoid gate per head, computed from the block input, multiplies the
+        # attention output. 2*sigmoid(0) = 1, and the projection is zero-initialized, so the model
+        # starts exactly as an ungated one. Adds sparsity, removes attention sinks, stabilizes
+        # training (Qwen, NeurIPS 2025). Cost: one d_model x n_heads matmul per layer.
+        self.attn_gate = cfg.attn_gate
+        if cfg.attn_gate:
+            self.attn_gate_proj = nn.Linear(cfg.d_model, cfg.n_heads, bias=False)
+        # Value residual: layers after the first mix the FIRST layer's values into their own,
+        # V = s * (a1*V_local + a2*V_1) / sqrt(a1^2 + a2^2), learned (s, a1, a2) starting at (1, 1, 0)
+        # so it is an identity at init. Counters the value-stream degradation of deep stacks.
+        self.value_residual = cfg.value_residual and layer_idx > 0
+        if self.value_residual:
+            self.vr_scale = nn.Parameter(torch.ones(()))
+            self.vr_alpha = nn.Parameter(torch.tensor([1.0, 0.0]))
+
     def forward(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor,
-                past=None, use_cache: bool = False):
+                past=None, use_cache: bool = False, v1: torch.Tensor | None = None):
+        """Returns (out, new_kv or None, v_local). v_local is this layer's own values (pre-mix),
+        which the model hands to later layers as v1 when value_residual is on."""
         B, T, _ = x.shape
         q = self.q_proj(x).view(B, T, self.n_heads, self.head_dim)
         k = self.k_proj(x).view(B, T, self.n_kv_heads, self.head_dim)
@@ -120,6 +137,10 @@ class Attention(nn.Module):
         q = q.transpose(1, 2)  # (B, n_heads,    T, hd)
         k = k.transpose(1, 2)  # (B, n_kv_heads, T, hd)
         v = v.transpose(1, 2)
+        v_local = v
+        if self.value_residual and v1 is not None:
+            a1, a2 = self.vr_alpha[0], self.vr_alpha[1]
+            v = self.vr_scale * (a1 * v + a2 * v1) * torch.rsqrt(a1 * a1 + a2 * a2)
 
         # RoPE uses absolute positions; cos/sin are pre-sliced to this chunk's positions (offset
         # past the cache during incremental decode), so new tokens rotate at the right angle.
@@ -142,9 +163,12 @@ class Attention(nn.Module):
             Tq, Tk = q.size(2), kr.size(2)                                    # several new tokens: causal among them
             mask = torch.ones(Tq, Tk, dtype=torch.bool, device=q.device).tril(diagonal=Tk - Tq)
             out = F.scaled_dot_product_attention(q, kr, vr, attn_mask=mask)
+        if self.attn_gate:
+            gate = 2.0 * torch.sigmoid(self.attn_gate_proj(x))            # (B, T, n_heads)
+            out = out * gate.transpose(1, 2).unsqueeze(-1).to(out.dtype)
         out = out.transpose(1, 2).contiguous().view(B, T, self.n_heads * self.head_dim)
         out = self.o_proj(out)
-        return (out, new_kv) if use_cache else out
+        return out, new_kv, v_local
 
 
 # --------------------------------------------------------------------------- #
@@ -169,24 +193,30 @@ class SwiGLU(nn.Module):
 # Transformer block (pre-norm)
 # --------------------------------------------------------------------------- #
 class Block(nn.Module):
-    def __init__(self, cfg: ModelConfig):
+    def __init__(self, cfg: ModelConfig, layer_idx: int = 0):
         super().__init__()
         self.attn_norm = RMSNorm(cfg.d_model, cfg.rms_eps)
-        self.attn = Attention(cfg)
+        self.attn = Attention(cfg, layer_idx)
         self.mlp_norm = RMSNorm(cfg.d_model, cfg.rms_eps)
         self.mlp = SwiGLU(cfg)
+        # "LayerNorm scaling": deeper blocks see a 1/sqrt(depth)-scaled normalized input, which
+        # keeps late layers from being drowned by the growing residual stream (IMU-1, 2026).
+        self.norm_scale = (1.0 / math.sqrt(layer_idx + 1)) if cfg.norm_scaling else 1.0
 
     def forward(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor,
-                past=None, use_cache: bool = False):
-        # Pre-norm residuals: normalize the input to each sublayer, add the result back.
-        if use_cache:
-            a, kv = self.attn(self.attn_norm(x), cos, sin, past, True)
-            x = x + a
-            x = x + self.mlp(self.mlp_norm(x))
-            return x, kv
-        x = x + self.attn(self.attn_norm(x), cos, sin)
-        x = x + self.mlp(self.mlp_norm(x))
-        return x
+                past=None, use_cache: bool = False, v1: torch.Tensor | None = None):
+        """Pre-norm residuals: normalize the input to each sublayer, add the result back.
+        Returns (x, kv or None, v_local)."""
+        h = self.attn_norm(x)
+        if self.norm_scale != 1.0:
+            h = h * self.norm_scale
+        a, kv, v_local = self.attn(h, cos, sin, past, use_cache, v1)
+        x = x + a
+        h = self.mlp_norm(x)
+        if self.norm_scale != 1.0:
+            h = h * self.norm_scale
+        x = x + self.mlp(h)
+        return x, kv, v_local
 
 
 # --------------------------------------------------------------------------- #
@@ -198,7 +228,7 @@ class MaxGPTUltra(nn.Module):
         self.cfg = cfg
         self.grad_checkpointing = False   # trainer sets True to trade compute for memory (fits the 1B on 12GB)
         self.tok_emb = nn.Embedding(cfg.vocab_size, cfg.d_model)
-        self.blocks = nn.ModuleList([Block(cfg) for _ in range(cfg.n_layers)])
+        self.blocks = nn.ModuleList([Block(cfg, i) for i in range(cfg.n_layers)])
         self.norm = RMSNorm(cfg.d_model, cfg.rms_eps)
         self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
         if cfg.tie_embeddings:
@@ -214,6 +244,8 @@ class MaxGPTUltra(nn.Module):
         for name, p in self.named_parameters():
             if name.endswith("o_proj.weight") or name.endswith("down_proj.weight"):
                 nn.init.normal_(p, mean=0.0, std=cfg.init_std / math.sqrt(2 * cfg.n_layers))
+            elif name.endswith("attn_gate_proj.weight"):
+                nn.init.zeros_(p)            # gate = 2*sigmoid(0) = 1: identical to no gate at init
 
     def _init_weights(self, module: nn.Module) -> None:
         if isinstance(module, nn.Linear):
@@ -234,14 +266,16 @@ class MaxGPTUltra(nn.Module):
         cos = self.rope_cos[past_len:past_len + T].to(x.dtype)     # positions offset past the cache
         sin = self.rope_sin[past_len:past_len + T].to(x.dtype)
         new_caches = [] if use_cache else None
+        v1 = None                                                   # layer 1's values (value_residual)
         for i, block in enumerate(self.blocks):
             if self.grad_checkpointing and self.training:
-                x = grad_checkpoint(block, x, cos, sin, use_reentrant=False)
-            elif use_cache:
-                x, kv = block(x, cos, sin, (past[i] if past is not None else None), True)
-                new_caches.append(kv)
+                x, _, v_loc = grad_checkpoint(block, x, cos, sin, None, False, v1, use_reentrant=False)
             else:
-                x = block(x, cos, sin)
+                x, kv, v_loc = block(x, cos, sin, (past[i] if past is not None else None), use_cache, v1)
+                if use_cache:
+                    new_caches.append(kv)
+            if i == 0 and self.cfg.value_residual:
+                v1 = v_loc
         x = self.norm(x)
 
         # incremental-decode path: just logits + the updated KV cache (generation needs no loss)

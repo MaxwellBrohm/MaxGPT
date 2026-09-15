@@ -1,0 +1,27 @@
+# A/B on the 124M shakedown model, 1B tokens, 2 GPUs: is the 2026 recipe better than ours?
+#   variant: normuon   (optimizer=normuon cautious_wd=true  attn_gate/value_residual/norm_scaling=false)
+# Same data order, same tokens/step (131072) and LR schedule for every variant; compare val_loss.
+extends: ../shakedown.yaml
+name: ab-normuon
+
+model:
+  attn_gate: false
+  value_residual: false
+  norm_scaling: false
+
+train:
+  precision: auto
+  optimizer: normuon
+  cautious_wd: true
+  lr: 6.0e-4               # Muon is RMS-matched to AdamW, so the same LR applies to both
+  warmup_tokens: 1.0e8
+  total_tokens: 1.0e9
+  decay_frac: 0.2
+  micro_batch: 16          # per GPU (24GB has room for the 124M)
+  grad_accum: 8            # TOTAL over 2 GPUs -> 16*8*1024 = 131072 tokens/step, the shakedown's batch
+  grad_checkpointing: false
+  optimizer_8bit: false
+  compile: true
+  compile_modes: [max-autotune, default]
+  loss_chunk: 2048
+  eval_every: 250

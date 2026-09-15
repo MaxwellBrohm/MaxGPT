@@ -165,6 +165,72 @@ def main() -> None:
         torch.cuda.is_available, torch.cuda.is_bf16_supported = saved
     print("  Turing -> fp16, Ampere+ -> bf16, fp32/cpu -> none ✓")
 
+    print("\n[9] Muon / NorMuon + cautious decay: train, checkpoint round trip, param routing")
+    from train.muon import Muon
+    for kind, extra in (("muon", {}), ("normuon", {"cautious_wd": True})):
+        torch.manual_seed(2)
+        mm = MaxGPTUltra(cfg)
+        tm = Trainer(mm, PackedShardDataset(SHARDS, seq_len), {**base, "optimizer": kind, **extra},
+                     device="cpu", out_dir=OUT + "_" + kind, seed=0)
+        assert isinstance(tm.optimizer, Muon)
+        g = tm.optimizer.param_groups
+        n_muon = sum(p.numel() for p in g[0]["params"])
+        assert g[0]["use_muon"] and all(p.dim() == 2 for p in g[0]["params"])
+        assert not g[1]["use_muon"] and mm.tok_emb.weight in g[1]["params"], "tied embedding must use AdamW"
+        assert not g[2]["use_muon"] and all(p.dim() == 1 for p in g[2]["params"])
+        first = tm.train_step()["loss"]
+        for _ in range(25):
+            rec = tm.train_step()
+        assert rec["loss"] < first - 0.5, (kind, first, rec["loss"])
+        tm.save()
+        ref_p = next(p for p in mm.parameters() if p.dim() >= 2).detach().clone()
+        st_ref = {k: v.clone() for k, v in tm.optimizer.state[g[0]["params"][0]].items() if torch.is_tensor(v)}
+        for _ in range(3):
+            tm.train_step()
+        assert tm.resume_if_available()
+        assert torch.equal(next(p for p in mm.parameters() if p.dim() >= 2).detach(), ref_p)
+        st = tm.optimizer.state[g[0]["params"][0]]
+        assert all(torch.equal(st[k], v) for k, v in st_ref.items()), "optimizer state not restored"
+        print(f"  {kind:<8} loss {first:.3f} -> {rec['loss']:.3f} over 26 steps; {n_muon/1e3:.0f}k params via Muon; "
+              f"resume restored weights + optimizer state ✓")
+
+    print("\n[10] architecture tweaks (attn gate + value residual + norm scaling): identity at init,"
+          " train, and KV-cache decode == full forward")
+    torch.manual_seed(3)
+    cfg_t = ModelConfig(vocab_size=tok.vocab_size, d_model=128, n_layers=3, n_heads=4, n_kv_heads=2,
+                        mlp_hidden=256, seq_len=seq_len, attn_gate=True, value_residual=True, norm_scaling=True)
+    mt = MaxGPTUltra(cfg_t)
+    base_sd = {k: v for k, v in mt.state_dict().items()
+               if not any(t in k for t in ("attn_gate_proj", "vr_scale", "vr_alpha"))}
+    plain = MaxGPTUltra(ModelConfig(vocab_size=tok.vocab_size, d_model=128, n_layers=3, n_heads=4, n_kv_heads=2,
+                                    mlp_hidden=256, seq_len=seq_len))
+    plain.load_state_dict(base_sd)
+    ids = torch.randint(0, tok.vocab_size, (2, seq_len))
+    mt.eval(); plain.eval()
+    with torch.no_grad():
+        # with norm_scaling off the tweaks must be an exact identity at init; check gate + value residual alone
+        cfg_id = ModelConfig(vocab_size=tok.vocab_size, d_model=128, n_layers=3, n_heads=4, n_kv_heads=2,
+                             mlp_hidden=256, seq_len=seq_len, attn_gate=True, value_residual=True)
+        mid = MaxGPTUltra(cfg_id); mid.load_state_dict(base_sd, strict=False); mid.eval()
+        assert torch.allclose(mid(ids)[0], plain(ids)[0], atol=1e-5), "gate/value-residual not identity at init"
+        full_logits = mt(ids)[0]
+        k0 = seq_len // 2
+        logits, past = mt(ids[:, :k0], use_cache=True)
+        steps = [logits[:, -1]]
+        for t in range(k0, seq_len - 1):
+            logits, past = mt(ids[:, t:t + 1], past=past, use_cache=True)
+            steps.append(logits[:, -1])
+        inc = torch.stack(steps, dim=1)                       # predictions for positions k0-1 .. seq_len-2
+        assert torch.allclose(inc, full_logits[:, k0 - 1:seq_len - 1], atol=1e-4), "KV-cache decode differs"
+    mt.train()
+    tt = Trainer(mt, PackedShardDataset(SHARDS, seq_len), base, device="cpu", out_dir=OUT + "_tweaks", seed=0)
+    first = tt.train_step()["loss"]
+    for _ in range(29):
+        rec = tt.train_step()
+    assert rec["loss"] < first - 0.5, (first, rec["loss"])
+    assert any(n.endswith("attn_gate_proj.weight") for n, _ in mt.named_parameters())
+    print(f"  identity at init ✓  cached decode matches ✓  loss {first:.3f} -> {rec['loss']:.3f} ✓")
+
     print("\n" + "=" * 72)
     print("ALL CHECKS PASSED ✅")
     print("=" * 72)
