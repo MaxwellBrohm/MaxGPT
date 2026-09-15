@@ -211,6 +211,8 @@ class DPOTrainer:
         if bool(tcfg.get("precompute_ref", True)):
             self._precompute_reference()
         self.net = D.wrap_ddp(self.policy)      # DDP wrapper when multi-GPU (shares the policy's params)
+        self._ddp = self.net is not self.policy
+        self._grads_bound = False               # see Trainer.train_step: grads live in the DDP buckets
         # tiered torch.compile of the policy (CUDA only); it shares params, so save/load use self.policy
         self._compile_modes = (list(tcfg.get("compile_modes", ["max-autotune", "default"]))
                                if bool(tcfg.get("compile", False)) and device == "cuda" else [])
@@ -317,13 +319,15 @@ class DPOTrainer:
                     decay_frac=self.decay_frac, max_lr=self.max_lr)
         for g in self.optimizer.param_groups:
             g["lr"] = lr
-        self.optimizer.zero_grad(set_to_none=True)
+        self.optimizer.zero_grad(set_to_none=not self._ddp)
+        bind = self._ddp and not self._grads_bound
         agg = {}
         for i in range(self.grad_accum):
             stats = self._dpo_forward(self.data.next_batch(self.batch_size, self.device),
-                                      sync=(i == self.grad_accum - 1))
+                                      sync=(i == self.grad_accum - 1) or (bind and i == 0))
             for k, v in stats.items():
                 agg[k] = agg.get(k, 0.0) + v / self.grad_accum
+        self._grads_bound = True
         if self.world > 1:          # average the logging stats so every rank sees (and decides on) the same numbers
             keys = sorted(agg)
             vals = D.all_reduce_mean(torch.tensor([agg[k] for k in keys], dtype=torch.float64, device=D.reduce_device()))

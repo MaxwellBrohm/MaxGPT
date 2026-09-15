@@ -60,10 +60,10 @@ def build_model(vocab):
                                    n_kv_heads=2, mlp_hidden=256, seq_len=SEQ))
 
 
-def run_pretrain(out, precision, stop_file=None):
+def run_pretrain(out, precision, stop_file=None, optimizer="adamw"):
     tok = UltraTokenizer(TOK)
     model = build_model(tok.vocab_size)
-    tr = Trainer(model, PackedShardDataset(SHARDS, SEQ), {**TCFG, "precision": precision},
+    tr = Trainer(model, PackedShardDataset(SHARDS, SEQ), {**TCFG, "precision": precision, "optimizer": optimizer},
                  device="cpu", out_dir=out, seed=0, stop_file=stop_file)
     tr.train(max_steps=STEPS)
     return {k: v.detach().clone() for k, v in model.state_dict().items()}, tr.step
@@ -92,7 +92,8 @@ def worker(mode: str) -> None:
         _, step = run_pretrain(out, "fp32", stop_file=stop)
         res = {"step": step}
     elif mode.startswith("pretrain-"):
-        w, step = run_pretrain(out, mode.split("-", 1)[1])
+        prec, _, opt = mode.split("-", 1)[1].partition("-")     # e.g. pretrain-fp32, pretrain-fp16-normuon
+        w, step = run_pretrain(out, prec, optimizer=opt or "adamw")
         res = {"weights": w, "step": step}
     elif mode == "dpo":
         w, rc, rr, step = run_dpo(out)
@@ -246,7 +247,16 @@ def main() -> None:
     assert p0["step"] == dpo_single[3]
     print(f"  reference logprobs match; policy after {p0['step']} steps matches ✓")
 
-    print("\n[6] pause: stop file seen by rank 0 only -> every rank exits cleanly")
+    print("\n[6] torchrun x2 with NorMuon: ranks agree exactly and match the single-process NorMuon run")
+    w_nm, _ = run_pretrain(os.path.join(OUT, "single-normuon"), "fp32", optimizer="normuon")
+    torchrun("pretrain-fp32-normuon")
+    n0, n1 = load_ranks("pretrain-fp32-normuon")
+    same_weights(n0["weights"], n1["weights"], exact=True)
+    same_weights(n0["weights"], w_nm)
+    mx = max(float((n0["weights"][k] - w_nm[k]).abs().max()) for k in w_nm)
+    print(f"  rank0 == rank1 bit for bit; vs single max |diff| {mx:.1e} ✓")
+
+    print("\n[7] pause: stop file seen by rank 0 only -> every rank exits cleanly")
     text = torchrun("pause")
     q0, q1 = load_ranks("pause")
     assert q0["step"] == q1["step"] == 0, (q0["step"], q1["step"])
