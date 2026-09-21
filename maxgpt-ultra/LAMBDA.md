@@ -87,10 +87,13 @@ over the last evals. Only a clear win moves into `configs/ultra.yaml`.
 
 The room absorbs the load (idle thermometer cards +1 C with 4 loaded); the chassis is the limit:
 loaded Titans sit at 85-89 C and throttle as their steady state (their own regulator; safe by
-design but 20-50% slower on inner slots). A per-GPU power cap (`sudo nvidia-smi -pl 200`, IT
-only) would fix most of that. Layout used for Ultra: train on `0,1,2,3,4,5,7,9`, cards 6 and 8
-idle as thermometers (they are sandwiched, so the watchdog baselines them 15 min into the load
-and trips on the rise beyond that), plus the CPU sensor as a non-GPU room reading. Never all 10.
+design). Adjacency is what decides speed: a loaded card between two loaded cards ran at 15-35%
+of one with idle neighbours (measured on the A/B: 53k vs 8-18k tokens/s). A per-GPU power cap
+(`sudo nvidia-smi -pl 200`, IT only) would fix most of that. Layout used for Ultra: train on the
+six SPACED cards `0,2,4,5,7,9` (no two adjacent), `1,3,6,8` idle, 6 and 8 as thermometers (the
+watchdog baselines them 15 min into the load and trips on the rise beyond that), plus the CPU
+sensor as a non-GPU room reading. Eight cards held the room but not the chassis (GPU 4 reached
+92 C at 8.5 min). Never all 10.
 
 ## Unattended operation (what runs on the box, and how to check it)
 
