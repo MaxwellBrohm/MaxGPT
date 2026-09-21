@@ -84,13 +84,13 @@ def cpu_temp(override: str | None = None) -> float:
     return best
 
 
-def trip(reason: str, sessions: list[str], log) -> None:
-    log(f"TRIP: {reason}  -> killing load")
+def trip(reason: str, sessions: list[str], log, pkill: bool = True) -> None:
+    log(f"TRIP: {reason}  -> killing {', '.join(sessions) if sessions else 'nothing named'}" + (" (+ any training/burn process)" if pkill else ""))
     for s in sessions:
         subprocess.run(["tmux", "kill-session", "-t", s], capture_output=True)
-    # belt and braces: any straggler training / burn / bench process (pattern written so it never matches itself)
-    subprocess.run(["pkill", "-f", "[s]cripts/(train|sft|dpo|gpu_burn|bench_micro|find_micro_batch)\\.py"], capture_output=True)
-    subprocess.run(["pkill", "-f", "[t]orch.distributed.run"], capture_output=True)
+    if pkill:   # belt and braces: any straggler training / burn / bench process (pattern written so it never matches itself)
+        subprocess.run(["pkill", "-f", "[s]cripts/(train|sft|dpo|gpu_burn|bench_micro|find_micro_batch)\\.py"], capture_output=True)
+        subprocess.run(["pkill", "-f", "[t]orch.distributed.run"], capture_output=True)
 
 
 def main() -> None:
@@ -116,6 +116,10 @@ def main() -> None:
                     help="the watchdog's state (armed|pausing|cooling|stopped) is written here every sample")
     ap.add_argument("--cpu-file", default=None, help=argparse.SUPPRESS)   # test hook
     ap.add_argument("--kill-sessions", default="", help="comma-separated tmux sessions to kill on a trip")
+    ap.add_argument("--gpu-sessions", default="",
+                    help="per-card kill map 'GPU:session,GPU:session': a temperature/throttle trip on one card kills "
+                         "only that card's session (others keep running); room/CPU trips still kill everything listed")
+    ap.add_argument("--no-pkill", action="store_true", help="kill only the named tmux sessions, never by process pattern")
     ap.add_argument("--pause-cmd", default="", help="run this instead of killing on a trip (e.g. curl -s -X POST http://127.0.0.1:8800/api/pause)")
     ap.add_argument("--resume-cmd", default="", help="run this when cooled down again (e.g. curl -s -X POST http://127.0.0.1:8800/api/start)")
     ap.add_argument("--pause-grace", type=float, default=300.0, help="seconds to wait for the pause to take before killing")
@@ -128,6 +132,8 @@ def main() -> None:
 
     therm = [int(x) for x in args.thermometer.split(",") if x.strip()]
     sessions = [s for s in args.kill_sessions.split(",") if s.strip()]
+    gpu_sessions = {int(k): v for k, v in (kv.split(":", 1) for kv in args.gpu_sessions.split(",") if ":" in kv)}
+    sessions = sorted(set(sessions) | set(gpu_sessions.values()))
     dt = driver_temps(args.smi)
     if args.max_temp is not None:
         max_temp = args.max_temp
@@ -225,7 +231,7 @@ def main() -> None:
                 state = "cooling"
                 log("load is gone; waiting for the cards and the room to cool")
             elif now - paused_at >= args.pause_grace:
-                trip("pause did not take within the grace period", sessions, log)
+                trip("pause did not take within the grace period", sessions, log, pkill=not args.no_pkill)
                 state = "cooling"
         elif state == "cooling":
             if not loaded and (base_val is None or rise <= args.resume_rise) and hottest and hottest["temp"] <= args.resume_max_temp:
@@ -239,15 +245,16 @@ def main() -> None:
                     state = "armed"
                     tripped = False
         if not tripped and state == "armed":
-            reason = None
+            reason, culprits = None, []
             long_thr = ([g for g, t in throttle_since.items() if now - t >= args.throttle_secs]
                         if args.throttle_secs > 0 else [])       # 0 = throttling is logged, never a trip
+            hw = [g["gpu"] for g in gpus if g["throttle"] == "hw"]
             if hottest and hottest["temp"] >= max_temp:
-                reason = f"gpu{hottest['gpu']} at {hottest['temp']:.0f}C >= {max_temp:.0f}C"
-            elif any(g["throttle"] == "hw" for g in gpus):
-                reason = "hardware slowdown (power brake / hw thermal) on GPU " + ",".join(str(g["gpu"]) for g in gpus if g["throttle"] == "hw")
+                reason, culprits = f"gpu{hottest['gpu']} at {hottest['temp']:.0f}C >= {max_temp:.0f}C", [hottest["gpu"]]
+            elif hw:
+                reason, culprits = "hardware slowdown (power brake / hw thermal) on GPU " + ",".join(map(str, hw)), hw
             elif long_thr:
-                reason = f"thermal throttling for over {args.throttle_secs:.0f}s on GPU {','.join(map(str, long_thr))}"
+                reason, culprits = f"thermal throttling for over {args.throttle_secs:.0f}s on GPU {','.join(map(str, long_thr))}", long_thr
             elif args.cpu_rise > 0 and cpu_base is not None and cpu_rise >= args.cpu_rise:
                 reason = f"CPU sensor rose {cpu_rise:.1f}C over its settled baseline {cpu_base:.1f}C (room heating)"
             elif base_val is not None and rise >= args.idle_rise:
@@ -261,8 +268,11 @@ def main() -> None:
                     log(f"TRIP: {reason}  -> pausing the run")
                     run_cmd(args.pause_cmd, "pause")
                     state, paused_at = "pausing", now
+                elif culprits and gpu_sessions and all(g in gpu_sessions for g in culprits):
+                    trip(reason, [gpu_sessions[g] for g in culprits], log, pkill=False)   # only the hot card's job
+                    tripped = False                                                       # stay armed for the rest
                 else:
-                    trip(reason, sessions, log)
+                    trip(reason, sessions, log, pkill=not args.no_pkill)
         if args.once:
             return
         time.sleep(args.interval)
