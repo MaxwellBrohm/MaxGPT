@@ -94,7 +94,9 @@ def main() -> None:
     ap.add_argument("--baseline-samples", type=int, default=8)
     ap.add_argument("--idle-rise", type=float, default=10.0, help="trip when a thermometer GPU rises this much (C)")
     ap.add_argument("--max-temp", type=float, default=None, help="trip temp for any GPU (default: shutdown temp - 5)")
-    ap.add_argument("--throttle-secs", type=float, default=60.0, help="trip after this long of continuous thermal throttling")
+    ap.add_argument("--throttle-secs", type=float, default=0.0,
+                    help="trip after this long of continuous thermal throttling (0 = log only: Turing cards in a dense "
+                         "chassis throttle as their steady state, which is their own regulator working)")
     ap.add_argument("--max-cpu", type=float, default=92.0)
     ap.add_argument("--kill-sessions", default="", help="comma-separated tmux sessions to kill on a trip")
     ap.add_argument("--smi", default="nvidia-smi", help=argparse.SUPPRESS)      # test hook
@@ -167,7 +169,8 @@ def main() -> None:
               f"total={total_w:.0f}W cpu={ct:.0f}C throttle={thr}", flush=True)
         if not tripped:
             reason = None
-            long_thr = [g for g, t in throttle_since.items() if now - t >= args.throttle_secs]
+            long_thr = ([g for g, t in throttle_since.items() if now - t >= args.throttle_secs]
+                        if args.throttle_secs > 0 else [])       # 0 = throttling is logged, never a trip
             if hottest and hottest["temp"] >= max_temp:
                 reason = f"gpu{hottest['gpu']} at {hottest['temp']:.0f}C >= {max_temp:.0f}C"
             elif any(g["throttle"] == "hw" for g in gpus):
