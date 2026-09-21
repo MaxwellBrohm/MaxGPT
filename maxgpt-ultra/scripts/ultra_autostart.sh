@@ -14,6 +14,7 @@
 CARDS="${1:?training cards, e.g. 1,2,3,4,5,7,8,9}"
 THERMO="${2:?thermometer card}"
 MAX_WAIT_H="${3:-14}"
+AB_MAP="${4:-}"     # optional 'variant:card,...': relaunch an A/B run the watchdog killed, once its card has cooled
 LOG="$HOME/MaxGPT/ultra_autostart.log"
 say() { echo "$(date '+%F %T') $*" | tee -a "$LOG"; }
 cd "$HOME/MaxGPT/maxgpt-ultra" || exit 1
@@ -22,15 +23,28 @@ export PYTHONUNBUFFERED=1
 
 say "autostart: cards=$CARDS thermometer=$THERMO; waiting for the A/B runs (max ${MAX_WAIT_H}h)"
 deadline=$(( $(date +%s) + MAX_WAIT_H * 3600 ))
+declare -A relaunches
 while :; do
     n=0
     for v in adamw normuon adamw_arch normuon_arch; do
-        # finished, crashed, or its tmux session is gone (e.g. killed by the watchdog): all count as over
-        if grep -qE "AB-EXIT|done at step" "$HOME/MaxGPT/ab_$v.log" 2>/dev/null || ! tmux has-session -t "ab_$v" 2>/dev/null; then
-            n=$((n + 1))
+        if grep -qE "AB-EXIT|done at step" "$HOME/MaxGPT/ab_$v.log" 2>/dev/null; then
+            n=$((n + 1))                                  # finished or crashed on its own
+        elif ! tmux has-session -t "ab_$v" 2>/dev/null; then
+            # killed by the watchdog (no exit line): relaunch on its card once that card is cool, up to 5 times
+            card=$(echo "$AB_MAP" | tr ',' '\n' | grep "^$v:" | cut -d: -f2)
+            ws=$(cut -d' ' -f1 "$HOME/MaxGPT/thermal_state" 2>/dev/null || echo armed)
+            t=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits -i "${card:-0}" 2>/dev/null || echo 99)
+            if [ -n "$card" ] && [ "${relaunches[$v]:-0}" -lt 5 ] && [ "$ws" = armed ] && [ "$t" -le 60 ]; then
+                relaunches[$v]=$(( ${relaunches[$v]:-0} + 1 ))
+                echo "[relaunched by autostart on GPU $card $(date +%T)]" >> "$HOME/MaxGPT/ab_$v.log"
+                tmux new-session -d -s "ab_$v" "cd $HOME/MaxGPT/maxgpt-ultra && source $HOME/venv/bin/activate && export PYTHONUNBUFFERED=1 CUDA_VISIBLE_DEVICES=$card && python scripts/train.py --config configs/ab/$v.yaml --data data/shards_ab --eval-data data/shards_val --eval-every 250 --out runs/ab/$v >> $HOME/MaxGPT/ab_$v.log 2>&1; echo AB-EXIT=\$? >> $HOME/MaxGPT/ab_$v.log"
+                say "A/B $v was stopped by the watchdog: relaunched on GPU $card (card at ${t}C), attempt ${relaunches[$v]}"
+            elif [ -z "$card" ] || [ "${relaunches[$v]:-0}" -ge 5 ]; then
+                n=$((n + 1))                              # cannot or will not relaunch: treat as over
+            fi
         fi
     done
-    [ "$n" -ge 4 ] && { say "all four A/B runs have exited"; break; }
+    [ "$n" -ge 4 ] && { say "all four A/B runs are over"; break; }
     [ "$(date +%s)" -ge "$deadline" ] && { say "A/B still running after ${MAX_WAIT_H}h: deciding on what has finished"; break; }
     sleep 300
 done
