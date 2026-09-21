@@ -25,7 +25,10 @@ deadline=$(( $(date +%s) + MAX_WAIT_H * 3600 ))
 while :; do
     n=0
     for v in adamw normuon adamw_arch normuon_arch; do
-        grep -qE "AB-EXIT|done at step" "$HOME/MaxGPT/ab_$v.log" 2>/dev/null && n=$((n + 1))
+        # finished, crashed, or its tmux session is gone (e.g. killed by the watchdog): all count as over
+        if grep -qE "AB-EXIT|done at step" "$HOME/MaxGPT/ab_$v.log" 2>/dev/null || ! tmux has-session -t "ab_$v" 2>/dev/null; then
+            n=$((n + 1))
+        fi
     done
     [ "$n" -ge 4 ] && { say "all four A/B runs have exited"; break; }
     [ "$(date +%s)" -ge "$deadline" ] && { say "A/B still running after ${MAX_WAIT_H}h: deciding on what has finished"; break; }
