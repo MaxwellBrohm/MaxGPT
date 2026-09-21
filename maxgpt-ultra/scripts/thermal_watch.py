@@ -99,6 +99,9 @@ def main() -> None:
     ap.add_argument("--interval", type=float, default=15.0)
     ap.add_argument("--thermometer", default="8,9", help="idle GPUs whose rise measures the room")
     ap.add_argument("--baseline-samples", type=int, default=8)
+    ap.add_argument("--baseline-after-load", type=float, default=0.0,
+                    help="take the baseline only after the load has been on for this many seconds (lets the "
+                         "neighbour-heat settle first, so the rise measures the ROOM)")
     ap.add_argument("--idle-rise", type=float, default=10.0, help="trip when a thermometer GPU rises this much (C)")
     ap.add_argument("--max-temp", type=float, default=None, help="trip temp for any GPU (default: shutdown temp - 5)")
     ap.add_argument("--throttle-secs", type=float, default=0.0,
@@ -139,6 +142,7 @@ def main() -> None:
         f"cpu<{args.max_cpu}C, kill={sessions or 'none'}")
     throttle_since: dict[int, float] = {}
     state = "armed"                 # armed | pausing | cooling | stopped
+    load_since: float | None = None
     trip_times: list[float] = []
     paused_at = 0.0
 
@@ -168,7 +172,13 @@ def main() -> None:
                 new = False
             for g in gpus:
                 w.writerow([ts, g["gpu"], g["temp"], g["power"], g["util"], g["fan"], g["sm"], g["throttle"], ct])
-        if base_val is None:
+        loaded_now = [g for g in gpus if g["util"] >= 50]
+        if args.baseline_after_load > 0:
+            load_since = (load_since or time.time()) if loaded_now else None
+            settled = load_since is not None and time.time() - load_since >= args.baseline_after_load
+        else:
+            settled = True
+        if base_val is None and settled:
             for g in gpus:
                 if g["gpu"] in baseline:
                     baseline[g["gpu"]].append(g["temp"])
