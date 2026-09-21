@@ -40,6 +40,8 @@ train:
   grad_accum: 32         # was 8; keeps effective ~131k tokens/step at seq 1024
   grad_checkpointing: true   # was false; recompute activations in backward to save VRAM
   optimizer_8bit: false
+  compile: true
+  compile_modes: [max-autotune-no-cudagraphs, default]   # no CUDA graphs: they break the checkpointed chunked loss (see train/trainer.py)
 
 io:
   autosave_minutes: 10
