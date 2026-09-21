@@ -189,7 +189,10 @@ class Trainer:
         # with self.model, so the optimizer / save / load keep using the uncompiled handle. We try
         # the most aggressive mode first and drop a tier at a time on failure
         # (max-autotune -> default -> eager), so we always end up running.
-        self._compile_modes = (list(tcfg.get("compile_modes", ["max-autotune", "default"]))
+        # tiers default to autotuned kernels WITHOUT CUDA graphs: with graphs, the checkpointed chunked
+        # loss re-runs a compiled subgraph inside backward and overwrites graph outputs the rest of the
+        # backward still needs (torch raises "accessing tensor output of CUDAGraphs that has been overwritten")
+        self._compile_modes = (list(tcfg.get("compile_modes", ["max-autotune-no-cudagraphs", "default"]))
                                if bool(tcfg.get("compile", False)) and device == "cuda" else [])
         self.fwd = self._make_fwd()
         self.step = 0
@@ -281,11 +284,8 @@ class Trainer:
         with open(self.log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
 
-    # --- one optimizer step (grad_accum micro-steps) ---
-    def train_step(self) -> dict:
-        lr = wsd_lr(self.step, total_steps=self.total_steps, warmup_steps=self.warmup_steps,
-                    decay_frac=self.decay_frac, max_lr=self.max_lr)
-        self._set_lr(lr)
+    def _accumulate(self):
+        """grad_accum micro-steps of forward+backward; returns the summed (detached) loss."""
         # DDP memory: under no_sync autograd would allocate a second, standalone copy of every
         # gradient (a whole model's worth) next to DDP's all-reduce buckets. So we (1) sync on the
         # very first micro-step of the run, which binds each .grad to its bucket view, and (2) zero
@@ -300,6 +300,31 @@ class Trainer:
             # accumulate on-device (detached); one GPU->CPU sync per step instead of per micro-step
             loss_sum = loss if loss_sum is None else loss_sum + loss
         self._grads_bound = True
+        return loss_sum
+
+    # --- one optimizer step (grad_accum micro-steps) ---
+    def train_step(self) -> dict:
+        lr = wsd_lr(self.step, total_steps=self.total_steps, warmup_steps=self.warmup_steps,
+                    decay_frac=self.decay_frac, max_lr=self.max_lr)
+        self._set_lr(lr)
+        data_state = self.data.state_dict()          # so a compile-tier failure can replay this exact step
+        while True:
+            try:
+                loss_sum = self._accumulate()
+                break
+            except Exception as e:
+                if not self._compile_modes:          # eager already: a real error
+                    raise
+                # a compiled tier failed somewhere in forward/backward: drop it and redo the whole step
+                # on the next tier with the same batches (grads zeroed, loader rewound)
+                if self.is_main:
+                    print(f"[train] compiled step failed ({type(e).__name__}: {str(e).splitlines()[0][:160]}); "
+                          f"dropping a compile tier and replaying the step", flush=True)
+                self._compile_modes.pop(0)
+                self._release_compile_memory()
+                self.fwd = self._make_fwd()
+                self.optimizer.zero_grad(set_to_none=not self._ddp)
+                self.data.load_state_dict(data_state)
         self.scaler.unscale_(self.optimizer)                # grads back to true scale before clipping
         gnorm = float(torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip))
         loss_avg = float(D.all_reduce_mean(loss_sum / self.grad_accum))   # the same number on every rank
