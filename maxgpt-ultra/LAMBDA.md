@@ -75,6 +75,40 @@ shard 11), 2 GPUs each: `adamw` (our recipe), `normuon` (NorMuon + cautious weig
 `python scripts/ab_report.py` prints a table; the decision is the held-out loss, averaged
 over the last evals. Only a clear win moves into `configs/ultra.yaml`.
 
+## Card health and the run layout (measured Sep 21 2026)
+
+`scripts/brake_probe.py` burned each card alone for 75 s (box otherwise idle):
+
+| card | time to 80 C | max | clocks | verdict |
+|---|---|---|---|---|
+| 0, 1, 2, 3, 5, 7 | never | 70-78 C | full | healthy |
+| 4, 9 | ~68 s | 81-82 C | full | healthy, warmer slot |
+| 6, 8 | 10-11 s | 88 C | halved by HW slowdown | defective cooling (dead fan or thermal pad) |
+
+The room absorbs the load (idle thermometer cards +1 C with 4 loaded); the chassis is the limit:
+loaded Titans sit at 85-89 C and throttle as their steady state (their own regulator; safe by
+design but 20-50% slower on inner slots). A per-GPU power cap (`sudo nvidia-smi -pl 200`, IT
+only) would fix most of that. Layout used for Ultra: train on `0,1,2,3,4,5,7,9`, cards 6 and 8
+idle as thermometers (they are sandwiched, so the watchdog baselines them 15 min into the load
+and trips on the rise beyond that), plus the CPU sensor as a non-GPU room reading. Never all 10.
+
+## Unattended operation (what runs on the box, and how to check it)
+
+Everything lives in tmux on the box; nothing depends on a laptop being connected.
+
+| tmux session | what | log |
+|---|---|---|
+| `ab_*` (4) | shakedown A/B, one card each | `~/MaxGPT/ab_<variant>.log`, table: `python scripts/ab_report.py` |
+| `autostart` | `scripts/ultra_autostart.sh CARDS THERMO`: waits for the A/B, runs `ab_verdict.py` (a variant must beat AdamW by >= 0.5% held-out loss to be adopted), carves the val shard, starts the dashboard + watchdog, presses play, then keeps checking every 10 min (restarts a dead dashboard/watchdog, presses play when idle, never over a thermal pause) | `~/MaxGPT/ultra_autostart.log` |
+| `ultra` | the dashboard (`gui/server.py --config configs/ultra_lambda_final.yaml`) on `CUDA_VISIBLE_DEVICES=CARDS` | `~/MaxGPT/ultra_server.log`, `runs/pretrain/metrics.jsonl` |
+| `thermal` | `scripts/thermal_watch.py` in pause/resume mode: 92 C hard line, hardware slowdown, +8 C thermometer rise, +8 C CPU rise -> dashboard pause; auto play once cooled; > 3 trips/hour -> stays paused | `~/MaxGPT/thermal_watch.out`, `thermal_events.log`, `thermal.csv`, state in `~/MaxGPT/thermal_state` |
+
+Check on it: `bash scripts/lambda_status.sh` (everything on one screen), `tail ~/MaxGPT/thermal_events.log`,
+`tail ~/MaxGPT/ultra_autostart.log`; dashboard: `ssh -L 8800:localhost:8800 lambda` then http://localhost:8800.
+Stop everything: `tmux kill-server` (the trainer checkpoints every 15 min; the next
+`ultra_autostart.sh` resumes from the checkpoint). Pause only the training: `curl -X POST
+http://127.0.0.1:8800/api/pause`.
+
 ## Home PC
 
 Stays paused while the video-editing model needs the 5070. The two checkouts share the same
