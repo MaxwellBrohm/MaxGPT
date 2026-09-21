@@ -32,10 +32,11 @@ def main() -> None:
         k = int((t - t0).total_seconds() // args.window)
         loaded = [r for r in rows if float(r["util_pct"]) >= 50]
         hot = max(float(r["temp_c"]) for r in rows)
+        thr = sum(1 for r in rows if r["throttle"] not in ("", "0"))
         th = [float(r["temp_c"]) for r in rows if int(r["gpu"]) in therm]
         windows[k].append((len(loaded), hot, statistics.mean(th) if th else float("nan"),
-                           sum(float(r["power_w"]) for r in rows), float(rows[0]["cpu_c"] or "nan")))
-    print(f"{'t+min':>6} {'loaded':>6} {'hottest':>8} {'therm':>6} {'power':>7} {'cpu':>5}")
+                           sum(float(r["power_w"]) for r in rows), float(rows[0]["cpu_c"] or "nan"), thr))
+    print(f"{'t+min':>6} {'loaded':>6} {'hottest':>8} {'therm':>6} {'power':>7} {'cpu':>5} {'throttling':>10}")
     levels = defaultdict(list)
     for k in sorted(windows):
         w = windows[k]
@@ -44,8 +45,9 @@ def main() -> None:
         th = statistics.mean(x[2] for x in w)
         pw = statistics.mean(x[3] for x in w)
         cpu = statistics.mean(x[4] for x in w if x[4] == x[4]) if any(x[4] == x[4] for x in w) else float("nan")
+        thr = statistics.mean(x[5] for x in w)
         levels[n].append((hot, th))
-        print(f"{k * args.window // 60:>6} {n:>6} {hot:>7.0f}C {th:>5.1f}C {pw:>6.0f}W {cpu:>4.0f}C")
+        print(f"{k * args.window // 60:>6} {n:>6} {hot:>7.0f}C {th:>5.1f}C {pw:>6.0f}W {cpu:>4.0f}C {thr:>9.1f}")
     print("\nplateau per load level (last 2 windows at that level):")
     for n in sorted(levels):
         tail = levels[n][-2:]
