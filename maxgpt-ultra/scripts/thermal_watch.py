@@ -13,6 +13,13 @@ sessions and every train/burn/bench process, then keeps logging so the cool-down
   - a GPU reports a hardware slowdown (power brake) at all, or a thermal slowdown continuously
     for --throttle-secs, or a CPU sensor passes --max-cpu.
 Baseline = the mean of the thermometer GPUs' first --baseline-samples readings.
+
+Pause/resume mode (the real run): with --pause-cmd / --resume-cmd set, a trip runs the pause
+command (the dashboard's pause: the trainer checkpoints and exits) instead of killing, waits for
+the load to disappear (falls back to killing after --pause-grace seconds), and once the thermometer
+is back within --resume-rise C of baseline and every card is under --resume-max-temp C it runs the
+resume command. More than --max-trips-per-hour trips means something is wrong: it stops resuming
+and leaves the run paused.
 """
 from __future__ import annotations
 
@@ -99,6 +106,12 @@ def main() -> None:
                          "chassis throttle as their steady state, which is their own regulator working)")
     ap.add_argument("--max-cpu", type=float, default=92.0)
     ap.add_argument("--kill-sessions", default="", help="comma-separated tmux sessions to kill on a trip")
+    ap.add_argument("--pause-cmd", default="", help="run this instead of killing on a trip (e.g. curl -s -X POST http://127.0.0.1:8800/api/pause)")
+    ap.add_argument("--resume-cmd", default="", help="run this when cooled down again (e.g. curl -s -X POST http://127.0.0.1:8800/api/start)")
+    ap.add_argument("--pause-grace", type=float, default=300.0, help="seconds to wait for the pause to take before killing")
+    ap.add_argument("--resume-rise", type=float, default=2.0, help="resume when the thermometer rise is back under this (C)")
+    ap.add_argument("--resume-max-temp", type=float, default=60.0, help="... and every GPU is under this (C)")
+    ap.add_argument("--max-trips-per-hour", type=int, default=3)
     ap.add_argument("--smi", default="nvidia-smi", help=argparse.SUPPRESS)      # test hook
     ap.add_argument("--once", action="store_true", help=argparse.SUPPRESS)      # test hook
     args = ap.parse_args()
@@ -125,6 +138,16 @@ def main() -> None:
         f"idle_rise={args.idle_rise}C on GPUs {therm}, thermal throttle > {args.throttle_secs:.0f}s, "
         f"cpu<{args.max_cpu}C, kill={sessions or 'none'}")
     throttle_since: dict[int, float] = {}
+    state = "armed"                 # armed | pausing | cooling | stopped
+    trip_times: list[float] = []
+    paused_at = 0.0
+
+    def run_cmd(cmd: str, what: str) -> None:
+        try:
+            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+            log(f"{what}: {cmd!r} -> rc={r.returncode} {r.stdout.strip()[:120]}")
+        except Exception as e:
+            log(f"{what}: {cmd!r} failed ({type(e).__name__})")
     new = not os.path.exists(args.log)
     baseline: dict[int, list[float]] = {g: [] for g in therm}
     base_val: float | None = None
@@ -167,7 +190,25 @@ def main() -> None:
         print(f"{ts} loaded={len(loaded)} hottest=gpu{hottest['gpu'] if hottest else '?'} "
               f"{hottest['temp'] if hottest else float('nan'):.0f}C room(therm)={tmean:.1f}C rise={rise:+.1f} "
               f"total={total_w:.0f}W cpu={ct:.0f}C throttle={thr}", flush=True)
-        if not tripped:
+        if state == "pausing":                       # waiting for the trainer to checkpoint and exit
+            if not loaded:
+                state = "cooling"
+                log("load is gone; waiting for the cards and the room to cool")
+            elif now - paused_at >= args.pause_grace:
+                trip("pause did not take within the grace period", sessions, log)
+                state = "cooling"
+        elif state == "cooling":
+            if not loaded and (base_val is None or rise <= args.resume_rise) and hottest and hottest["temp"] <= args.resume_max_temp:
+                recent = [t for t in trip_times if now - t < 3600]
+                if len(recent) >= args.max_trips_per_hour:
+                    log(f"{len(recent)} trips in the last hour: NOT resuming (something needs a human)")
+                    state = "stopped"
+                else:
+                    log(f"cooled down (rise {rise:+.1f}C, hottest {hottest['temp']:.0f}C): resuming")
+                    run_cmd(args.resume_cmd, "resume")
+                    state = "armed"
+                    tripped = False
+        if not tripped and state == "armed":
             reason = None
             long_thr = ([g for g, t in throttle_since.items() if now - t >= args.throttle_secs]
                         if args.throttle_secs > 0 else [])       # 0 = throttling is logged, never a trip
@@ -182,8 +223,14 @@ def main() -> None:
             elif ct == ct and ct >= args.max_cpu:
                 reason = f"CPU sensor {ct:.0f}C >= {args.max_cpu:.0f}C"
             if reason:
-                trip(reason, sessions, log)
                 tripped = True
+                trip_times.append(now)
+                if args.pause_cmd and args.resume_cmd:
+                    log(f"TRIP: {reason}  -> pausing the run")
+                    run_cmd(args.pause_cmd, "pause")
+                    state, paused_at = "pausing", now
+                else:
+                    trip(reason, sessions, log)
         if args.once:
             return
         time.sleep(args.interval)
