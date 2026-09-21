@@ -22,6 +22,6 @@ train:
   grad_checkpointing: false
   optimizer_8bit: false
   compile: true
-  compile_modes: [max-autotune, default]
+  compile_modes: [max-autotune-no-cudagraphs, default]   # no CUDA graphs: they break the checkpointed chunked loss
   loss_chunk: 2048
   eval_every: 250

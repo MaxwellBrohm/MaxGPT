@@ -231,6 +231,42 @@ def main() -> None:
     assert any(n.endswith("attn_gate_proj.weight") for n, _ in mt.named_parameters())
     print(f"  identity at init ✓  cached decode matches ✓  loss {first:.3f} -> {rec['loss']:.3f} ✓")
 
+    print("\n[11] a compiled tier failing in backward: step replays on the next tier, same data, same result")
+    torch.manual_seed(5)
+    m_ref, m_try = MaxGPTUltra(cfg), MaxGPTUltra(cfg)
+    m_try.load_state_dict(m_ref.state_dict())
+    t_ref = Trainer(m_ref, PackedShardDataset(SHARDS, seq_len), base, device="cpu", out_dir=OUT + "_ref2", seed=0)
+    t_try = Trainer(m_try, PackedShardDataset(SHARDS, seq_len), base, device="cpu", out_dir=OUT + "_try2", seed=0)
+    t_ref.train_step()
+    calls = {"n": 0}
+    real = t_try.net
+
+    class Flaky(torch.nn.Module):                 # stands in for a compiled model whose backward blows up once
+        def forward(self, x, y, **kw):
+            calls["n"] += 1
+            logits, loss = real(x, y, **kw)
+            if calls["n"] == 2:                   # fail on the 2nd micro-step, i.e. after grads already accumulated
+                return logits, loss * torch.tensor(float("nan")).requires_grad_() + _Boom.apply(loss)
+            return logits, loss
+
+    class _Boom(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, x):
+            return x
+        @staticmethod
+        def backward(ctx, g):
+            raise RuntimeError("accessing tensor output of CUDAGraphs that has been overwritten (simulated)")
+
+    t_try._compile_modes = ["fake-tier"]
+    t_try.fwd = Flaky()
+    rec = t_try.train_step()
+    assert t_try.fwd is t_try.net and not t_try._compile_modes, "did not fall back to eager"
+    assert t_try.step == 1 and not rec["diverged"], rec
+    assert t_try.data.pos == t_ref.data.pos, (t_try.data.pos, t_ref.data.pos)
+    for (n1, p1), (n2, p2) in zip(m_ref.named_parameters(), m_try.named_parameters()):
+        assert torch.equal(p1, p2), f"{n1} differs after the replayed step"
+    print(f"  backward failure at micro-step 2 -> tier dropped, step replayed from the same data, weights identical ✓")
+
     print("\n" + "=" * 72)
     print("ALL CHECKS PASSED ✅")
     print("=" * 72)
