@@ -71,9 +71,10 @@ def driver_temps(smi: str) -> dict:
     return out
 
 
-def cpu_temp() -> float:
+def cpu_temp(override: str | None = None) -> float:
     best = float("nan")
-    for path in glob.glob("/sys/class/hwmon/hwmon*/temp*_input"):
+    paths = [override] if override else glob.glob("/sys/class/hwmon/hwmon*/temp*_input")
+    for path in paths:
         try:
             t = int(open(path).read().strip()) / 1000.0
         except Exception:
@@ -108,6 +109,12 @@ def main() -> None:
                     help="trip after this long of continuous thermal throttling (0 = log only: Turing cards in a dense "
                          "chassis throttle as their steady state, which is their own regulator working)")
     ap.add_argument("--max-cpu", type=float, default=92.0)
+    ap.add_argument("--cpu-rise", type=float, default=0.0,
+                    help="trip when the CPU sensor rises this much over its settled baseline (a room reading that is "
+                         "not a GPU; 0 = off)")
+    ap.add_argument("--state-file", default=os.path.expanduser("~/MaxGPT/thermal_state"),
+                    help="the watchdog's state (armed|pausing|cooling|stopped) is written here every sample")
+    ap.add_argument("--cpu-file", default=None, help=argparse.SUPPRESS)   # test hook
     ap.add_argument("--kill-sessions", default="", help="comma-separated tmux sessions to kill on a trip")
     ap.add_argument("--pause-cmd", default="", help="run this instead of killing on a trip (e.g. curl -s -X POST http://127.0.0.1:8800/api/pause)")
     ap.add_argument("--resume-cmd", default="", help="run this when cooled down again (e.g. curl -s -X POST http://127.0.0.1:8800/api/start)")
@@ -143,6 +150,8 @@ def main() -> None:
     throttle_since: dict[int, float] = {}
     state = "armed"                 # armed | pausing | cooling | stopped
     load_since: float | None = None
+    cpu_base_samples: list[float] = []
+    cpu_base: float | None = None
     trip_times: list[float] = []
     paused_at = 0.0
 
@@ -163,7 +172,7 @@ def main() -> None:
             log(f"nvidia-smi failed ({type(e).__name__}); retrying")
             time.sleep(args.interval)
             continue
-        ct = cpu_temp()
+        ct = cpu_temp(args.cpu_file)
         ts = time.strftime("%F %T")
         with open(args.log, "a", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
@@ -178,6 +187,11 @@ def main() -> None:
             settled = load_since is not None and time.time() - load_since >= args.baseline_after_load
         else:
             settled = True
+        if settled and cpu_base is None and ct == ct:
+            cpu_base_samples.append(ct)
+            if len(cpu_base_samples) >= args.baseline_samples:
+                cpu_base = sum(cpu_base_samples) / len(cpu_base_samples)
+                log(f"cpu baseline {cpu_base:.1f}C")
         if base_val is None and settled:
             for g in gpus:
                 if g["gpu"] in baseline:
@@ -190,6 +204,12 @@ def main() -> None:
         hottest = max(gpus, key=lambda g: g["temp"]) if gpus else None
         total_w = sum(g["power"] for g in gpus)
         rise = (tmean - base_val) if base_val is not None else float("nan")
+        cpu_rise = (ct - cpu_base) if (cpu_base is not None and ct == ct) else float("nan")
+        try:
+            with open(args.state_file, "w", encoding="utf-8") as sf:
+                sf.write(f"{state} {ts} rise={rise:+.1f} cpu_rise={cpu_rise:+.1f} loaded={len(loaded_now)}\n")
+        except Exception:
+            pass
         now = time.time()
         for g in gpus:                                   # how long each card has been thermally throttling
             if g["throttle"] == "sw":
@@ -199,7 +219,7 @@ def main() -> None:
         thr = ",".join(f"{g['gpu']}{g['throttle']}" for g in gpus if g["throttle"]) or "-"
         print(f"{ts} loaded={len(loaded)} hottest=gpu{hottest['gpu'] if hottest else '?'} "
               f"{hottest['temp'] if hottest else float('nan'):.0f}C room(therm)={tmean:.1f}C rise={rise:+.1f} "
-              f"total={total_w:.0f}W cpu={ct:.0f}C throttle={thr}", flush=True)
+              f"total={total_w:.0f}W cpu={ct:.0f}C({cpu_rise:+.1f}) throttle={thr} [{state}]", flush=True)
         if state == "pausing":                       # waiting for the trainer to checkpoint and exit
             if not loaded:
                 state = "cooling"
@@ -228,6 +248,8 @@ def main() -> None:
                 reason = "hardware slowdown (power brake / hw thermal) on GPU " + ",".join(str(g["gpu"]) for g in gpus if g["throttle"] == "hw")
             elif long_thr:
                 reason = f"thermal throttling for over {args.throttle_secs:.0f}s on GPU {','.join(map(str, long_thr))}"
+            elif args.cpu_rise > 0 and cpu_base is not None and cpu_rise >= args.cpu_rise:
+                reason = f"CPU sensor rose {cpu_rise:.1f}C over its settled baseline {cpu_base:.1f}C (room heating)"
             elif base_val is not None and rise >= args.idle_rise:
                 reason = f"thermometer GPUs rose {rise:.1f}C over baseline {base_val:.1f}C (room heating)"
             elif ct == ct and ct >= args.max_cpu:

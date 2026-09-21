@@ -49,11 +49,33 @@ if ! tmux has-session -t ultra 2>/dev/null; then
     sleep 10
 fi
 if ! tmux has-session -t thermal 2>/dev/null; then
-    tmux new-session -d -s thermal "cd $HOME/MaxGPT/maxgpt-ultra && source $HOME/venv/bin/activate && python -u scripts/thermal_watch.py --thermometer $THERMO --max-temp 92 --baseline-after-load 900 --idle-rise 8 --pause-cmd 'curl -s -m 5 -X POST http://127.0.0.1:8800/api/pause' --resume-cmd 'curl -s -m 5 -X POST http://127.0.0.1:8800/api/start' --kill-sessions ultra 2>&1 | tee -a $HOME/MaxGPT/thermal_watch.out"
+    tmux new-session -d -s thermal "cd $HOME/MaxGPT/maxgpt-ultra && source $HOME/venv/bin/activate && python -u scripts/thermal_watch.py --thermometer $THERMO --max-temp 92 --baseline-after-load 900 --idle-rise 8 --cpu-rise 8 --pause-cmd 'curl -s -m 5 -X POST http://127.0.0.1:8800/api/pause' --resume-cmd 'curl -s -m 5 -X POST http://127.0.0.1:8800/api/start' --kill-sessions ultra 2>&1 | tee -a $HOME/MaxGPT/thermal_watch.out"
     say "watchdog started (pause/resume mode, thermometer $THERMO, baseline 15 min into load, trip at +8C)"
 fi
 R=$(curl -s -m 10 -X POST http://127.0.0.1:8800/api/start)
 say "pressed play: $R"
 sleep 90
 say "pipeline: $(curl -s -m 5 http://127.0.0.1:8800/api/pipeline | cut -c1-200)"
-say "autostart done; dashboard http://localhost:8800 via: ssh -L 8800:localhost:8800 lambda"
+say "dashboard http://localhost:8800 via: ssh -L 8800:localhost:8800 lambda"
+
+# keeper: stay alive and press play again whenever the pipeline is idle for a reason that is not the
+# watchdog (a crashed stage, a stray OOM from someone else's job on one of our cards, a reboot of
+# the dashboard). Never overrides a thermal pause: it checks the watchdog's state file first.
+say "keeper: checking every 10 min"
+while :; do
+    sleep 600
+    if ! tmux has-session -t ultra 2>/dev/null; then
+        tmux new-session -d -s ultra "cd $HOME/MaxGPT/maxgpt-ultra && source $HOME/venv/bin/activate && export PYTHONUNBUFFERED=1 CUDA_VISIBLE_DEVICES=$CARDS && python gui/server.py --config configs/ultra_lambda_final.yaml --shards data/shards_train --eval-shards data/shards_val_ultra 2>&1 | tee -a $HOME/MaxGPT/ultra_server.log"
+        say "keeper: dashboard was down, restarted it"; sleep 15
+    fi
+    if ! tmux has-session -t thermal 2>/dev/null; then
+        tmux new-session -d -s thermal "cd $HOME/MaxGPT/maxgpt-ultra && source $HOME/venv/bin/activate && python -u scripts/thermal_watch.py --thermometer $THERMO --max-temp 92 --baseline-after-load 900 --idle-rise 8 --cpu-rise 8 --pause-cmd 'curl -s -m 5 -X POST http://127.0.0.1:8800/api/pause' --resume-cmd 'curl -s -m 5 -X POST http://127.0.0.1:8800/api/start' --kill-sessions ultra 2>&1 | tee -a $HOME/MaxGPT/thermal_watch.out"
+        say "keeper: watchdog was down, restarted it"; sleep 5
+    fi
+    P=$(curl -s -m 5 http://127.0.0.1:8800/api/pipeline)
+    WS=$(cut -d' ' -f1 "$HOME/MaxGPT/thermal_state" 2>/dev/null || echo armed)
+    if echo "$P" | grep -q '"running": *false' && [ "$WS" = "armed" ] && ! echo "$P" | grep -q '"status": *"ready"'; then
+        R=$(curl -s -m 10 -X POST http://127.0.0.1:8800/api/start)
+        say "keeper: pipeline idle (watchdog $WS): pressed play -> $R"
+    fi
+done
