@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Unattended hand-off from the shakedown A/B to the real Ultra run on the Lambda box.
+#
+#   tmux new -d -s autostart "bash ~/MaxGPT/maxgpt-ultra/scripts/ultra_autostart.sh 1,2,3,4,5,7,8,9 6 0"
+#                                                             ^ training cards   ^ thermometer  ^ buffer/idle
+#
+# 1. waits until every A/B run has exited (or --max-wait hours pass),
+# 2. decides the recipe (scripts/ab_verdict.py -> configs/ultra_lambda_final.yaml),
+# 3. carves the held-out val shard (scripts/holdout_shard.py) if not done,
+# 4. starts the dashboard on the training cards (tmux 'ultra'), the thermal watchdog in
+#    pause/resume mode (tmux 'thermal'), and presses play.
+# Everything is logged to ~/MaxGPT/ultra_autostart.log. Re-running is safe: it never starts a
+# second dashboard or watchdog if they are already up.
+CARDS="${1:?training cards, e.g. 1,2,3,4,5,7,8,9}"
+THERMO="${2:?thermometer card}"
+MAX_WAIT_H="${3:-14}"
+LOG="$HOME/MaxGPT/ultra_autostart.log"
+say() { echo "$(date '+%F %T') $*" | tee -a "$LOG"; }
+cd "$HOME/MaxGPT/maxgpt-ultra" || exit 1
+source "$HOME/venv/bin/activate"
+export PYTHONUNBUFFERED=1
+
+say "autostart: cards=$CARDS thermometer=$THERMO; waiting for the A/B runs (max ${MAX_WAIT_H}h)"
+deadline=$(( $(date +%s) + MAX_WAIT_H * 3600 ))
+while :; do
+    n=0
+    for v in adamw normuon adamw_arch normuon_arch; do
+        grep -qE "AB-EXIT|done at step" "$HOME/MaxGPT/ab_$v.log" 2>/dev/null && n=$((n + 1))
+    done
+    [ "$n" -ge 4 ] && { say "all four A/B runs have exited"; break; }
+    [ "$(date +%s)" -ge "$deadline" ] && { say "A/B still running after ${MAX_WAIT_H}h: deciding on what has finished"; break; }
+    sleep 300
+done
+
+say "verdict:"
+python scripts/ab_verdict.py --runs runs/ab --base configs/ultra_lambda.yaml --out configs/ultra_lambda_final.yaml 2>&1 | tee -a "$LOG"
+
+if [ ! -f data/shards_val_ultra/meta.json ]; then
+    python scripts/holdout_shard.py --shards data/shards --train data/shards_train --val data/shards_val_ultra 2>&1 | tee -a "$LOG"
+fi
+
+# stop the A/B runs' tmux sessions if any are still alive (they hold GPUs we are about to use)
+for v in adamw normuon adamw_arch normuon_arch; do tmux kill-session -t "ab_$v" 2>/dev/null; done
+pkill -f "[c]onfigs/ab/" 2>/dev/null; sleep 5
+
+if ! tmux has-session -t ultra 2>/dev/null; then
+    tmux new-session -d -s ultra "cd $HOME/MaxGPT/maxgpt-ultra && source $HOME/venv/bin/activate && export PYTHONUNBUFFERED=1 CUDA_VISIBLE_DEVICES=$CARDS && python gui/server.py --config configs/ultra_lambda_final.yaml --shards data/shards_train --eval-shards data/shards_val_ultra 2>&1 | tee -a $HOME/MaxGPT/ultra_server.log"
+    say "dashboard started on cards $CARDS (tmux ultra)"
+    sleep 10
+fi
+if ! tmux has-session -t thermal 2>/dev/null; then
+    tmux new-session -d -s thermal "cd $HOME/MaxGPT/maxgpt-ultra && source $HOME/venv/bin/activate && python -u scripts/thermal_watch.py --thermometer $THERMO --max-temp 92 --baseline-after-load 900 --idle-rise 8 --pause-cmd 'curl -s -m 5 -X POST http://127.0.0.1:8800/api/pause' --resume-cmd 'curl -s -m 5 -X POST http://127.0.0.1:8800/api/start' --kill-sessions ultra 2>&1 | tee -a $HOME/MaxGPT/thermal_watch.out"
+    say "watchdog started (pause/resume mode, thermometer $THERMO, baseline 15 min into load, trip at +8C)"
+fi
+R=$(curl -s -m 10 -X POST http://127.0.0.1:8800/api/start)
+say "pressed play: $R"
+sleep 90
+say "pipeline: $(curl -s -m 5 http://127.0.0.1:8800/api/pipeline | cut -c1-200)"
+say "autostart done; dashboard http://localhost:8800 via: ssh -L 8800:localhost:8800 lambda"
