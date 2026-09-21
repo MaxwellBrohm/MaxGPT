@@ -358,7 +358,7 @@ def _load_chat_model():
                        tok=UltraTokenizer(CHAT_CFG["tokenizer"]), device=device)
 
 
-def build_default_pipeline(config, tokenizer, shards, sft_data, pref_data, runs) -> Pipeline:
+def build_default_pipeline(config, tokenizer, shards, sft_data, pref_data, runs, eval_shards=None) -> Pipeline:
     py = sys.executable
     try:
         n_gpus = resolve_gpus((load_yaml(os.path.join(ROOT, config)).get("train") or {}).get("gpus", 1))
@@ -387,7 +387,7 @@ def build_default_pipeline(config, tokenizer, shards, sft_data, pref_data, runs)
               os.path.join(runs, "data"), kind="data", done_when=data_done),
         Stage("pretrain", "Pretrain", lambda: train_cmd(["scripts/train.py", "--config", config,
               "--data", shards, "--out", os.path.join(runs, "pretrain"), "--tokenizer", tokenizer,
-              "--eval-data", shards, "--eval-every", "500",
+              "--eval-data", (eval_shards or shards), "--eval-every", "500",
               "--stop-file", os.path.join(runs, "pretrain", "STOP")], os.path.join(runs, "pretrain")),
               os.path.join(runs, "pretrain")),
         Stage("sft", "SFT", lambda: train_cmd(["scripts/sft.py", "--config", config,
@@ -412,6 +412,7 @@ def main():
     ap.add_argument("--config", default="configs/ultra.yaml")
     ap.add_argument("--tokenizer", default="tokenizer/maxgpt-ultra.tokenizer.json")
     ap.add_argument("--shards", default="data/shards")
+    ap.add_argument("--eval-shards", default=None, help="held-out shard dir for val perplexity (scripts/holdout_shard.py); default: the training shards")
     ap.add_argument("--sft-data", default="data/sft.jsonl")
     ap.add_argument("--pref-data", default="data/prefs.jsonl")
     ap.add_argument("--runs", default="runs")
@@ -419,7 +420,7 @@ def main():
     args = ap.parse_args()
     global PIPE, CHAT_CFG
     PIPE = build_default_pipeline(args.config, args.tokenizer, args.shards,
-                                  args.sft_data, args.pref_data, args.runs)
+                                  args.sft_data, args.pref_data, args.runs, eval_shards=args.eval_shards)
     CHAT_CFG = {"config": args.config, "tokenizer": args.tokenizer}
     print(f"[gui] reactor at http://127.0.0.1:{args.port}")
     uvicorn.run(app, host="127.0.0.1", port=args.port)
