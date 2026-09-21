@@ -51,6 +51,8 @@ if ! tmux has-session -t ultra 2>/dev/null; then
     say "dashboard started on cards $CARDS (tmux ultra)"
     sleep 10
 fi
+# the A/B phase ran a kill-mode watchdog; Ultra needs the pause/resume one, so always start fresh
+tmux kill-session -t thermal 2>/dev/null; sleep 2
 if ! tmux has-session -t thermal 2>/dev/null; then
     tmux new-session -d -s thermal "cd $HOME/MaxGPT/maxgpt-ultra && source $HOME/venv/bin/activate && python -u scripts/thermal_watch.py --thermometer $THERMO --max-temp 92 --baseline-after-load 900 --idle-rise 8 --cpu-rise 8 --pause-cmd 'curl -s -m 5 -X POST http://127.0.0.1:8800/api/pause' --resume-cmd 'curl -s -m 5 -X POST http://127.0.0.1:8800/api/start' --kill-sessions ultra 2>&1 | tee -a $HOME/MaxGPT/thermal_watch.out"
     say "watchdog started (pause/resume mode, thermometer $THERMO, baseline 15 min into load, trip at +8C)"
