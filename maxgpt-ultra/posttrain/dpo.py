@@ -321,15 +321,23 @@ class DPOTrainer:
                     decay_frac=self.decay_frac, max_lr=self.max_lr)
         for g in self.optimizer.param_groups:
             g["lr"] = lr
+        if self._ddp and not self._grads_bound:      # see Trainer._bind_grads: one synced zero-loss backward
+            state = self.data.state_dict()
+            batch = self.data.next_batch(self.batch_size, self.device)
+            ctx = (torch.autocast("cuda", dtype=self.amp_dtype) if self.use_amp else nullcontext())
+            with ctx:
+                loss, _ = dpo_loss(self.fwd, self.ref, batch, self.beta, self.logp_chunk)
+            (loss * 0.0).backward()
+            self.optimizer.zero_grad(set_to_none=False)
+            self.data.load_state_dict(state)
+            self._grads_bound = True
         self.optimizer.zero_grad(set_to_none=not self._ddp)
-        bind = self._ddp and not self._grads_bound
         agg = {}
         for i in range(self.grad_accum):
             stats = self._dpo_forward(self.data.next_batch(self.batch_size, self.device),
-                                      sync=(i == self.grad_accum - 1) or (bind and i == 0))
+                                      sync=(i == self.grad_accum - 1))
             for k, v in stats.items():
                 agg[k] = agg.get(k, 0.0) + v / self.grad_accum
-        self._grads_bound = True
         if self.world > 1:          # average the logging stats so every rank sees (and decides on) the same numbers
             keys = sorted(agg)
             vals = D.all_reduce_mean(torch.tensor([agg[k] for k in keys], dtype=torch.float64, device=D.reduce_device()))
