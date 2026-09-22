@@ -12,6 +12,12 @@ train:
   gpus: auto                 # every card in CUDA_VISIBLE_DEVICES (set that first; leave some for others)
   micro_batch: 1             # per GPU. Bench (scripts/bench_micro.py, one Titan): mb2 7,997 tok/s @19.6GB, mb1 7,385 @15.0GB; NorMuon's fp32 momentum adds ~3GB over paged 8-bit Adam and mb2 OOMed, mb1 fits with room
   grad_accum: 256            # TOTAL across GPUs: 1 * 256 * 2048 = ~0.5M tokens/step, identical to home (must be a multiple of the GPU count)
+  # Unequal shares of those 256 micro-steps, one entry per rank IN CUDA_VISIBLE_DEVICES ORDER (0,4,5,9 for the
+  # current run). DDP waits for the slowest card every step, and cards 4 and 9 throttle to ~40-60% clocks in
+  # their slots, so they carry fewer micro-steps and the fast cards stop idling. Gradient is unchanged (same
+  # 256 micro-batches per step, exact mean); only the dealing differs. Must sum to grad_accum. Retune from the
+  # cards' measured clocks; delete the line for an equal split.
+  rank_shares: [82, 30, 78, 66]
   grad_checkpointing: false  # 24GB has room to keep the activations -> no recompute in backward, ~25% faster steps
   optimizer_8bit: true       # falls back to fused fp32 AdamW automatically if bitsandbytes has no build for this driver
   compile: true              # tiered: max-autotune -> default -> eager, whatever this Triton/driver combination can do
