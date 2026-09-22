@@ -95,6 +95,14 @@ watchdog baselines them 15 min into the load and trips on the rise beyond that),
 sensor as a non-GPU room reading. Eight cards held the room but not the chassis (GPU 4 reached
 92 C at 8.5 min). Never all 10.
 
+## Throughput on unequal cards
+
+The run pace is set by the slowest card in a DDP step. `train.rank_shares_auto` (on by default) measures
+each card's speed and re-deals the micro-batches every 10 steps, logged as `rank shares [..] -> [..]`
+in the pretrain log and as `rank_shares` in `runs/pretrain/metrics.jsonl`. Nothing to configure;
+`rank_shares:` in `configs/ultra_lambda.yaml` is only the starting split. Watch `tok_per_s`: the
+theoretical ceiling is the sum of the cards' solo speeds (`scripts/bench_micro.py`).
+
 ## Unattended operation (what runs on the box, and how to check it)
 
 Everything lives in tmux on the box; nothing depends on a laptop being connected.
