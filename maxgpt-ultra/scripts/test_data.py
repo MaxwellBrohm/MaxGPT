@@ -126,6 +126,25 @@ def main() -> None:
     print(f"  {len(prog['pending'])} docs were pending at the crash; resumed build identical "
           f"({ref['total_tokens']} tokens, {len(ref['shards'])} shards) ✓")
 
+    print("\n[6] many shards: lazy memmaps stay under the open-file cap and read the same bytes")
+    import json as _json2
+    many = SHARDS + "_many"
+    shutil.rmtree(many, ignore_errors=True); os.makedirs(many)
+    rows, expect = [], []
+    for i in range(40):
+        a = np.arange(i * 100, i * 100 + 50 + i, dtype=np.uint16)        # distinct, varying lengths
+        a.tofile(os.path.join(many, f"shard_{i:05d}.bin")); rows.append({"name": f"shard_{i:05d}.bin", "tokens": int(len(a))}); expect.append(a)
+    _json2.dump({"dtype": "uint16", "eot_id": 1, "shards": rows, "total_tokens": int(sum(len(a) for a in expect))}, open(os.path.join(many, "meta.json"), "w"))
+    dm = PackedShardDataset(many, 64)
+    flat = np.concatenate(expect)
+    got = dm._read(0, len(flat))
+    assert np.array_equal(got, flat), "lazy reads differ from the concatenated shards"
+    assert len(dm._open) <= PackedShardDataset.MAX_OPEN, len(dm._open)
+    # a resume position deep in the stream, spanning a shard boundary
+    pos = int(dm.cum[17]) - 5
+    assert np.array_equal(dm._read(pos, 20), flat[pos:pos + 20])
+    print(f"  40 shards read exactly with {len(dm._open)} files open (cap {PackedShardDataset.MAX_OPEN}) ✓")
+
     print("\n" + "=" * 72)
     print("ALL CHECKS PASSED ✅")
     print("=" * 72)
