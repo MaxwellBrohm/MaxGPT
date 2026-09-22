@@ -21,15 +21,19 @@ DTYPE = np.uint16
 
 
 class PackedShardDataset:
+    """Shards are memory-mapped LAZILY, a few at a time (sequential reading only ever touches one
+    or two), so a 1,000-shard build does not need 1,000 open files: the per-process limit on a
+    typical Linux login is 1,024, and mapping everything up front hit it on the Lambda box."""
+
+    MAX_OPEN = 8
+
     def __init__(self, data_dir: str, seq_len: int):
         with open(os.path.join(data_dir, "meta.json")) as f:
             meta = json.load(f)
         self.seq_len = seq_len
-        self.shards = [
-            np.memmap(os.path.join(data_dir, s["name"]), dtype=DTYPE, mode="r")
-            for s in meta["shards"]
-        ]
-        self.shard_lens = [len(s) for s in self.shards]
+        self.paths = [os.path.join(data_dir, s["name"]) for s in meta["shards"]]
+        self.shard_lens = [int(s["tokens"]) for s in meta["shards"]]
+        self._open: dict[int, np.memmap] = {}          # shard index -> memmap, small LRU
         self.total = int(sum(self.shard_lens))
         self.cum = np.cumsum([0] + self.shard_lens)  # cum[i] = global start of shard i
         assert self.total > self.seq_len + 1, "not enough tokens for even one window"
@@ -45,6 +49,17 @@ class PackedShardDataset:
         assert 0 <= rank < world
         self.rank, self.world = rank, world
 
+    def _shard(self, si: int) -> np.memmap:
+        mm = self._open.pop(si, None)
+        if mm is None:
+            mm = np.memmap(self.paths[si], dtype=DTYPE, mode="r")
+            assert len(mm) == self.shard_lens[si], f"{self.paths[si]}: {len(mm)} tokens on disk, meta says {self.shard_lens[si]}"
+            while len(self._open) >= self.MAX_OPEN:         # evict the least recently used
+                old = next(iter(self._open))
+                del self._open[old]
+        self._open[si] = mm                                  # (re)insert as most recently used
+        return mm
+
     def _read(self, start: int, n: int) -> np.ndarray:
         """Read n tokens starting at global index `start`, wrapping across shards/end."""
         out = np.empty(n, dtype=DTYPE)
@@ -54,7 +69,7 @@ class PackedShardDataset:
             si = int(np.searchsorted(self.cum, gi, side="right") - 1)
             local = gi - int(self.cum[si])
             take = min(n - got, self.shard_lens[si] - local)
-            out[got:got + take] = self.shards[si][local:local + take]
+            out[got:got + take] = self._shard(si)[local:local + take]
             got += take
         return out
 
