@@ -142,11 +142,28 @@ class Trainer:
 
         self.micro_batch = int(tcfg["micro_batch"])
         ga_total = int(tcfg["grad_accum"])
-        if ga_total % self.world:
-            lo = (ga_total // self.world) * self.world
-            raise ValueError(f"grad_accum={ga_total} must be a multiple of the GPU count ({self.world}); "
-                             f"use {max(lo, self.world)} or {lo + self.world}, or a GPU count that divides it")
-        self.grad_accum = ga_total // self.world            # micro-steps THIS rank runs per step
+        # rank_shares: unequal micro-step counts per rank (in CUDA_VISIBLE_DEVICES order) for cards of
+        # unequal speed; DDP waits for the slowest card every step, so a throttled card should carry
+        # fewer micro-steps. Must sum to grad_accum. The gradient stays the exact same average over the
+        # same grad_accum micro-batches (each rank scales its losses by the MEAN share, so the DDP
+        # all-reduce mean equals the global mean); only the dealing changes.
+        shares = tcfg.get("rank_shares")
+        if shares and len(shares) == self.world and self.world > 1:
+            shares = [int(n) for n in shares]
+            if sum(shares) != ga_total or min(shares) < 1:
+                raise ValueError(f"rank_shares {shares} must be >= 1 each and sum to grad_accum={ga_total}")
+            self.rank_shares = shares
+            self.grad_accum = shares[self.rank]             # micro-steps THIS rank runs per step
+        else:
+            if shares and self.world > 1 and self.is_main:
+                print(f"[train] rank_shares has {len(shares)} entries but there are {self.world} ranks; using an equal split", flush=True)
+            if ga_total % self.world:
+                lo = (ga_total // self.world) * self.world
+                raise ValueError(f"grad_accum={ga_total} must be a multiple of the GPU count ({self.world}); "
+                                 f"use {max(lo, self.world)} or {lo + self.world}, or a GPU count that divides it")
+            self.rank_shares = None
+            self.grad_accum = ga_total // self.world        # micro-steps THIS rank runs per step
+        self.loss_div = ga_total / self.world                # per-micro-step loss scale: mean share, so the all-reduced grad is the global mean
         self.seq_len = data.seq_len
         self.tokens_per_step = self.micro_batch * ga_total * self.seq_len
         self.total_steps = max(1, int(float(tcfg["total_tokens"]) // self.tokens_per_step))
@@ -162,7 +179,10 @@ class Trainer:
         self.eval_every = int(tcfg.get("eval_every", 0))
 
         if hasattr(data, "shard"):                          # each rank reads its own slice of every step
-            data.shard(self.rank, self.world)
+            if self.rank_shares:
+                data.shard(self.rank, self.world, shares=[n * self.micro_batch for n in self.rank_shares])
+            else:
+                data.shard(self.rank, self.world)
 
         self.model.grad_checkpointing = bool(tcfg.get("grad_checkpointing", False))
         self.model.loss_chunk = int(tcfg.get("loss_chunk", 0))   # >0 -> chunked, memory-light loss
@@ -206,7 +226,8 @@ class Trainer:
             prec += " + loss scaling" if self.scaler.is_enabled() else ""
             print(f"[train] precision={prec} optimizer={type(self.optimizer).__name__} "
                   f"gpus={self.world} micro_batch={self.micro_batch}/gpu grad_accum={ga_total} total "
-                  f"({self.grad_accum}/gpu) -> {self.tokens_per_step:,} tokens/step", flush=True)
+                  f"({'shares ' + str(self.rank_shares) if self.rank_shares else str(self.grad_accum) + '/gpu'}) "
+                  f"-> {self.tokens_per_step:,} tokens/step", flush=True)
 
     def _make_fwd(self):
         """Compile self.net with the next available mode; eager if none left."""
@@ -271,7 +292,7 @@ class Trainer:
                         self.fwd = self._make_fwd()
                     else:
                         raise
-            loss_scaled = self.scaler.scale(loss / self.grad_accum)
+            loss_scaled = self.scaler.scale(loss / self.loss_div)
             loss_scaled.backward()
         # clone: under max-autotune the forward is a CUDA graph whose output buffers are reused by
         # the next replay; keeping the raw output alive across micro-steps raises "accessing tensor
@@ -284,22 +305,33 @@ class Trainer:
         with open(self.log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
 
+    def _bind_grads(self) -> None:
+        """DDP memory: under no_sync autograd would allocate a second, standalone copy of every
+        gradient (a whole model's worth) next to DDP's all-reduce buckets. One synced backward of a
+        ZERO loss on the first batch binds each .grad to its bucket view; from then on grads are
+        zeroed in place instead of dropped, so every micro-step accumulates straight into the
+        buckets. Done once per run, as exactly one collective on every rank (which keeps ranks with
+        unequal micro-step shares in lockstep); the batch is rewound and used again for real."""
+        state = self.data.state_dict()
+        x, y = self.data.next_batch(self.micro_batch, self.device)
+        ctx = (torch.autocast(device_type="cuda", dtype=self.amp_dtype) if self.use_amp else nullcontext())
+        with ctx:
+            _, loss = self.fwd(x, y, z_loss_weight=self.z_loss)
+        (loss * 0.0).backward()
+        self.optimizer.zero_grad(set_to_none=False)
+        self.data.load_state_dict(state)
+        self._grads_bound = True
+
     def _accumulate(self):
         """grad_accum micro-steps of forward+backward; returns the summed (detached) loss."""
-        # DDP memory: under no_sync autograd would allocate a second, standalone copy of every
-        # gradient (a whole model's worth) next to DDP's all-reduce buckets. So we (1) sync on the
-        # very first micro-step of the run, which binds each .grad to its bucket view, and (2) zero
-        # grads in place instead of dropping them, so every later micro-step accumulates straight
-        # into the buckets. Same math: the first micro-step's mean is identical on every rank, so
-        # the final all-reduce of (that + the local rest) is still the exact all-rank average.
+        if self._ddp and not self._grads_bound:
+            self._bind_grads()
         self.optimizer.zero_grad(set_to_none=not self._ddp)
-        bind = self._ddp and not self._grads_bound
         loss_sum = None
         for i in range(self.grad_accum):
-            loss = self._micro_forward(sync=(i == self.grad_accum - 1) or (bind and i == 0))
+            loss = self._micro_forward(sync=(i == self.grad_accum - 1))   # all-reduce only on the last one
             # accumulate on-device (detached); one GPU->CPU sync per step instead of per micro-step
             loss_sum = loss if loss_sum is None else loss_sum + loss
-        self._grads_bound = True
         return loss_sum
 
     # --- one optimizer step (grad_accum micro-steps) ---
@@ -327,7 +359,8 @@ class Trainer:
                 self.data.load_state_dict(data_state)
         self.scaler.unscale_(self.optimizer)                # grads back to true scale before clipping
         gnorm = float(torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip))
-        loss_avg = float(D.all_reduce_mean(loss_sum / self.grad_accum))   # the same number on every rank
+        # global mean loss over all micro-steps of the step (exact with unequal shares too)
+        loss_avg = float(D.all_reduce_sum(loss_sum.clone()) / (self.loss_div * self.world))
         loss_ok, grad_ok = math.isfinite(loss_avg), math.isfinite(gnorm)
         # fp16: non-finite GRADIENTS are a routine overflow (the scaler skips the step and halves
         # the scale); only a non-finite LOSS is a real divergence. Without a scaler both are.

@@ -60,10 +60,10 @@ def build_model(vocab):
                                    n_kv_heads=2, mlp_hidden=256, seq_len=SEQ))
 
 
-def run_pretrain(out, precision, stop_file=None, optimizer="adamw"):
+def run_pretrain(out, precision, stop_file=None, optimizer="adamw", extra=None):
     tok = UltraTokenizer(TOK)
     model = build_model(tok.vocab_size)
-    tr = Trainer(model, PackedShardDataset(SHARDS, SEQ), {**TCFG, "precision": precision, "optimizer": optimizer},
+    tr = Trainer(model, PackedShardDataset(SHARDS, SEQ), {**TCFG, "precision": precision, "optimizer": optimizer, **(extra or {})},
                  device="cpu", out_dir=out, seed=0, stop_file=stop_file)
     tr.train(max_steps=STEPS)
     return {k: v.detach().clone() for k, v in model.state_dict().items()}, tr.step
@@ -92,8 +92,9 @@ def worker(mode: str) -> None:
         _, step = run_pretrain(out, "fp32", stop_file=stop)
         res = {"step": step}
     elif mode.startswith("pretrain-"):
-        prec, _, opt = mode.split("-", 1)[1].partition("-")     # e.g. pretrain-fp32, pretrain-fp16-normuon
-        w, step = run_pretrain(out, prec, optimizer=opt or "adamw")
+        prec, _, opt = mode.split("-", 1)[1].partition("-")     # e.g. pretrain-fp32, pretrain-fp16-normuon, pretrain-fp32-shares
+        extra = {"rank_shares": [3, 1]} if opt == "shares" else None    # unequal shares of the 4 micro-steps
+        w, step = run_pretrain(out, prec, optimizer=("adamw" if opt in ("", "shares") else opt), extra=extra)
         res = {"weights": w, "step": step}
     elif mode == "dpo":
         w, rc, rr, step = run_dpo(out)
@@ -212,6 +213,15 @@ def main() -> None:
     two = [d.next_batch(2)[0] for _ in range(2) for d in (d0, d2)]         # bs 2/rank x 2 micro-steps
     assert rows(torch.cat(one)) == rows(torch.cat(two)) and d1.pos == d0.pos == d2.pos
     print(f"  DPODataset: same set, pos {d1.pos} on every rank ✓")
+    # unequal shares: rank 0 takes 3 windows of every 4-window block, rank 1 takes 1
+    u0, u1 = PackedShardDataset(SHARDS, SEQ), PackedShardDataset(SHARDS, SEQ)
+    u0.shard(0, 2, shares=[3, 1]); u1.shard(1, 2, shares=[3, 1])
+    single2 = PackedShardDataset(SHARDS, SEQ)
+    one = [single2.next_batch(1)[0] for _ in range(8)]                    # 2 steps x 4 windows
+    two = [u0.next_batch(1)[0] for _ in range(6)] + [u1.next_batch(1)[0] for _ in range(2)]
+    assert rows(torch.cat(one)) == rows(torch.cat(two)), "unequal shares: union of rank windows != single read"
+    assert single2.pos == u0.pos == u1.pos, (single2.pos, u0.pos, u1.pos)
+    print(f"  unequal shares [3,1]: same 8 windows over 2 steps, pos {u0.pos} on both ranks ✓")
 
     print("\n[2] single-process reference runs")
     w_single, step_single = run_pretrain(os.path.join(OUT, "single"), "fp32")
@@ -246,6 +256,15 @@ def main() -> None:
     same_weights(p0["weights"], dpo_single[0], atol=1e-4)
     assert p0["step"] == dpo_single[3]
     print(f"  reference logprobs match; policy after {p0['step']} steps matches ✓")
+
+    print("\n[5b] torchrun x2 with unequal shares [3,1]: ranks agree exactly and match single-process")
+    torchrun("pretrain-fp32-shares")
+    s0, s1 = load_ranks("pretrain-fp32-shares")
+    assert s0["step"] == s1["step"] == step_single
+    same_weights(s0["weights"], s1["weights"], exact=True)
+    same_weights(s0["weights"], w_single)
+    mx = max(float((s0["weights"][k] - w_single[k]).abs().max()) for k in w_single)
+    print(f"  rank0 == rank1 bit for bit; vs single max |diff| {mx:.1e} ✓")
 
     print("\n[6] torchrun x2 with NorMuon: ranks agree exactly and match the single-process NorMuon run")
     w_nm, _ = run_pretrain(os.path.join(OUT, "single-normuon"), "fp32", optimizer="normuon")
