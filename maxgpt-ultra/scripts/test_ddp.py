@@ -47,7 +47,7 @@ PREFS = [
 ] * 40
 CHATS = [{"messages": [{"role": "user", "content": "say a"}, {"role": "assistant", "content": "a b x y"}]},
          {"messages": [{"role": "user", "content": "say x"}, {"role": "assistant", "content": "x y a b"}]}] * 30
-TCFG = {"micro_batch": 2, "grad_accum": 4, "total_tokens": SEQ * 2 * 4 * 400, "warmup_tokens": SEQ * 2 * 4 * 5,
+TCFG = {"micro_batch": 2, "grad_accum": 4, "total_tokens": SEQ * 2 * 4 * 400, "warmup_tokens": SEQ * 2 * 4 * 5, "rank_shares_auto": False,
         "lr": 3e-3, "decay_frac": 0.2, "grad_clip": 1.0, "z_loss": 1e-4, "autosave_minutes": 9999,
         "log_every": 2, "keep_last_k": 1}
 DPO_TCFG = {"batch_size": 4, "grad_accum": 2, "total_steps": 60, "warmup_steps": 2, "lr": 5e-4, "decay_frac": 0.1,
@@ -94,7 +94,11 @@ def worker(mode: str) -> None:
     elif mode.startswith("pretrain-"):
         prec, _, opt = mode.split("-", 1)[1].partition("-")     # e.g. pretrain-fp32, pretrain-fp16-normuon, pretrain-fp32-shares
         extra = {"rank_shares": [3, 1]} if opt == "shares" else None    # unequal shares of the 4 micro-steps
-        w, step = run_pretrain(out, prec, optimizer=("adamw" if opt in ("", "shares") else opt), extra=extra)
+        if opt == "auto":                                                   # auto-balance, re-deal every 2 steps
+            extra = {"rank_shares_auto": True, "rank_shares_every": 2, "rank_shares_smooth": 1.0, "log_every": 1}
+            os.environ["MAXGPT_TEST_SLOW_RANK"] = "1"
+            os.environ["MAXGPT_TEST_SLOW_SECS"] = "0.15"
+        w, step = run_pretrain(out, prec, optimizer=("adamw" if opt in ("", "shares", "auto") else opt), extra=extra)
         res = {"weights": w, "step": step}
     elif mode == "dpo":
         w, rc, rr, step = run_dpo(out)
@@ -265,6 +269,18 @@ def main() -> None:
     same_weights(s0["weights"], w_single)
     mx = max(float((s0["weights"][k] - w_single[k]).abs().max()) for k in w_single)
     print(f"  rank0 == rank1 bit for bit; vs single max |diff| {mx:.1e} ✓")
+
+    print("\n[5c] auto-balancing: a slow rank ends up with fewer micro-steps, results still match single-process")
+    text = torchrun("pretrain-fp32-auto")
+    a0, a1 = load_ranks("pretrain-fp32-auto")
+    assert a0["step"] == a1["step"] == step_single
+    same_weights(a0["weights"], a1["weights"], exact=True)
+    same_weights(a0["weights"], w_single)
+    import json as _json
+    with open(os.path.join(OUT, "pretrain-fp32-auto", "metrics.jsonl"), encoding="utf-8") as f:
+        shares = [_json.loads(l)["rank_shares"] for l in f if "rank_shares" in l]
+    assert shares and shares[-1][0] > shares[-1][1], f"shares did not move toward the fast rank: {shares}"
+    print(f"  shares over the run: {shares[0]} -> {shares[-1]} (rank 1 slowed artificially); weights match single ✓")
 
     print("\n[6] torchrun x2 with NorMuon: ranks agree exactly and match the single-process NorMuon run")
     w_nm, _ = run_pretrain(os.path.join(OUT, "single-normuon"), "fp32", optimizer="normuon")
