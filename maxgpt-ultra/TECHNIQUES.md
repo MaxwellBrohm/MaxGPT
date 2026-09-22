@@ -365,6 +365,27 @@ evaluates and saves; a pause is broadcast from rank 0 so no rank is left waiting
 collective. `scripts/test_ddp.py` runs 2 CPU ranks and checks they agree bit for bit,
 match single-process training, and that fp16 DDP == fp32 DDP.
 
+**Speed-proportional work dealing across unequal GPUs (auto-balanced DDP).**
+*What it is:* DDP synchronizes every optimizer step, so the whole run moves at the pace of the
+slowest card. On the Lambda box two of the four cards throttle to 40-60% clocks in their slots,
+and the fast cards were idling (GPU 0 at 109 W of 280) waiting for them. `train.rank_shares`
+deals each step's `grad_accum` micro-batches to ranks in proportion to card speed; with
+`rank_shares_auto` (default on) each rank measures its own no_sync micro-step speed and every
+10 steps the split is re-computed from one all-reduced vector (so every rank derives the identical
+split), smoothed 50/50 with the previous one.
+*Why it is exact:* the gradient is still the mean over the same `grad_accum` micro-batches per
+step: each rank scales its losses by the MEAN share (`grad_accum / world`), so DDP's all-reduce
+mean equals the global mean whatever the dealing; the loader deals every step's block of windows
+contiguously by share and advances its position by the whole block on every rank, so the
+checkpoint's data position stays one number and the set of windows per step is the same one a
+single GPU would read. `scripts/test_ddp.py` [5b]/[5c]: shares [3,1], and an artificially slowed
+rank that gets dealt down from [2,2] to [3,1], both match single-process training bit for bit.
+*Why we use it here:* measured 13.5k -> ~15.4k tok/s with a hand-set split and the auto version
+tracks the cards as they heat, as a power cap lands, or as a card is serviced, with no config
+edits. Gotcha recorded from the research sweep: never change tokens/step (`micro_batch` x
+`grad_accum`) mid-run; the WSD schedule is step-based and would silently corrupt. Shares only
+change the dealing, never the total.
+
 **Muon / NorMuon optimizer (option, A/B'd on the shakedown before use).**
 *What it is:* For the transformer's matrix weights, replace Adam's per-coordinate
 normalization with an *orthogonalized* momentum: five Newton-Schulz iterations map the
