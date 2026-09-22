@@ -164,6 +164,16 @@ class Trainer:
             self.rank_shares = None
             self.grad_accum = ga_total // self.world        # micro-steps THIS rank runs per step
         self.loss_div = ga_total / self.world                # per-micro-step loss scale: mean share, so the all-reduced grad is the global mean
+        self.ga_total = ga_total
+        # auto-balance: every N steps each rank reports its measured micro-step speed and the shares are
+        # re-dealt in proportion (smoothed), so throttling cards, a new power cap or a serviced card are
+        # absorbed without anyone touching the config. Exact same gradient whatever the dealing.
+        self.shares_auto = bool(tcfg.get("rank_shares_auto", True)) and self.world > 1
+        self.shares_every = int(tcfg.get("rank_shares_every", 10))
+        self.shares_smooth = float(tcfg.get("rank_shares_smooth", 0.5))   # weight of the new measurement
+        self._micro_time = 0.0                                  # seconds spent in this step's no_sync micro-steps
+        self._micro_n = 0
+        self._speed_acc = []                                    # per-step measured speeds (micro-steps/s) since the last re-deal
         self.seq_len = data.seq_len
         self.tokens_per_step = self.micro_batch * ga_total * self.seq_len
         self.total_steps = max(1, int(float(tcfg["total_tokens"]) // self.tokens_per_step))
@@ -183,6 +193,10 @@ class Trainer:
                 data.shard(self.rank, self.world, shares=[n * self.micro_batch for n in self.rank_shares])
             else:
                 data.shard(self.rank, self.world)
+        if self.shares_auto and not self.rank_shares and hasattr(data, "shard"):
+            # start balanced; the first re-deal comes after shares_every measured steps
+            self.rank_shares = [self.grad_accum] * self.world
+            data.shard(self.rank, self.world, shares=[n * self.micro_batch for n in self.rank_shares])
 
         self.model.grad_checkpointing = bool(tcfg.get("grad_checkpointing", False))
         self.model.loss_chunk = int(tcfg.get("loss_chunk", 0))   # >0 -> chunked, memory-light loss
@@ -272,6 +286,8 @@ class Trainer:
             g["lr"] = lr
 
     def _micro_forward(self, sync: bool = True):
+        if os.environ.get("MAXGPT_TEST_SLOW_RANK") == str(self.rank):      # test hook: pretend this card is slow
+            time.sleep(float(os.environ.get("MAXGPT_TEST_SLOW_SECS", "0.05")))
         x, y = self.data.next_batch(self.micro_batch, self.device)
         ctx = (torch.autocast(device_type="cuda", dtype=self.amp_dtype)
                if self.use_amp else nullcontext())
@@ -328,11 +344,52 @@ class Trainer:
             self._bind_grads()
         self.optimizer.zero_grad(set_to_none=not self._ddp)
         loss_sum = None
+        t0 = time.time()
         for i in range(self.grad_accum):
             loss = self._micro_forward(sync=(i == self.grad_accum - 1))   # all-reduce only on the last one
             # accumulate on-device (detached); one GPU->CPU sync per step instead of per micro-step
             loss_sum = loss if loss_sum is None else loss_sum + loss
+            if i == self.grad_accum - 2:                        # time the no_sync micro-steps only (no all-reduce wait)
+                if self.device == "cuda":
+                    torch.cuda.synchronize()
+                self._micro_time, self._micro_n = time.time() - t0, self.grad_accum - 1
+        if self.grad_accum == 1:                                # a single micro-step: time the whole thing
+            if self.device == "cuda":
+                torch.cuda.synchronize()
+            self._micro_time, self._micro_n = time.time() - t0, 1
         return loss_sum
+
+    def _rebalance_shares(self) -> None:
+        """Re-deal grad_accum across ranks in proportion to each rank's measured speed (all ranks
+        compute the identical result from the same all-reduced vector). Called at step boundaries."""
+        if not self.shares_auto or self._micro_n == 0:
+            return
+        self._speed_acc.append(self._micro_n / max(self._micro_time, 1e-6))
+        if len(self._speed_acc) < self.shares_every:
+            return
+        my_speed = sum(self._speed_acc) / len(self._speed_acc)
+        self._speed_acc = []
+        vec = torch.zeros(self.world, dtype=torch.float64, device=D.reduce_device())
+        vec[self.rank] = my_speed
+        D.all_reduce_sum(vec)
+        speeds = vec.tolist()
+        target = [self.ga_total * sp / sum(speeds) for sp in speeds]
+        blended = [(1 - self.shares_smooth) * old + self.shares_smooth * new for old, new in zip(self.rank_shares, target)]
+        shares = [max(1, int(round(b))) for b in blended]
+        while sum(shares) != self.ga_total:                     # fix rounding, one unit at a time
+            i = max(range(self.world), key=lambda r: blended[r] - shares[r]) if sum(shares) < self.ga_total \
+                else min(range(self.world), key=lambda r: (blended[r] - shares[r], -shares[r]))
+            if sum(shares) > self.ga_total and shares[i] <= 1:
+                i = max(range(self.world), key=lambda r: shares[r])
+            shares[i] += 1 if sum(shares) < self.ga_total else -1
+        if shares != self.rank_shares:
+            if self.is_main:
+                print(f"[train] rank shares {self.rank_shares} -> {shares} (measured speeds "
+                      f"{', '.join(f'{sp:.2f}' for sp in speeds)} micro-steps/s)", flush=True)
+            self.rank_shares = shares
+            self.grad_accum = shares[self.rank]
+            if hasattr(self.data, "shard"):
+                self.data.shard(self.rank, self.world, shares=[n * self.micro_batch for n in shares])
 
     # --- one optimizer step (grad_accum micro-steps) ---
     def train_step(self) -> dict:
@@ -371,6 +428,10 @@ class Trainer:
             self.scaler.update()
             self.step += 1
         rec = {"step": self.step, "loss": loss_avg, "lr": lr, "grad_norm": gnorm, "diverged": diverged}
+        if not diverged:
+            self._rebalance_shares()
+        if self.rank_shares and self.world > 1:
+            rec["rank_shares"] = list(self.rank_shares)
         if self.scaler.is_enabled():
             rec["loss_scale"] = float(self.scaler.get_scale())
             if overflow:
