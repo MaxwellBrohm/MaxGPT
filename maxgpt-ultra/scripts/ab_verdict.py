@@ -35,9 +35,18 @@ def score(path: str, last: int):
     steps = [r["step"] for r in rows if "loss" in r and r.get("event") is None]
     if not meta or not evals or not steps:
         return None
-    finished = max(steps) >= int(meta["total_steps"]) - 1
+    # the trainer logs every log_every (10) steps, so a finished run's last logged step can sit up to
+    # 9 short of total_steps; the run log's "done at step" line is the definitive marker when present
+    total = int(meta["total_steps"])
+    finished = max(steps) >= total - 10
+    run_log = os.path.join(os.path.expanduser("~/MaxGPT"), f"ab_{os.path.basename(os.path.dirname(path))}.log")
+    if os.path.exists(run_log):
+        with open(run_log, encoding="utf-8", errors="replace") as f:
+            txt = f.read()
+        if "done at step" in txt:
+            finished = True
     return {"val": statistics.mean(evals[-last:]), "n_evals": len(evals), "step": max(steps),
-            "total": int(meta["total_steps"]), "finished": finished}
+            "total": total, "finished": finished}
 
 
 def main() -> None:
