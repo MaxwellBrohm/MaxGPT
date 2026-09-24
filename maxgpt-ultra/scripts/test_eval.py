@@ -91,6 +91,15 @@ def main() -> None:
     print(f"  keys: {sorted(bundle.keys())}")
 
     print("\n" + "=" * 72)
+    print("\n[6] validation reads the SAME held-out slice every call (comparable across evals)")
+    a = eval_perplexity(model, data, n_batches=4, batch_size=2, device="cpu")
+    data.pos = (data.pos + 5 * seq_len) % data.total      # someone moved the stream in between
+    b = eval_perplexity(model, data, n_batches=4, batch_size=2, device="cpu")
+    assert a["val_loss"] == b["val_loss"], f"eval drifted with the stream position: {a['val_loss']} vs {b['val_loss']}"
+    assert a["val_tokens"] == 4 * 2 * seq_len, a["val_tokens"]
+    print(f"  two evals around a moved stream position agree exactly (val_loss={a['val_loss']:.4f}, "
+          f"{a['val_tokens']} tokens) ✓")
+
     print("ALL CHECKS PASSED ✅")
     print("=" * 72)
 

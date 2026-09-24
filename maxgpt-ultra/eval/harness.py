@@ -21,16 +21,24 @@ from model.generate import generate
 
 
 @torch.no_grad()
-def eval_perplexity(model, data, n_batches: int = 20, batch_size: int = 8, device: str = "cpu") -> dict:
+def eval_perplexity(model, data, n_batches: int = 40, batch_size: int = 8, device: str = "cpu") -> dict:
+    """Mean cross-entropy over the FIRST n_batches * batch_size windows of `data`: the same held-out
+    slice on every call, so successive evals are comparable. It used to read on from wherever the
+    previous eval had stopped, and slices of the held-out set differ by up to 0.4 nats, which made
+    the Ultra run's val curve bounce between 8.7 and 13 ppl while the training loss moved smoothly
+    (evals before step ~6,500 on 2026-09-24 are on moving slices; later ones on this fixed slice)."""
     model.eval()
-    total, n = 0.0, 0
+    if hasattr(data, "pos"):                 # rewind the held-out stream: same windows every time
+        data.pos, data.epoch, data._block_i = 0, 0, 0
+    total, n, toks = 0.0, 0, 0
     for _ in range(n_batches):
         x, y = data.next_batch(batch_size, device)
         _, loss = model(x, y)            # plain cross-entropy (no z-loss for eval)
         total += float(loss)
         n += 1
+        toks += int(x.numel())
     avg = total / max(1, n)
-    return {"val_loss": avg, "val_ppl": math.exp(min(20.0, avg))}
+    return {"val_loss": avg, "val_ppl": math.exp(min(20.0, avg)), "val_tokens": toks}
 
 
 @torch.no_grad()
@@ -85,7 +93,7 @@ def evaluate(model, tokenizer=None, val_data=None, mc_examples=None, sample_prom
     m: dict = {}
     if val_data is not None:
         m.update(eval_perplexity(model, val_data, device=device,
-                                 n_batches=kw.get("n_batches", 20), batch_size=kw.get("batch_size", 8)))
+                                 n_batches=kw.get("n_batches", 40), batch_size=kw.get("batch_size", 8)))
     if mc_examples and tokenizer is not None:
         m.update(eval_multiple_choice(model, tokenizer, mc_examples, device=device))
     if sample_prompts and tokenizer is not None:

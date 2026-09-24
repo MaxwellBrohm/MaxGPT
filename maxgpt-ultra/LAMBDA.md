@@ -67,6 +67,13 @@ Without the GUI: `torchrun --nnodes=1 --rdzv-backend=c10d --rdzv-endpoint=127.0.
 --out runs/pretrain --tokenizer tokenizer/maxgpt-ultra.tokenizer.json --eval-data data/shards
 --eval-every 500 --stop-file runs/pretrain/STOP` (touch the STOP file to pause).
 
+**Reading the val curve.** `val_loss` / `val_ppl` in `runs/pretrain/metrics.jsonl` is the mean
+cross-entropy over a fixed 655k-token slice of `data/shards_val_ultra` (40 batches of 8 x 2048),
+so successive points are comparable. Before step ~6,500 (2026-09-24) each eval read the NEXT
+327k tokens of the held-out set instead, and slices differ by up to 0.4 nats, so the early
+points bounce (8.7 ppl at step 5,000, 13.2 at 5,500) without the model changing that much:
+read the training loss for the trend there, and expect one level shift where the fix landed.
+
 ## The A/B before the real run (`configs/ab/`)
 
 Four 124M variants of the shakedown recipe on the same 1.1B tokens (shards 0-10, held-out
