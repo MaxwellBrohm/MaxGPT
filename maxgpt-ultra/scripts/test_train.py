@@ -11,6 +11,8 @@ import math
 import os
 import sys
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # maxgpt-ultra/
 
 import torch
@@ -266,6 +268,59 @@ def main() -> None:
     for (n1, p1), (n2, p2) in zip(m_ref.named_parameters(), m_try.named_parameters()):
         assert torch.equal(p1, p2), f"{n1} differs after the replayed step"
     print(f"  backward failure at micro-step 2 -> tier dropped, step replayed from the same data, weights identical ✓")
+
+    print("\n[12] decay-phase annealing blend: off before the start step, exact share after, exact resume")
+    import json as _json, shutil
+    from data.loader import AnnealBlend
+    ANN = SHARDS + "_anneal"
+    shutil.rmtree(ANN, ignore_errors=True); os.makedirs(ANN)
+    # anneal tokens all live in the top 50 ids of the vocab: a window is recognizably "anneal" (main text never is)
+    V = tok.vocab_size
+    rows = []
+    for i in range(3):
+        a = (V - 50 + (np.arange(4000) * 7 + i) % 50).astype(np.uint16); a.tofile(os.path.join(ANN, f"shard_{i:05d}.bin"))
+        rows.append({"name": f"shard_{i:05d}.bin", "tokens": int(len(a))})
+    _json.dump({"dtype": "uint16", "eot_id": 1, "shards": rows, "total_tokens": 12000}, open(os.path.join(ANN, "meta.json"), "w"))
+    is_anneal = lambda w: bool((w >= V - 50).float().mean() > 0.9)
+    cfg_a = {**base, "micro_batch": 4, "grad_accum": 2, "log_every": 1000,
+             "anneal": {"shards": ANN, "frac": 0.5, "ramp_tokens": 0, "start": 3}}     # B = 8 windows/step, A = 4 from step 3
+    torch.manual_seed(7)
+    m_plain, m_ann = MaxGPTUltra(cfg), MaxGPTUltra(cfg)
+    m_ann.load_state_dict(m_plain.state_dict())
+    t_plain = Trainer(m_plain, PackedShardDataset(SHARDS, seq_len), {**cfg_a, "anneal": {}}, device="cpu", out_dir=OUT + "_noann", seed=0)
+    t_ann = Trainer(m_ann, PackedShardDataset(SHARDS, seq_len), cfg_a, device="cpu", out_dir=OUT + "_ann", seed=0)
+    assert isinstance(t_ann.data, AnnealBlend) and t_ann.data.start_step == 3
+    seen = {"before": [], "after": []}
+    orig_nb = t_ann.data.next_batch
+    def spy(bs, device="cpu"):
+        x, y = orig_nb(bs, device)
+        seen["after" if t_ann.step >= 3 else "before"].extend(is_anneal(w) for w in x)
+        return x, y
+    t_ann.data.next_batch = spy
+    for _ in range(3):
+        t_plain.train_step(); t_ann.train_step()
+    for (n1, p1), (n2, p2) in zip(m_plain.named_parameters(), m_ann.named_parameters()):
+        assert torch.equal(p1, p2), f"{n1}: annealing changed training BEFORE its start step"
+    assert not any(seen["before"]) and len(seen["before"]) == 24, seen["before"]
+    for _ in range(4):
+        rec = t_ann.train_step()
+    assert rec.get("anneal_frac") == 0.5, rec
+    assert sum(seen["after"]) == 16 and len(seen["after"]) == 32, (sum(seen["after"]), len(seen["after"]))   # 4 of every 8
+    # 3 plain steps (8 main windows each) + 4 annealed steps (4 main + 4 anneal windows each)
+    assert t_ann.data.main.pos == (3 * 8 + 4 * 4) * seq_len, (t_ann.data.main.pos, seq_len)
+    assert t_ann.data.anneal.pos == 4 * 4 * seq_len, (t_ann.data.anneal.pos, seq_len)
+    print(f"  bit-identical to no-anneal for 3 steps, then 4 of 8 windows per step from the anneal stream ✓")
+    # exact resume, and a pre-annealing (main-only) state still loads
+    t_ann.data.next_batch = orig_nb
+    t_ann.save()
+    st = t_ann.data.state_dict(); assert st["blend"] and st["block_i"] == 0
+    x_ref, _ = t_ann.data.next_batch(4)
+    t_ann.data.load_state_dict(st)
+    x_again, _ = t_ann.data.next_batch(4)
+    assert torch.equal(x_ref, x_again), "resume did not reproduce the next batch"
+    t_ann.data.load_state_dict({"pos": 0, "epoch": 0})
+    assert t_ann.data.main.pos == 0 and t_ann.data.state_dict()["block_i"] == 0
+    print("  blend state round-trips; an old main-only checkpoint state loads ✓")
 
     print("\n" + "=" * 72)
     print("ALL CHECKS PASSED ✅")
