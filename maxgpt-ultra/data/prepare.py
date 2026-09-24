@@ -43,17 +43,29 @@ PRETRAIN_MIX = [
 # only), and the chat data rendered in the ChatML template the SFT stage uses. Blended into the last
 # 15% of pretraining at ~40% of each step (see train.anneal in the config); the other 60% keeps
 # reading the original mix, so it is replay of unseen original data, not repetition.
+# Code: the-stack-smol-xl (permissively licensed files across ~300 languages; Python excluded so it
+# stays disjoint from the pretraining's Python-only code) plus CodeSearchNet functions in five
+# non-Python languages. github-code-clean / Stack-Edu would have been better but one is a
+# script-based dataset (unsupported by datasets >= 4) and the other ships no file contents.
 ANNEAL_MIX = [
-    {"path": "HuggingFaceTB/finemath",        "name": "finemath-4plus",    "text_field": "text", "weight": 0.40},
-    {"path": "HuggingFaceTB/finemath",        "name": "infiwebmath-4plus", "text_field": "text", "weight": 0.12},
-    {"path": "codeparrot/github-code-clean",  "name": "JavaScript-all",    "text_field": "code", "weight": 0.09},
-    {"path": "codeparrot/github-code-clean",  "name": "Java-all",          "text_field": "code", "weight": 0.08},
-    {"path": "codeparrot/github-code-clean",  "name": "C++-all",           "text_field": "code", "weight": 0.07},
-    {"path": "codeparrot/github-code-clean",  "name": "TypeScript-all",    "text_field": "code", "weight": 0.05},
-    {"path": "codeparrot/github-code-clean",  "name": "Rust-all",          "text_field": "code", "weight": 0.03},
-    {"path": "codeparrot/github-code-clean",  "name": "GO-all",            "text_field": "code", "weight": 0.03},
-    {"local": "data/sft.jsonl",                "name": "chat-sft",          "render": "chatml",   "weight": 0.13},
+    {"path": "HuggingFaceTB/finemath",           "name": "finemath-4plus",    "text_field": "text", "weight": 0.40},
+    {"path": "HuggingFaceTB/finemath",           "name": "infiwebmath-4plus", "text_field": "text", "weight": 0.12},
+    {"path": "bigcode/the-stack-smol-xl",        "name": None, "label": "stack-smol-xl-nonpython",
+     "text_field": "content", "exclude": {"lang": ["Python", "Jupyter Notebook"]},               "weight": 0.20},
+    {"path": "code-search-net/code_search_net",  "name": "javascript", "label": "csn-javascript", "text_field": "whole_func_string", "weight": 0.04},
+    {"path": "code-search-net/code_search_net",  "name": "java",       "label": "csn-java",       "text_field": "whole_func_string", "weight": 0.04},
+    {"path": "code-search-net/code_search_net",  "name": "go",         "label": "csn-go",         "text_field": "whole_func_string", "weight": 0.03},
+    {"path": "code-search-net/code_search_net",  "name": "php",        "label": "csn-php",        "text_field": "whole_func_string", "weight": 0.02},
+    {"path": "code-search-net/code_search_net",  "name": "ruby",       "label": "csn-ruby",       "text_field": "whole_func_string", "weight": 0.02},
+    {"local": "data/sft.jsonl",                   "name": "chat-sft",   "render": "chatml",        "weight": 0.13},
 ]
+
+
+def _row_ok(row, exclude) -> bool:
+    """Optional per-source row filter: exclude={"lang": ["Python"]} drops rows whose `lang` is listed."""
+    if not exclude or not isinstance(row, dict):
+        return True
+    return all(row.get(k) not in set(vals) for k, vals in exclude.items())
 
 
 class LocalJsonlSource:
@@ -130,7 +142,7 @@ class MixedStream:
             return
         srcs = []
         for s in self.specs:
-            name = s.get("name") or s.get("path") or s.get("local")
+            name = s.get("label") or s.get("name") or s.get("path") or s.get("local")
             if s.get("local"):                      # a local jsonl (e.g. the SFT chat data) as a source
                 ds = LocalJsonlSource(s["local"], render=s.get("render"), text_field=s.get("text_field", "text"))
                 srcs.append({"name": name, "ds": ds, "w": float(s["weight"]), "field": "text", "alive": True})
@@ -142,7 +154,7 @@ class MixedStream:
                 print(f"[data] WARNING: could not open {name}: {type(e).__name__}: {e}. Skipping it.")
                 continue
             srcs.append({"name": name, "ds": ds, "w": float(s["weight"]),
-                         "field": s.get("text_field", "text"), "alive": True})
+                         "field": s.get("text_field", "text"), "alive": True, "exclude": s.get("exclude")})
         if not srcs:
             raise RuntimeError("no data sources could be opened (check network / dataset ids)")
         if self._pending_state is not None:
@@ -188,6 +200,8 @@ class MixedStream:
                     e["alive"] = False
                 continue
             fails[e["name"]] = 0
+            if not _row_ok(ex, e.get("exclude")):
+                continue
             text = ex.get(e["field"]) if isinstance(ex, dict) else None
             if text:
                 yield text, e["name"]
