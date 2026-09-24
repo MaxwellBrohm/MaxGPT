@@ -38,6 +38,66 @@ PRETRAIN_MIX = [
     {"path": "wikimedia/wikipedia",          "name": "20231101.en",      "text_field": "text",    "weight": 0.048},
 ]
 
+# Decay-phase annealing mix (the research sweep's biggest remaining lever, docs/research_2026-09-22.md
+# section 2.3): high-quality math, code in languages the 100B did NOT contain (its code is Python
+# only), and the chat data rendered in the ChatML template the SFT stage uses. Blended into the last
+# 15% of pretraining at ~40% of each step (see train.anneal in the config); the other 60% keeps
+# reading the original mix, so it is replay of unseen original data, not repetition.
+ANNEAL_MIX = [
+    {"path": "HuggingFaceTB/finemath",        "name": "finemath-4plus",    "text_field": "text", "weight": 0.40},
+    {"path": "HuggingFaceTB/finemath",        "name": "infiwebmath-4plus", "text_field": "text", "weight": 0.12},
+    {"path": "codeparrot/github-code-clean",  "name": "JavaScript-all",    "text_field": "code", "weight": 0.09},
+    {"path": "codeparrot/github-code-clean",  "name": "Java-all",          "text_field": "code", "weight": 0.08},
+    {"path": "codeparrot/github-code-clean",  "name": "C++-all",           "text_field": "code", "weight": 0.07},
+    {"path": "codeparrot/github-code-clean",  "name": "TypeScript-all",    "text_field": "code", "weight": 0.05},
+    {"path": "codeparrot/github-code-clean",  "name": "Rust-all",          "text_field": "code", "weight": 0.03},
+    {"path": "codeparrot/github-code-clean",  "name": "GO-all",            "text_field": "code", "weight": 0.03},
+    {"local": "data/sft.jsonl",                "name": "chat-sft",          "render": "chatml",   "weight": 0.13},
+]
+
+
+class LocalJsonlSource:
+    """A local jsonl file as a streaming source with the same state_dict()/load_state_dict()
+    contract as a HuggingFace IterableDataset (state = line index). `render="chatml"` turns
+    {"messages": [...]} rows into the ChatML text the SFT stage trains on; otherwise the row's
+    `text_field` is used."""
+
+    def __init__(self, path: str, render: str | None = None, text_field: str = "text"):
+        self.path, self.render, self.field = path, render, text_field
+        self.i = 0                      # next line to yield
+        self._resume = 0
+
+    def _render(self, row: dict):
+        if self.render == "chatml":
+            from tokenizer.tokenizer import IM_START, IM_END
+            msgs = row.get("messages") or []
+            return "".join(f"{IM_START}{m['role']}\n{m['content']}{IM_END}\n" for m in msgs
+                           if m.get("role") and m.get("content")) or None
+        return row.get(self.field)
+
+    def __iter__(self):
+        with open(self.path, encoding="utf-8") as f:
+            for n, line in enumerate(f):
+                if n < self._resume:
+                    continue
+                self.i = n + 1
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    text = self._render(json.loads(line))
+                except Exception:
+                    continue
+                if text:
+                    yield {"text": text}
+
+    def state_dict(self) -> dict:
+        return {"line": int(self.i)}
+
+    def load_state_dict(self, s: dict) -> None:
+        self._resume = int(s.get("line", 0))
+        self.i = self._resume
+
 
 def _rng_state_to_json(rng: random.Random):
     v, internal, gauss = rng.getstate()
@@ -68,10 +128,14 @@ class MixedStream:
     def _open(self):
         if self._sources is not None:
             return
-        from datasets import load_dataset
         srcs = []
         for s in self.specs:
-            name = s.get("name") or s["path"]
+            name = s.get("name") or s.get("path") or s.get("local")
+            if s.get("local"):                      # a local jsonl (e.g. the SFT chat data) as a source
+                ds = LocalJsonlSource(s["local"], render=s.get("render"), text_field=s.get("text_field", "text"))
+                srcs.append({"name": name, "ds": ds, "w": float(s["weight"]), "field": "text", "alive": True})
+                continue
+            from datasets import load_dataset
             try:
                 ds = load_dataset(s["path"], s.get("name"), split=s.get("split", "train"), streaming=True)
             except Exception as e:                  # one bad source must not kill the whole prep
