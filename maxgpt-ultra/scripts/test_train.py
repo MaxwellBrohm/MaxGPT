@@ -322,6 +322,23 @@ def main() -> None:
     assert t_ann.data.main.pos == 0 and t_ann.data.state_dict()["block_i"] == 0
     print("  blend state round-trips; an old main-only checkpoint state loads ✓")
 
+    print("\n[13] weights-only snapshots: only in the decay phase, on the cadence, with their own retention")
+    import glob as _glob
+    cfg_w = {**base, "micro_batch": 4, "grad_accum": 2, "total_tokens": 128 * 20, "decay_frac": 0.5,   # 20 steps, decay from step 10
+             "decay_weights_every": 2, "decay_weights_keep": 3, "log_every": 1000}
+    torch.manual_seed(9)
+    mw = MaxGPTUltra(cfg)
+    tw = Trainer(mw, PackedShardDataset(SHARDS, seq_len), cfg_w, device="cpu", out_dir=OUT + "_wts", seed=0)
+    shutil.rmtree(os.path.join(OUT + "_wts", "checkpoints"), ignore_errors=True); os.makedirs(os.path.join(OUT + "_wts", "checkpoints"))
+    tw.train(max_steps=9)
+    assert not _glob.glob(os.path.join(OUT + "_wts", "checkpoints", "weights_*.pt")), "snapshot written before the decay"
+    tw.train(max_steps=11)                                            # steps 10..20: due at 10,12,...,20 -> keep the last 3
+    names = sorted(os.path.basename(p) for p in _glob.glob(os.path.join(OUT + "_wts", "checkpoints", "weights_*.pt")))
+    assert names == ["weights_00000016.pt", "weights_00000018.pt", "weights_00000020.pt"], names
+    w = torch.load(os.path.join(OUT + "_wts", "checkpoints", "weights_00000020.pt"), weights_only=False)
+    assert "optimizer" not in w and w["step"] == 20 and set(w["model"]) == set(mw.state_dict())
+    print(f"  none before step 10; after step 20 the last 3 of {{10..20 step 2}} remain: {names} (weights only) ✓")
+
     print("\n" + "=" * 72)
     print("ALL CHECKS PASSED ✅")
     print("=" * 72)

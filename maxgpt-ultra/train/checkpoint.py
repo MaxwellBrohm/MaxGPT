@@ -68,6 +68,19 @@ class CheckpointManager:
             except OSError:
                 pass
 
+    def save_weights(self, model, step: int, keep: int = 12) -> str:
+        """A weights-only snapshot (fp32 state_dict, ~4 bytes/param, no optimizer state) kept in its
+        own series `weights_XXXXXXXX.pt` with its own retention. Used through the decay phase so
+        the end-of-run checkpoint averaging has candidates without keeping 15GB full checkpoints."""
+        path = os.path.join(self.dir, f"weights_{step:08d}.pt")
+        _atomic_save({"model": model.state_dict(), "step": step}, path)
+        for p in sorted(glob.glob(os.path.join(self.dir, "weights_*.pt")))[:-keep] if keep > 0 else []:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+        return path
+
     def latest_path(self) -> str | None:
         p = os.path.join(self.dir, "latest.json")
         if not os.path.exists(p):
