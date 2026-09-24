@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 
 from model import ModelConfig, load_yaml
 from tokenizer.tokenizer import train_tokenizer, UltraTokenizer
-from data.prepare import tokenize_to_shards, stream_mixed, PRETRAIN_MIX
+from data.prepare import tokenize_to_shards, stream_mixed, PRETRAIN_MIX, ANNEAL_MIX
 from posttrain.sft_data import build_sft_jsonl, append_oasst_jsonl
 from posttrain.dpo import build_pref_jsonl
 
@@ -93,7 +93,11 @@ def main() -> None:
     ap.add_argument("--pref-examples", type=int, default=60_000)
     ap.add_argument("--skip-posttrain", action="store_true", help="only build the pretrain corpus")
     ap.add_argument("--smoke", action="store_true", help="tiny local dry-run, no network")
+    ap.add_argument("--mix", choices=["pretrain", "anneal"], default="pretrain",
+                    help="anneal = the decay-phase mix (math, non-Python code, ChatML chat); pair with "
+                         "--shards-out data/shards_anneal --max-tokens 6e9 --skip-posttrain")
     args = ap.parse_args()
+    MIX = ANNEAL_MIX if args.mix == "anneal" else PRETRAIN_MIX
 
     raw = load_yaml(args.config)
     mcfg = ModelConfig.from_yaml(args.config)
@@ -113,7 +117,7 @@ def main() -> None:
         return itertools.islice(it, limit) if limit else it
 
     def tagged_stream(limit=None):                    # (text, source), for sharding
-        it = (((d, "smoke") for d in SMOKE_DOCS)) if args.smoke else stream_mixed(PRETRAIN_MIX)
+        it = (((d, "smoke") for d in SMOKE_DOCS)) if args.smoke else stream_mixed(MIX)
         return itertools.islice(it, limit) if limit else it
 
     if not args.smoke and not (os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")):
@@ -142,8 +146,8 @@ def main() -> None:
     for src, n in sorted(meta["by_source"].items(), key=lambda kv: -kv[1]):
         print(f"           {src:<26} {n:>14,}  ({100*n/max(1,tot):4.1f}%)")
     if not args.smoke:   # loudly flag any configured source that contributed nothing
-        missing = [(s.get("name") or s["path"]) for s in PRETRAIN_MIX
-                   if (s.get("name") or s["path"]) not in meta["by_source"]]
+        missing = [(s.get("name") or s.get("path") or s.get("local")) for s in MIX
+                   if (s.get("name") or s.get("path") or s.get("local")) not in meta["by_source"]]
         if missing:
             print(f"[prepare] WARNING: 0 tokens from {missing} -- check its dataset id/field in data/prepare.py")
 

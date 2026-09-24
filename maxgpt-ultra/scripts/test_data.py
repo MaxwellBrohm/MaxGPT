@@ -145,6 +145,27 @@ def main() -> None:
     assert np.array_equal(dm._read(pos, 20), flat[pos:pos + 20])
     print(f"  40 shards read exactly with {len(dm._open)} files open (cap {PackedShardDataset.MAX_OPEN}) ✓")
 
+    print("\n[7] local jsonl source (chat rendered as ChatML) streams and resumes exactly")
+    from data.prepare import MixedStream, LocalJsonlSource
+    from tokenizer.tokenizer import IM_START, IM_END
+    cj = SHARDS + "_chat.jsonl"
+    with open(cj, "w", encoding="utf-8") as f:
+        for i in range(30):
+            f.write(_json.dumps({"messages": [{"role": "user", "content": f"q{i}"}, {"role": "assistant", "content": f"a{i}"}]}) + "\n")
+        f.write("\n")                                     # a blank line must be skipped, not crash
+    spec = [{"local": cj, "name": "chat", "render": "chatml", "weight": 1.0}]
+    full = [t for t, src in MixedStream(spec, seed=0)]
+    assert len(full) == 30 and full[3] == f"{IM_START}user\nq3{IM_END}\n{IM_START}assistant\na3{IM_END}\n", full[3]
+    ms = MixedStream(spec, seed=0)
+    it = iter(ms)
+    first = [next(it) for _ in range(12)]
+    state = ms.state_dict()
+    ms2 = MixedStream(spec, seed=0)
+    ms2.load_state_dict(state)
+    rest = [t for t, _ in ms2]
+    assert [t for t, _ in first] + rest == full, "resume from a saved state changed the stream"
+    print(f"  30 chats rendered; resume after 12 reproduces the remaining 18 exactly ✓")
+
     print("\n" + "=" * 72)
     print("ALL CHECKS PASSED ✅")
     print("=" * 72)
