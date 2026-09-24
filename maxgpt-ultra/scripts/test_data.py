@@ -166,6 +166,79 @@ def main() -> None:
     assert [t for t, _ in first] + rest == full, "resume from a saved state changed the stream"
     print(f"  30 chats rendered; resume after 12 reproduces the remaining 18 exactly ✓")
 
+    print("\n[8] the mix holds in TOKENS, not documents (long vs short docs, unequal chars/token)")
+    # source "long": 1200-2900-char docs at 2-4 chars/token (~300-1450 tokens each); source "short":
+    # 20-79-char docs at 6-10 chars/token (2-13 tokens). Sizes and chars/token vary per document, as
+    # real data does, so the mixer's in-flight estimates differ from the reported counts (which is
+    # what makes the resume check in [9] sensitive to the order of report vs pull). Weights 0.6/0.4 by
+    # tokens. Picking documents by weight would give long ~99.6% of the tokens; picking by
+    # characters (no feedback) ~83%; by tokens 60%.
+    lj, sj = SHARDS + "_long.jsonl", SHARDS + "_short.jsonl"
+    with open(lj, "w") as f:
+        for i in range(300):
+            f.write(_json.dumps({"text": "a" * (1200 + (i * 37) % 1700)}) + "\n")
+    with open(sj, "w") as f:
+        for i in range(40000):
+            f.write(_json.dumps({"text": "b" * (20 + (i * 7) % 60)}) + "\n")
+    spec8 = [{"local": lj, "name": "long", "weight": 0.6}, {"local": sj, "name": "short", "weight": 0.4}]
+
+    class FakeTok:                                    # chars/token depends on the doc: 2-4 for "a...", 6-10 for "b..."
+        eos_id = 0
+
+        def encode_batch(self, texts):
+            return [[1] * (len(t) // ((2 + len(t) % 3) if t[:1] == "a" else (6 + len(t) % 5))) for t in texts]
+
+    fake = FakeTok()
+    ms8 = MixedStream(spec8, seed=0)
+    seq, served = [], {"long": 0, "short": 0}
+    for text, src in ms8:                             # immediate feedback, as the writer gives per chunk
+        n = len(fake.encode_batch([text])[0]) + 1
+        ms8.report(src, len(text), n)
+        served[src] += n
+        seq.append(src)
+        if sum(served.values()) >= 120_000:
+            break
+    share = served["long"] / sum(served.values())
+    assert abs(share - 0.6) < 0.02, f"long-doc token share {share:.3f}, wanted 0.60"
+    assert seq[:1000].count("long") >= 5, "sources must interleave, not run one source dry first"
+    print(f"  long-doc source got {100*share:.1f}% of tokens (target 60%) from {seq.count('long')} of "
+          f"{len(seq)} docs; interleaved ✓")
+
+    print("\n[9] MixedStream through the shard writer: shares hold, crash mid-build resumes byte-identical")
+
+    class CrashingStream(MixedStream):                # the real mixer, dying after `crash_after` docs
+        def __init__(self, *a, crash_after=None, **k):
+            super().__init__(*a, **k)
+            self.crash_after, self.n = crash_after, 0
+
+        def __iter__(self):
+            for item in super().__iter__():
+                if self.crash_after is not None and self.n >= self.crash_after:
+                    raise RuntimeError("simulated crash")
+                self.n += 1
+                yield item
+
+    def build9(out, stream):
+        return tokenize_to_shards(stream, fake, out, shard_size=5000, batch_docs=32, max_tokens=120_000)
+
+    ref9 = SHARDS + "_mix_ref"; shutil.rmtree(ref9, ignore_errors=True)
+    r9 = build9(ref9, MixedStream(spec8, seed=0))
+    share9 = r9["by_source"]["long"] / r9["total_tokens"]
+    assert abs(share9 - 0.6) < 0.02, f"writer-fed share {share9:.3f}, wanted 0.60 (is report() wired?)"
+    out9 = SHARDS + "_mix_crash"; shutil.rmtree(out9, ignore_errors=True)
+    try:
+        build9(out9, CrashingStream(spec8, seed=0, crash_after=3000))
+        raise AssertionError("the simulated crash did not fire")
+    except RuntimeError:
+        pass
+    prog9 = _json.load(open(os.path.join(out9, "progress.json")))
+    assert prog9["pending"] and prog9["stream"].get("rep_tokens"), "checkpoint must carry pending docs + token accounting"
+    res9 = build9(out9, MixedStream(spec8, seed=0))
+    assert res9["by_source"] == r9["by_source"], (res9["by_source"], r9["by_source"])
+    assert shard_bytes(out9) == shard_bytes(ref9), "resumed mixed build differs from the uninterrupted one"
+    print(f"  {100*share9:.1f}% long via the writer; crashed at doc 3000 with {len(prog9['pending'])} pending, "
+          f"resumed build identical ({r9['total_tokens']} tokens, {len(r9['shards'])} shards) ✓")
+
     print("\n" + "=" * 72)
     print("ALL CHECKS PASSED ✅")
     print("=" * 72)

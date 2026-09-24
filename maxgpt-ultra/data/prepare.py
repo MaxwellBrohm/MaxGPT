@@ -2,9 +2,10 @@
 
 - Documents are separated by the tokenizer's <|endoftext|> id.
 - uint16 (vocab 49,152 fits in 16 bits) halves shard size vs uint32.
-- The mix is sampled *proportionally* (by weight) as it streams, and we stop at a token
-  budget, so a capped run keeps the full blend (web/textbook/code/math/wiki) rather than
-  filling up on one source. Per-source token counts are recorded in meta.json.
+- The mix weights are TOKEN shares, held as it streams (each document is pulled from the source
+  furthest behind its share; see MixedStream), and we stop at a token budget, so a capped run
+  keeps the full blend (web/textbook/code/math/wiki) rather than filling up on one source.
+  Per-source token counts are recorded in meta.json.
 
 Real run streams the sources below with HuggingFace `datasets` (on the 5070 box). The Mac
 smoke test passes plain strings, which still work (source = None).
@@ -22,20 +23,21 @@ import numpy as np
 
 DTYPE = np.uint16
 
-# Pretraining mix. Each `weight` is a *document* sampling probability, but the budget is counted
-# in TOKENS, and document length varies a lot by source (code files and math pages are long;
-# cosmopedia snippets are short). So these weights are tuned from a measured shakedown run so the
-# realized TOKEN shares land near the intended blend: ~55% web-edu, 22% textbook, 10% code, 8%
-# math, 5% wiki. (Raw doc-weights of 0.55/0.22/0.10/0.08/0.05 gave token shares of 46/13/23/14/4,
-# because per document code over-counts ~2.3x and cosmopedia under-counts ~0.6x.)
+# Pretraining mix. Each `weight` is the source's share of TOKENS (MixedStream holds the blend in
+# tokens as it streams): ~55% web-edu, 22% textbook, 10% code, 8% math, 5% wiki.
+# History: the mixer used to pick *documents* by weight, and document length varies 10-100x by
+# source (code files and math pages are long; cosmopedia snippets are short), so the 100B shards
+# on the Lambda box were built with hand-calibrated doc-weights (0.55/0.32/0.037/0.039/0.048) and
+# landed at 54.9/22.7/10.6/8.4/3.3 (data/shards/meta.json). The token-weighted mixer makes that
+# calibration unnecessary; these weights now say what they mean. Existing shards are reused as-is.
 # Code note: smollm-corpus "python-edu" stores blob_ids (text lives on S3), not inline text, so
 # codeparrot-clean (inline `content`, no auth) supplies the code slice instead.
 PRETRAIN_MIX = [
     {"path": "HuggingFaceTB/smollm-corpus", "name": "fineweb-edu-dedup", "text_field": "text",    "weight": 0.55},
-    {"path": "HuggingFaceTB/smollm-corpus", "name": "cosmopedia-v2",     "text_field": "text",    "weight": 0.32},
-    {"path": "codeparrot/codeparrot-clean",                              "text_field": "content", "weight": 0.037},
-    {"path": "open-web-math/open-web-math",                              "text_field": "text",    "weight": 0.039},
-    {"path": "wikimedia/wikipedia",          "name": "20231101.en",      "text_field": "text",    "weight": 0.048},
+    {"path": "HuggingFaceTB/smollm-corpus", "name": "cosmopedia-v2",     "text_field": "text",    "weight": 0.22},
+    {"path": "codeparrot/codeparrot-clean",                              "text_field": "content", "weight": 0.10},
+    {"path": "open-web-math/open-web-math",                              "text_field": "text",    "weight": 0.08},
+    {"path": "wikimedia/wikipedia",          "name": "20231101.en",      "text_field": "text",    "weight": 0.05},
 ]
 
 # Decay-phase annealing mix (the research sweep's biggest remaining lever, docs/research_2026-09-22.md
@@ -59,6 +61,13 @@ ANNEAL_MIX = [
     {"path": "code-search-net/code_search_net",  "name": "ruby",       "label": "csn-ruby",       "text_field": "whole_func_string", "weight": 0.02},
     {"local": "data/sft.jsonl",                   "name": "chat-sft",   "render": "chatml",        "weight": 0.13},
 ]
+
+
+def source_name(spec: dict) -> str:
+    """The name a source is tagged with in the stream and in meta.json's by_source: label, else the
+    HF config name, else the dataset path, else the local file. One definition, used by the mixer
+    and by the build script's missing-source check (which once used a different key and cried wolf)."""
+    return spec.get("label") or spec.get("name") or spec.get("path") or spec.get("local")
 
 
 def _row_ok(row, exclude) -> bool:
@@ -121,28 +130,63 @@ def _rng_state_from_json(j):
 
 
 class MixedStream:
-    """Weighted blend of streaming sources, yielding (text, source_name). Picks each document
-    from a source with probability proportional to its weight, so the mix holds throughout (and
-    therefore holds when we stop early at a token budget). When a source runs dry it drops out and
-    the rest carry on.
+    """Weighted blend of streaming sources, yielding (text, source_name). The weights are TOKEN
+    shares: each document is pulled from the source furthest behind its share of the tokens served
+    so far, so the blend holds in tokens throughout (and therefore holds when we stop early at a
+    token budget). Documents differ 10-100x in length between sources (a code file vs a chat
+    turn), so picking documents by weight, as this used to, over-served the long-document sources
+    by that factor (the first anneal build: 46% stack code, 2% chat, against targets of 20 / 13).
+    Token counts come back from the shard writer through report(); until a source has been
+    reported once its documents are estimated at `chars_per_token`, and the documents in flight
+    between a pick and its report (one encode chunk) use the source's measured ratio. When a
+    source runs dry it drops out and the rest carry on with their shares renormalized.
 
-    Resumable: state_dict() captures the rng + each source's streaming position, load_state_dict()
-    restores them, so an interrupted build resumes exactly (completed shards are skipped without
-    re-downloading). It is iterable, so `for text, src in MixedStream(...)` works like the old
-    generator did."""
+    Resumable: state_dict() captures the rng, the per-source token accounting and each source's
+    streaming position; load_state_dict() restores them, so an interrupted build resumes exactly
+    (completed shards are skipped without re-downloading). It is iterable, so
+    `for text, src in MixedStream(...)` works like the old generator did."""
 
-    def __init__(self, specs=PRETRAIN_MIX, seed: int = 0):
+    def __init__(self, specs=PRETRAIN_MIX, seed: int = 0, chars_per_token: float = 4.0):
         self.specs = specs
         self._rng = random.Random(seed)
+        self._cpt0 = float(chars_per_token)
         self._sources = None         # opened lazily on first iteration / state call
         self._pending_state = None   # a state handed to load_state_dict before the sources open
+        self._chars: dict[str, int] = {}        # characters yielded per source
+        self._rep_chars: dict[str, int] = {}    # characters whose token count has been reported
+        self._rep_tokens: dict[str, int] = {}   # tokens reported for those characters
+
+    def report(self, source: str, chars: int, tokens: int) -> None:
+        """The shard writer's feedback: `chars` characters of `source` encoded to `tokens` tokens."""
+        self._rep_chars[source] = self._rep_chars.get(source, 0) + int(chars)
+        self._rep_tokens[source] = self._rep_tokens.get(source, 0) + int(tokens)
+
+    def served(self, source: str) -> float:
+        """Tokens served from `source` so far: the reported count, plus an estimate for the
+        documents in flight (yielded, not yet reported) at the source's measured chars/token."""
+        rc, rt = self._rep_chars.get(source, 0), self._rep_tokens.get(source, 0)
+        cpt = max(rc / rt, 0.25) if rt > 0 else self._cpt0
+        return rt + (self._chars.get(source, 0) - rc) / cpt
+
+    def _pick(self, alive: list) -> dict:
+        """The alive source furthest behind its (renormalized) token share; ties broken by the rng."""
+        total = sum(self.served(e["name"]) for e in alive)
+        wsum = sum(e["w"] for e in alive)
+        best, best_d = [], None
+        for e in alive:
+            d = e["w"] / wsum * total - self.served(e["name"])      # tokens behind its share
+            if best_d is None or d > best_d + 1e-9:
+                best, best_d = [e], d
+            elif abs(d - best_d) <= 1e-9:
+                best.append(e)
+        return best[0] if len(best) == 1 else self._rng.choice(best)
 
     def _open(self):
         if self._sources is not None:
             return
         srcs = []
         for s in self.specs:
-            name = s.get("label") or s.get("name") or s.get("path") or s.get("local")
+            name = source_name(s)
             if s.get("local"):                      # a local jsonl (e.g. the SFT chat data) as a source
                 ds = LocalJsonlSource(s["local"], render=s.get("render"), text_field=s.get("text_field", "text"))
                 srcs.append({"name": name, "ds": ds, "w": float(s["weight"]), "field": "text", "alive": True})
@@ -165,7 +209,7 @@ class MixedStream:
         self._sources = srcs
 
     def _apply_state(self, srcs, state):
-        self._rng.setstate(_rng_state_from_json(state["rng"]))
+        """The per-source part of a saved state (streaming positions, alive flags); needs open sources."""
         saved = {d["name"]: d for d in state["sources"]}
         for e in srcs:
             d = saved.get(e["name"])
@@ -184,7 +228,7 @@ class MixedStream:
         fails = {e["name"]: 0 for e in src}            # consecutive stream errors per source
         while any(e["alive"] for e in src):
             alive = [e for e in src if e["alive"]]
-            e = self._rng.choices(alive, weights=[x["w"] for x in alive], k=1)[0]
+            e = self._pick(alive)
             try:
                 ex = next(e["it"])
             except StopIteration:
@@ -204,18 +248,28 @@ class MixedStream:
                 continue
             text = ex.get(e["field"]) if isinstance(ex, dict) else None
             if text:
+                self._chars[e["name"]] = self._chars.get(e["name"], 0) + len(text)
                 yield text, e["name"]
 
     def state_dict(self) -> dict:
         self._open()
         return {"rng": _rng_state_to_json(self._rng),
+                "chars": dict(self._chars), "rep_chars": dict(self._rep_chars), "rep_tokens": dict(self._rep_tokens),
                 "sources": [{"name": e["name"], "alive": e["alive"],
                              "ds": (e["ds"].state_dict() if e["alive"] else None)}
                             for e in self._sources]}
 
     def load_state_dict(self, state: dict) -> None:
+        # The rng and the token accounting are restored right away: the shard writer replays the
+        # documents that were in flight at the crash and report()s them BEFORE it asks the stream
+        # for more (which is what opens the sources), and those reports must land on top of the
+        # saved counts, not be overwritten by them. Only the source positions wait for the open.
+        self._rng.setstate(_rng_state_from_json(state["rng"]))
+        self._chars = {k: int(v) for k, v in state.get("chars", {}).items()}
+        self._rep_chars = {k: int(v) for k, v in state.get("rep_chars", {}).items()}
+        self._rep_tokens = {k: int(v) for k, v in state.get("rep_tokens", {}).items()}
         if self._sources is None:
-            self._pending_state = state              # applied when the sources open
+            self._pending_state = state              # source positions applied when the sources open
         else:
             self._apply_state(self._sources, state)
             for e in self._sources:
@@ -295,17 +349,24 @@ def tokenize_to_shards(items, tokenizer, out_dir: str, shard_size: int = 100_000
         os.replace(tmp, prog_path)                      # atomic: a crash mid-write can't corrupt it
 
     src_iter = iter(items)
+    reporter = getattr(items, "report", None)          # a MixedStream wants the token counts back
+    first = None
     if pending:                                         # re-feed the docs that were in flight at the crash
         if isinstance(pending, dict):                   # single-doc format of older progress files
             pending = [pending]
-        src_iter = itertools.chain([(d["text"], d["source"]) for d in pending], src_iter)
+        # ... as a chunk of their own, so their token counts are reported before the stream is asked
+        # for more: that is the order the uninterrupted build saw, so the resumed picks are identical.
+        first = [(d["text"], d["source"]) for d in pending]
 
     def norm(item):
         return item if isinstance(item, tuple) else (item, None)
 
     docs, done = 0, False
     while not done:
-        chunk = [norm(it) for it in itertools.islice(src_iter, batch_docs)]
+        if first:
+            chunk, first = first, None
+        else:
+            chunk = [norm(it) for it in itertools.islice(src_iter, batch_docs)]
         if not chunk:
             break
         encoded = (tokenizer.encode_batch([t for t, _ in chunk]) if hasattr(tokenizer, "encode_batch")
@@ -325,12 +386,16 @@ def tokenize_to_shards(items, tokenizer, out_dir: str, shard_size: int = 100_000
                 write_shard(np.asarray(ids, dtype=DTYPE))
                 total += n
                 by_source[source] = by_source.get(source, 0) + n
+                if reporter:
+                    reporter(source, len(text), n)
                 checkpoint(chunk[j + 1:])
                 continue
             buf[fill:fill + n] = np.asarray(ids, dtype=DTYPE)
             fill += n
             total += n
             by_source[source] = by_source.get(source, 0) + n
+            if reporter:
+                reporter(source, len(text), n)
             if max_tokens and total >= max_tokens:
                 done = True
                 break
