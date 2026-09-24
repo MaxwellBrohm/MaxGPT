@@ -18,6 +18,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # maxgpt-ultra/
 sys.path.insert(0, ROOT)
 
+import numpy as np
 import torch
 
 from model import ModelConfig, MaxGPTUltra
@@ -60,6 +61,20 @@ def build_model(vocab):
                                    n_kv_heads=2, mlp_hidden=256, seq_len=SEQ))
 
 
+ANN = SHARDS + "_anneal"
+
+
+def make_anneal_shards():
+    import json as _j
+    V = UltraTokenizer(TOK).vocab_size                 # anneal tokens = the top 50 ids of the real vocab
+    os.makedirs(ANN, exist_ok=True)
+    rows = []
+    for i in range(2):
+        a = (V - 50 + (np.arange(3000) * 5 + i) % 50).astype(np.uint16); a.tofile(os.path.join(ANN, f"shard_{i:05d}.bin"))
+        rows.append({"name": f"shard_{i:05d}.bin", "tokens": int(len(a))})
+    _j.dump({"dtype": "uint16", "eot_id": 1, "shards": rows, "total_tokens": 6000}, open(os.path.join(ANN, "meta.json"), "w"))
+
+
 def run_pretrain(out, precision, stop_file=None, optimizer="adamw", extra=None):
     tok = UltraTokenizer(TOK)
     model = build_model(tok.vocab_size)
@@ -98,7 +113,9 @@ def worker(mode: str) -> None:
             extra = {"rank_shares_auto": True, "rank_shares_every": 2, "rank_shares_smooth": 1.0, "log_every": 1}
             os.environ["MAXGPT_TEST_SLOW_RANK"] = "1"
             os.environ["MAXGPT_TEST_SLOW_SECS"] = "0.15"
-        w, step = run_pretrain(out, prec, optimizer=("adamw" if opt in ("", "shares", "auto") else opt), extra=extra)
+        if opt == "anneal":                                                 # annealing blend on from step 2, half of each step
+            extra = {"anneal": {"shards": ANN, "frac": 0.5, "ramp_tokens": 0, "start": 2}}
+        w, step = run_pretrain(out, prec, optimizer=("adamw" if opt in ("", "shares", "auto", "anneal") else opt), extra=extra)
         res = {"weights": w, "step": step}
     elif mode == "dpo":
         w, rc, rr, step = run_dpo(out)
@@ -269,6 +286,18 @@ def main() -> None:
     same_weights(s0["weights"], w_single)
     mx = max(float((s0["weights"][k] - w_single[k]).abs().max()) for k in w_single)
     print(f"  rank0 == rank1 bit for bit; vs single max |diff| {mx:.1e} ✓")
+
+    print("\n[5d] annealing blend under DDP: ranks agree exactly and match the single-process blended run")
+    make_anneal_shards()
+    w_an, step_an = run_pretrain(os.path.join(OUT, "single-anneal"), "fp32",
+                                 extra={"anneal": {"shards": ANN, "frac": 0.5, "ramp_tokens": 0, "start": 2}})
+    torchrun("pretrain-fp32-anneal")
+    b0, b1 = load_ranks("pretrain-fp32-anneal")
+    assert b0["step"] == b1["step"] == step_an
+    same_weights(b0["weights"], b1["weights"], exact=True)
+    same_weights(b0["weights"], w_an)
+    assert any(w_an[k].ne(w_single[k]).any() for k in w_single), "the anneal stream had no effect on training"
+    print("  rank0 == rank1 bit for bit; 2-rank blended run matches single-process blended run ✓")
 
     print("\n[5c] auto-balancing: a slow rank ends up with fewer micro-steps, results still match single-process")
     text = torchrun("pretrain-fp32-auto")
