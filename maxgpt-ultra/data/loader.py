@@ -125,3 +125,93 @@ class PackedShardDataset:
         self.pos = int(state["pos"]) % self.total
         self.epoch = int(state.get("epoch", 0))
         self._block_i = int(state.get("block_i", 0))
+
+
+class AnnealBlend:
+    """Two packed streams read as one: the main pretraining stream plus an ANNEALING stream that is
+    phased in late in the run (decay-phase data annealing: 0 before `start_step`, then a linear ramp
+    over `ramp_tokens` up to `frac`). Same interface as PackedShardDataset.
+
+    Every optimizer step is a block of B windows (B = sum(shares)); the first A = round(frac * B)
+    block positions come from the anneal stream, the rest from the main stream, and rank r takes
+    block positions [S_r, S_r + share_r) exactly as PackedShardDataset does. Both streams advance by
+    their per-step counts, identically on every rank, so a checkpoint is still one position per
+    stream and the set of windows per step is what one GPU would read. A checkpoint written before
+    annealing existed (main position only) loads unchanged: the anneal stream starts at 0."""
+
+    def __init__(self, main: PackedShardDataset, anneal: PackedShardDataset, frac: float,
+                 start_step: int, ramp_tokens: float, tokens_per_step: int):
+        assert main.seq_len == anneal.seq_len
+        self.main, self.anneal = main, anneal
+        self.seq_len = main.seq_len
+        self.frac = float(frac)
+        self.start_step = int(start_step)
+        self.ramp_steps = max(1, int(round(float(ramp_tokens) / max(1, int(tokens_per_step)))))
+        self.step = 0
+        self.rank, self.world, self.shares = 0, 1, None
+        self._block_i = 0            # windows this rank has taken from the current block
+        self._A = 0                  # anneal windows in the current block (fixed at the block start)
+        self.anneal_wraps = 0        # how often the anneal stream ran out and repeated
+
+    # the trainer calls this before each step (identically on every rank)
+    def set_step(self, step: int) -> None:
+        self.step = int(step)
+
+    def frac_at(self, step: int | None = None) -> float:
+        s = self.step if step is None else int(step)
+        if s < self.start_step:
+            return 0.0
+        return self.frac * min(1.0, (s - self.start_step + 1) / self.ramp_steps)
+
+    def shard(self, rank: int, world: int, shares=None) -> None:
+        assert 0 <= rank < world
+        self.rank, self.world = rank, world
+        self.shares = [int(n) for n in shares] if shares is not None else None
+        self._block_i = 0
+
+    def next_batch(self, batch_size: int, device: str = "cpu"):
+        import torch
+        assert self.shares is not None, "AnnealBlend needs shard(rank, world, shares=[windows per rank per step])"
+        B, S_r, n_r = sum(self.shares), sum(self.shares[:self.rank]), self.shares[self.rank]
+        xs, ys = [], []
+        for _ in range(batch_size):
+            if self._block_i == 0:                             # block start: this step's anneal count
+                self._A = int(round(self.frac_at() * B))
+            j = S_r + self._block_i                            # my position inside the block
+            if j < self._A:
+                chunk = self.anneal._read(self.anneal.pos + j * self.seq_len, self.seq_len + 1)
+            else:
+                chunk = self.main._read(self.main.pos + (j - self._A) * self.seq_len, self.seq_len + 1)
+            chunk = chunk.astype(np.int64)
+            self._block_i += 1
+            if self._block_i >= n_r:                           # my share done: both streams past this block
+                self.main._advance(B - self._A)
+                if self._A:
+                    ep = self.anneal.epoch
+                    self.anneal._advance(self._A)
+                    if self.anneal.epoch != ep:
+                        self.anneal_wraps += 1
+                self._block_i = 0
+            xs.append(chunk[:-1])
+            ys.append(chunk[1:])
+        x = torch.from_numpy(np.stack(xs))
+        y = torch.from_numpy(np.stack(ys))
+        if device == "cuda":
+            return (x.pin_memory().to(device, non_blocking=True),
+                    y.pin_memory().to(device, non_blocking=True))
+        return x.to(device), y.to(device)
+
+    def state_dict(self) -> dict:
+        return {"blend": True, "main": self.main.state_dict(), "anneal": self.anneal.state_dict(),
+                "block_i": int(self._block_i), "A": int(self._A), "anneal_wraps": int(self.anneal_wraps)}
+
+    def load_state_dict(self, state: dict) -> None:
+        if state.get("blend"):
+            self.main.load_state_dict(state["main"])
+            self.anneal.load_state_dict(state["anneal"])
+            self._block_i = int(state.get("block_i", 0))
+            self._A = int(state.get("A", 0))
+            self.anneal_wraps = int(state.get("anneal_wraps", 0))
+        else:                                                  # a pre-annealing checkpoint: main only
+            self.main.load_state_dict(state)
+            self._block_i, self._A = 0, 0

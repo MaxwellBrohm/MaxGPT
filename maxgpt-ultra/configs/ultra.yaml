@@ -38,6 +38,11 @@ train:
   optimizer_8bit: true   # 8-bit AdamW so optimizer states fit in 12GB
   compile: true          # torch.compile fuses kernels for a big throughput win (auto-falls back to eager if it can't compile)
   compile_modes: [max-autotune-no-cudagraphs, default]   # autotuned kernels without the CUDA-graph memory pool: at 1B the graph saves nothing and costs VRAM
+  anneal:                # decay-phase data annealing (docs/research_2026-09-22.md 2.3). Ignored until the shards exist
+    shards: data/shards_anneal   # built by scripts/anneal_build.sh (math, non-Python code, ChatML chat)
+    frac: 0.4                    # share of every step's windows from the anneal stream once fully on; the rest is unseen original data
+    ramp_tokens: 1.0e9           # linear ramp from 0 to frac over this many tokens after the start
+    start: decay                 # 'decay' = the WSD decay start step, or an explicit step number
   loss_chunk: 2048       # compute the loss in 2048-position chunks (checkpointed) so the huge logits tensor never materializes -> frees VRAM for a bigger micro_batch
 
 io:

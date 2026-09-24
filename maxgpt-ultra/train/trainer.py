@@ -188,9 +188,29 @@ class Trainer:
         self.log_every = int(tcfg.get("log_every", 10))
         self.eval_every = int(tcfg.get("eval_every", 0))
 
+        # Decay-phase data annealing (docs/research_2026-09-22.md 2.3): once the shards exist, blend
+        # them in from the decay start (or an explicit step), ramping up over ramp_tokens.
+        an = tcfg.get("anneal") or {}
+        if an.get("shards") and hasattr(data, "_read"):
+            from data.loader import PackedShardDataset as _PSD, AnnealBlend
+            adir = str(an["shards"])
+            if os.path.exists(os.path.join(adir, "meta.json")):
+                start = an.get("start", "decay")
+                start_step = int(self.total_steps * (1.0 - self.decay_frac)) if start == "decay" else int(start)
+                data = AnnealBlend(data, _PSD(adir, data.seq_len), frac=float(an.get("frac", 0.4)),
+                                   start_step=start_step, ramp_tokens=float(an.get("ramp_tokens", 1e9)),
+                                   tokens_per_step=self.tokens_per_step)
+                self.data = data
+                if self.is_main:
+                    print(f"[train] annealing: {adir} blended in at {float(an.get('frac', 0.4)):.0%} of each step "
+                          f"from step {start_step:,} (ramp over {data.ramp_steps:,} steps)", flush=True)
+            elif self.is_main:
+                print(f"[train] anneal shards not found at {adir}: annealing OFF", flush=True)
         if hasattr(data, "shard"):                          # each rank reads its own slice of every step
             if self.rank_shares:
                 data.shard(self.rank, self.world, shares=[n * self.micro_batch for n in self.rank_shares])
+            elif hasattr(data, "set_step"):                 # a blend always deals in step blocks
+                data.shard(self.rank, self.world, shares=[self.grad_accum * self.micro_batch] * self.world)
             else:
                 data.shard(self.rank, self.world)
         if self.shares_auto and not self.rank_shares and hasattr(data, "shard"):
@@ -396,6 +416,8 @@ class Trainer:
         lr = wsd_lr(self.step, total_steps=self.total_steps, warmup_steps=self.warmup_steps,
                     decay_frac=self.decay_frac, max_lr=self.max_lr)
         self._set_lr(lr)
+        if hasattr(self.data, "set_step"):                  # annealing blend: the mix depends on the step
+            self.data.set_step(self.step)
         data_state = self.data.state_dict()          # so a compile-tier failure can replay this exact step
         while True:
             try:
@@ -432,6 +454,8 @@ class Trainer:
             self._rebalance_shares()
         if self.rank_shares and self.world > 1:
             rec["rank_shares"] = list(self.rank_shares)
+        if hasattr(self.data, "frac_at") and self.data.frac_at() > 0:
+            rec["anneal_frac"] = round(self.data.frac_at(), 4)
         if self.scaler.is_enabled():
             rec["loss_scale"] = float(self.scaler.get_scale())
             if overflow:
