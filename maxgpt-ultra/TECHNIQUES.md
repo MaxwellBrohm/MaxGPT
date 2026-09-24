@@ -270,7 +270,13 @@ well-shuffled and trivially resumable.
 
 **Mixture weights.**  ◐ (spec in `data/prepare.py: PRETRAIN_MIX`; weights to tune)
 *What it is:* The target token-share of each source (web / textbooks / code / math /
-wiki), realized by weighted streaming interleave.
+wiki), realized by a token-weighted streaming interleave: each document is pulled from the
+source furthest behind its share of the tokens written so far (the shard writer reports
+token counts back to the mixer), so the blend holds in tokens even though documents differ
+10-100x in length between sources. Picking documents by weight, the original design,
+over-served long-document sources by that factor (first anneal build: 46% code files, 2%
+chat, against 20 / 13 targets); the 100B pretrain shards used hand-calibrated doc-weights
+and landed on target (54.9 / 22.7 / 10.6 / 8.4 / 3.3).
 *Why it matters:* The ratio is a real capability lever (too much code dulls general
 fluency; too little dulls reasoning). We start from the proven SmolLM mix and tune.
 

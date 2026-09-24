@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 
 from model import ModelConfig, load_yaml
 from tokenizer.tokenizer import train_tokenizer, UltraTokenizer
-from data.prepare import tokenize_to_shards, stream_mixed, PRETRAIN_MIX, ANNEAL_MIX
+from data.prepare import tokenize_to_shards, stream_mixed, source_name, PRETRAIN_MIX, ANNEAL_MIX
 from posttrain.sft_data import build_sft_jsonl, append_oasst_jsonl
 from posttrain.dpo import build_pref_jsonl
 
@@ -146,8 +146,7 @@ def main() -> None:
     for src, n in sorted(meta["by_source"].items(), key=lambda kv: -kv[1]):
         print(f"           {src:<26} {n:>14,}  ({100*n/max(1,tot):4.1f}%)")
     if not args.smoke:   # loudly flag any configured source that contributed nothing
-        missing = [(s.get("name") or s.get("path") or s.get("local")) for s in MIX
-                   if (s.get("name") or s.get("path") or s.get("local")) not in meta["by_source"]]
+        missing = [source_name(s) for s in MIX if source_name(s) not in meta["by_source"]]
         if missing:
             print(f"[prepare] WARNING: 0 tokens from {missing} -- check its dataset id/field in data/prepare.py")
 
