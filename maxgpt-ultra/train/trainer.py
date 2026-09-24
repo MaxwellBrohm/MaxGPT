@@ -186,6 +186,11 @@ class Trainer:
         self.wd = float(tcfg.get("weight_decay", 0.1))
         self.autosave_s = float(tcfg.get("autosave_minutes", 15)) * 60.0
         self.log_every = int(tcfg.get("log_every", 10))
+        # weights-only snapshots through the decay phase (for end-of-run checkpoint averaging):
+        # every `decay_weights_every` steps once the decay has started, keep the last `decay_weights_keep`
+        self.decay_weights_every = int(tcfg.get("decay_weights_every", 2000))
+        self.decay_weights_keep = int(tcfg.get("decay_weights_keep", 12))
+        self._last_weights_step = -1
         self.eval_every = int(tcfg.get("eval_every", 0))
 
         # Decay-phase data annealing (docs/research_2026-09-22.md 2.3): once the shards exist, blend
@@ -520,4 +525,16 @@ class Trainer:
                 D.barrier()
             if time.time() - self._last_save >= self.autosave_s:
                 self.save()
+            self._maybe_save_weights()
         self.save()  # final checkpoint
+        self._maybe_save_weights(force=(self.step >= self.total_steps))   # a snapshot at the true end, not at a pause
+
+    def _maybe_save_weights(self, force: bool = False) -> None:
+        """Rank 0 writes a weights-only snapshot on the decay-phase cadence (and at the very end)."""
+        if not self.is_main or self.decay_weights_every <= 0:
+            return
+        decay_start = int(self.total_steps * (1.0 - self.decay_frac))
+        due = self.step >= decay_start and self.step % self.decay_weights_every == 0
+        if (due or force) and self.step != self._last_weights_step and self.step > 0:
+            self.ckpt.save_weights(self.model, self.step, keep=self.decay_weights_keep)
+            self._last_weights_step = self.step
