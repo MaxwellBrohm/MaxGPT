@@ -74,6 +74,15 @@ so successive points are comparable. Before step ~6,500 (2026-09-24) each eval r
 points bounce (8.7 ppl at step 5,000, 13.2 at 5,500) without the model changing that much:
 read the training loss for the trend there, and expect one level shift where the fix landed.
 
+**Benchmark suite.** `data/bench/` holds the fixed suite (LAMBADA, PIQA, WinoGrande, ARC-C,
+HellaSwag; 1,000 seeded examples each; `suite.json` lists n + source). The run scores it
+every 10,000 steps inside the periodic eval and logs it as `"suite"` in the eval row (and
+`suite_avg`); expect that eval to take ~3 extra minutes. To score any checkpoint by hand on a
+free card:
+`CUDA_VISIBLE_DEVICES=1 python scripts/eval_suite.py --config configs/ultra_lambda_final.yaml --checkpoint runs/pretrain/checkpoints/<ckpt>.pt --device cuda --out runs/eval/suite_<step>.json`.
+Re-fetch the suite only on purpose (`python scripts/eval_suite.py --fetch --seed 1 --suite-dir data/bench_seed1`
+for a noise-floor repeat); the numbers are only comparable across evaluations of the same files.
+
 ## The A/B before the real run (`configs/ab/`)
 
 Four 124M variants of the shakedown recipe on the same 1.1B tokens (shards 0-10, held-out
