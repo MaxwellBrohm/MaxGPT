@@ -272,6 +272,26 @@ def main() -> None:
     print(f"  A (5 docs, epochs=3) yielded 15 docs in order, B 40; resumed after 6 docs -> identical; "
           f"exhausted: {sorted(ms2.exhausted())} ✓")
 
+    print("\n[11] anneal_check rejects a build whose small sources ran dry, accepts a good one")
+    from scripts.anneal_check import check as anneal_check
+    def fake_meta(d, chat, csn, total=6_000_000_000, shards=61):
+        os.makedirs(d, exist_ok=True)
+        rest = 1.0 - chat - csn
+        bs = {"finemath-4plus": rest * 0.55, "stack-smol-xl-nonpython": rest * 0.28, "infiwebmath-4plus": rest * 0.17,
+              "chat-sft": chat, "csn-java": csn * 0.5, "csn-php": csn * 0.5}
+        _json.dump({"total_tokens": total, "shards": [{"name": f"s{i}", "tokens": 1} for i in range(shards)],
+                    "by_source": {k: int(v * total) for k, v in bs.items()}}, open(os.path.join(d, "meta.json"), "w"))
+    v2 = SHARDS + "_meta_v2"; fake_meta(v2, chat=0.021, csn=0.047)          # the real v2 numbers
+    ok, line = anneal_check(v2, 5.9e9, 4.0, 6.0)
+    assert not ok and "chat 2.1%" in line and "csn 4.7%" in line, line
+    v3 = SHARDS + "_meta_v3"; fake_meta(v3, chat=0.063, csn=0.093)
+    ok, line = anneal_check(v3, 5.9e9, 4.0, 6.0)
+    assert ok and line.startswith("OK"), line
+    short = SHARDS + "_meta_short"; fake_meta(short, chat=0.063, csn=0.093, total=4_000_000_000)
+    assert not anneal_check(short, 5.9e9, 4.0, 6.0)[0], "a build under the token budget must be rejected"
+    assert not anneal_check(SHARDS + "_no_such_dir", 5.9e9, 4.0, 6.0)[0]
+    print("  v2-like shares rejected (chat 2.1%, csn 4.7%); v3-like accepted; short budget + missing meta rejected ✓")
+
     print("\n" + "=" * 72)
     print("ALL CHECKS PASSED ✅")
     print("=" * 72)

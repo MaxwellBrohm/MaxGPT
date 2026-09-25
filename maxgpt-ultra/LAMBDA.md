@@ -143,6 +143,14 @@ wait for `"running": false`, `tmux kill-session -t ultra`, relaunch it with the 
 keeper uses (`scripts/ultra_autostart.sh`, cards `0,4,5,9`), then `curl -X POST :8800/api/start`.
 Pause + play alone only restarts the trainer subprocess, which picks up pulled changes to
 `train/`, `data/`, `eval/` and `scripts/train.py` but not the command it was launched with.
+`bash scripts/lambda_dashboard_restart.sh` does the whole sequence (pause, relaunch on the same
+cards, play, print the new trainer's startup lines).
+**Swapping in a new anneal build without a visit:** `scripts/anneal_autoswap.sh <new dir>` (run in
+tmux `anneal_swap`) waits for the build's `meta.json`, runs `scripts/anneal_check.py` (token
+budget met, chat >= 4%, CodeSearchNet >= 6%: the numbers a usable decay mix needs, which the first
+two builds missed), pauses the run, moves the shards into `data/shards_anneal` (the previous build
+is kept as `data/shards_anneal.prev_<stamp>`), and presses play, unless the watchdog holds a
+thermal pause, in which case play is left to the watchdog. Log: `~/MaxGPT/anneal_swap.log`.
 The trainer's stdout is not in `~/MaxGPT/*.log`: read
 `runs/pretrain/ranks/<newest>/attempt_0/0/stdout.log` (the `[train] ...` startup lines: annealing,
 benchmark suite, resumed-from step) or `/api/stage/pretrain` (slow; it ships the whole metrics file).
