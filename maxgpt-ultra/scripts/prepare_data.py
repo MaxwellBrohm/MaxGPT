@@ -116,9 +116,12 @@ def main() -> None:
         it = iter(SMOKE_DOCS) if args.smoke else (t for t, _ in stream_mixed(PRETRAIN_MIX))
         return itertools.islice(it, limit) if limit else it
 
+    mixed = None
+
     def tagged_stream(limit=None):                    # (text, source), for sharding
-        it = (((d, "smoke") for d in SMOKE_DOCS)) if args.smoke else stream_mixed(MIX)
-        return itertools.islice(it, limit) if limit else it
+        nonlocal mixed
+        mixed = (((d, "smoke") for d in SMOKE_DOCS)) if args.smoke else stream_mixed(MIX)
+        return itertools.islice(mixed, limit) if limit else mixed
 
     if not args.smoke and not (os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")):
         print("[prepare] note: no HuggingFace token detected. Anonymous streaming is rate-limited and "
@@ -149,6 +152,11 @@ def main() -> None:
         missing = [source_name(s) for s in MIX if source_name(s) not in meta["by_source"]]
         if missing:
             print(f"[prepare] WARNING: 0 tokens from {missing} -- check its dataset id/field in data/prepare.py")
+        dry = mixed.exhausted() if hasattr(mixed, "exhausted") else []
+        for name, passes in dry:
+            got = 100 * meta["by_source"].get(name, 0) / max(1, tot)
+            print(f"[prepare] NOTE: {name} ran dry after {passes} pass(es) at {got:.1f}% of the tokens; its share "
+                  f"fell short and the other sources absorbed the difference (raise its epochs or lower its weight)")
 
     # 3) SFT + DPO data
     if not args.skip_posttrain:
