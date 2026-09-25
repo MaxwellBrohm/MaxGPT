@@ -544,7 +544,17 @@ so the field scores choices by likelihood instead. It's how the standard harness
 (EleutherAI lm-eval) evaluate base models.
 *Why we use it here:* It gives a comparable, public number against known small models and
 a capability signal beyond perplexity. Scoring is verified here; the dataset loaders run
-on the PC.
+on the training box.
+*The fixed suite (`eval/suite.py`, research report 2.4):* LAMBADA (last-word accuracy +
+target perplexity: the single-key-lookup probe for attention-output damage), PIQA,
+WinoGrande (partial scoring), ARC-Challenge and HellaSwag, 1,000 examples each, drawn once
+with a seed into `data/bench/*.jsonl` so every evaluation scores the same examples; acc and
+per-byte acc_norm, each with its binomial standard error, and an average. The run scores it
+every 10k steps inside the periodic eval (rank 0's card, ~3 min) and at the first eval
+after a restart when the last score is older than that; `scripts/eval_suite.py` scores any
+checkpoint on a free card. A second fetch with another seed is the same-checkpoint repeat
+that gives the noise floor. Batched scoring is right-padded and matches one-at-a-time
+scoring exactly (test_eval [7]).
 
 **Fixed-prompt generation tracking.**
 *What it is:* Generate from a fixed set of prompts at each eval, saving each output with
