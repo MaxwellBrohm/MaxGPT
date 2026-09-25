@@ -136,6 +136,17 @@ Stop everything: `tmux kill-server` (the trainer checkpoints every 15 min; the n
 `ultra_autostart.sh` resumes from the checkpoint). Pause only the training: `curl -X POST
 http://127.0.0.1:8800/api/pause`.
 
+**Two gotchas after a `git pull` on the box.** The dashboard server (tmux `ultra`) keeps the
+pipeline code in memory: a pulled change to `gui/server.py` (new flags on the train command, a
+new stage) does nothing until the server itself is restarted: `curl -X POST :8800/api/pause`,
+wait for `"running": false`, `tmux kill-session -t ultra`, relaunch it with the exact command the
+keeper uses (`scripts/ultra_autostart.sh`, cards `0,4,5,9`), then `curl -X POST :8800/api/start`.
+Pause + play alone only restarts the trainer subprocess, which picks up pulled changes to
+`train/`, `data/`, `eval/` and `scripts/train.py` but not the command it was launched with.
+The trainer's stdout is not in `~/MaxGPT/*.log`: read
+`runs/pretrain/ranks/<newest>/attempt_0/0/stdout.log` (the `[train] ...` startup lines: annealing,
+benchmark suite, resumed-from step) or `/api/stage/pretrain` (slow; it ships the whole metrics file).
+
 ## Home PC
 
 Stays paused while the video-editing model needs the 5070. The two checkouts share the same
