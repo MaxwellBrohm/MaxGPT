@@ -381,13 +381,17 @@ def build_default_pipeline(config, tokenizer, shards, sft_data, pref_data, runs,
                 and os.path.exists(os.path.join(ROOT, sft_data))
                 and os.path.exists(os.path.join(ROOT, pref_data)))
 
+    def suite_flags():   # the fixed benchmark suite, once it has been fetched (scripts/eval_suite.py --fetch)
+        return (["--suite-dir", "data/bench", "--suite-every", "10000"]
+                if os.path.exists(os.path.join(ROOT, "data", "bench", "suite.json")) else [])
+
     stages = [
         Stage("data", "Data", lambda: [py, "-u", "scripts/prepare_data.py", "--config", config,
               "--metrics-out", os.path.join(runs, "data", "metrics.jsonl")],
               os.path.join(runs, "data"), kind="data", done_when=data_done),
         Stage("pretrain", "Pretrain", lambda: train_cmd(["scripts/train.py", "--config", config,
               "--data", shards, "--out", os.path.join(runs, "pretrain"), "--tokenizer", tokenizer,
-              "--eval-data", (eval_shards or shards), "--eval-every", "500",
+              "--eval-data", (eval_shards or shards), "--eval-every", "500", *suite_flags(),
               "--stop-file", os.path.join(runs, "pretrain", "STOP")], os.path.join(runs, "pretrain")),
               os.path.join(runs, "pretrain")),
         Stage("sft", "SFT", lambda: train_cmd(["scripts/sft.py", "--config", config,

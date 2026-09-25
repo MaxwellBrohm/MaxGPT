@@ -35,6 +35,10 @@ def main() -> None:
     ap.add_argument("--eval-data", default=None, help="held-out shard dir for periodic val perplexity")
     ap.add_argument("--eval-every", type=int, default=0, help="run eval every N steps")
     ap.add_argument("--tokenizer", default=None, help="tokenizer json (enables sample generations in eval)")
+    ap.add_argument("--suite-dir", default=None, help="fixed benchmark suite dir (data/bench, see scripts/eval_suite.py)")
+    ap.add_argument("--suite-every", type=int, default=10000,
+                    help="score the suite at the eval on every Nth step, and at the first eval after a "
+                         "(re)start when the last scored one is older than N steps")
     args = ap.parse_args()
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -63,8 +67,24 @@ def main() -> None:
         val_data = PackedShardDataset(args.eval_data, mcfg.seq_len)
         etok = UltraTokenizer(args.tokenizer) if args.tokenizer else None
         prompts = ["The meaning of life is", "Once upon a time", "def add(a, b):"] if etok else None
-        eval_fn = lambda m, step: evaluate(m, tokenizer=etok, val_data=val_data,
-                                           sample_prompts=prompts, device=device)
+        suite, last = None, [None]
+        if args.suite_dir and etok:
+            from eval.suite import load_suite, run_suite, last_suite_step
+            suite = load_suite(args.suite_dir) or None
+            if suite:
+                last[0] = last_suite_step(os.path.join(args.out, "metrics.jsonl"))
+                print(f"[train] benchmark suite: {sum(len(v) for v in suite.values())} examples over "
+                      f"{list(suite)}, every {args.suite_every} steps (last scored: {last[0]})", flush=True)
+
+        def eval_fn(m, step):
+            rec = evaluate(m, tokenizer=etok, val_data=val_data, sample_prompts=prompts, device=device)
+            due = suite and args.suite_every and (step % args.suite_every == 0 or last[0] is None
+                                                  or step - last[0] >= args.suite_every)
+            if due:                                    # the fixed suite rides in the same eval row
+                rec["suite"] = run_suite(m, etok, suite, device=device)
+                rec["suite_avg"] = rec["suite"]["avg"]
+                last[0] = step
+            return rec
         if args.eval_every:
             tcfg["eval_every"] = args.eval_every
 

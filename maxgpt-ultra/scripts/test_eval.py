@@ -7,6 +7,7 @@ timed completions.
 
 Run from maxgpt-ultra/:  ../venv/bin/python scripts/test_eval.py
 """
+import json
 import os
 import sys
 
@@ -39,6 +40,8 @@ def main() -> None:
     print("=" * 72)
 
     print("\n[setup] tiny tokenizer + shards + model; memorize for 80 steps")
+    torch.manual_seed(0)      # the model is built before the Trainer seeds torch: pin the init, or the
+                              # toy memorizes a different subset of the sentences on every run
     train_tokenizer(iter(DOCS), vocab_size=1000, out_path=TOK)
     tok = UltraTokenizer(TOK)
     tokenize_to_shards(DOCS, tok, SHARDS, shard_size=2048)
@@ -99,6 +102,59 @@ def main() -> None:
     assert a["val_tokens"] == 4 * 2 * seq_len, a["val_tokens"]
     print(f"  two evals around a moved stream position agree exactly (val_loss={a['val_loss']:.4f}, "
           f"{a['val_tokens']} tokens) ✓")
+
+    print("\n[7] batched scoring (right-padded) equals one-at-a-time scoring")
+    from eval.suite import score_continuations, run_suite, write_suite, load_suite, last_suite_step, format_table
+    for _ in range(60):                 # memorize harder: at 80 steps a sentence or two is still marginal,
+        trainer.train_step()            # and which ones flips with CPU numeric noise between runs
+    # only the first two sentences, with 2+ context tokens: the 2-layer toy learns those cold
+    # (log-prob ~ -0.002); the other two sentences, and any 1-token context (position 0 never
+    # follows an end-of-text here, unlike in training), flip with CPU numeric noise between runs.
+    # Unequal total lengths (3, 4, 5, 5, 5 tokens) so the batched path really pads.
+    pairs = [("alpha beta", " gamma"), ("one two three", " four"), ("alpha beta gamma", " delta epsilon"),
+             ("one two", " three four five"), ("one two three four", " five")]
+    one = score_continuations(model, tok, pairs, device="cpu", batch_size=1)
+    many = score_continuations(model, tok, pairs, device="cpu", batch_size=5)
+    for (a, ka, ba, ga), (b, kb, bb, gb) in zip(one, many):
+        assert abs(a - b) < 1e-4 and (ka, ba, ga) == (kb, bb, gb), (a, b, ga, gb)
+    bad = [p for p, (_, _, _, g) in zip(pairs, many) if not g]
+    assert not bad, f"memorized continuations should all be greedy matches; not greedy: {bad}"
+    print(f"  {len(pairs)} pairs of unequal length: log-probs agree within 1e-4, greedy flags agree ✓")
+
+    print("\n[8] suite scorers, fixed-suite files, cadence helper")
+    suite = {
+        "lambada": [{"context": d.rsplit(" ", 1)[0], "target": " " + d.rsplit(" ", 1)[1]} for d in DOCS[:2]],
+        "piqa": [{"context": "one two three", "choices": [" four five", " purple", " west center"], "answer": 0},
+                 {"context": "alpha beta", "choices": [" west", " gamma delta epsilon"], "answer": 1}],
+        "winogrande": [{"contexts": ["red green blue", "alpha beta gamma"], "continuation": " yellow purple", "answer": 0},
+                       {"contexts": ["alpha beta", "one two"], "continuation": " three four five", "answer": 1}],
+    }
+    res = run_suite(model, tok, suite, device="cpu", batch_size=4)
+    assert res["lambada"]["acc"] == 1.0 and res["lambada"]["ppl"] < 1.5, res["lambada"]
+    assert res["piqa"]["acc"] == 1.0 and res["piqa"]["acc_norm"] == 1.0, res["piqa"]
+    assert res["winogrande"]["acc"] == 1.0, res["winogrande"]
+    assert abs(res["avg"] - 1.0) < 1e-9 and res["precision"] == "fp32", (res["avg"], res["precision"])
+    bench = "/tmp/maxgpt_ultra_eval_bench"
+    write_suite(bench, suite, seed=0)
+    assert load_suite(bench) == suite, "suite files did not round-trip"
+    assert load_suite(bench, n=1)["piqa"] == suite["piqa"][:1]
+    mp = "/tmp/maxgpt_ultra_eval_metrics.jsonl"
+    with open(mp, "w") as f:
+        f.write(json.dumps({"step": 10, "loss": 1.0}) + "\n")
+        f.write(json.dumps({"step": 500, "event": "eval", "val_loss": 1.0, "suite": {"avg": 0.5}}) + "\n")
+        f.write(json.dumps({"step": 1000, "event": "eval", "val_loss": 1.0}) + "\n")
+    assert last_suite_step(mp) == 500 and last_suite_step("/tmp/does_not_exist.jsonl") is None
+    import eval.suite as ES                            # acc vs acc_norm on a case where they disagree
+    real_scorer = ES.score_continuations
+    # choice 0: raw -1.0 over 2 bytes (-0.5 per byte); choice 1: raw -3.0 over 30 bytes (-0.1 per byte)
+    ES.score_continuations = lambda m, t, pairs, **kw: [(-1.0, 1, 2, True), (-3.0, 3, 30, False)]
+    try:
+        r2 = ES.eval_mc(None, None, [{"context": "c", "choices": ["ab", "x" * 30], "answer": 1}])
+    finally:
+        ES.score_continuations = real_scorer
+    assert r2["acc"] == 0.0 and r2["acc_norm"] == 1.0, r2
+    print("  " + format_table(res).replace("\n", "\n  "))
+    print("  memorized model scores 100% in all three formats; files round-trip; last suite step = 500 ✓")
 
     print("ALL CHECKS PASSED ✅")
     print("=" * 72)
