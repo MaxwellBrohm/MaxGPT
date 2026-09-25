@@ -54,13 +54,18 @@ ANNEAL_MIX = [
     {"path": "HuggingFaceTB/finemath",           "name": "infiwebmath-4plus", "text_field": "text", "weight": 0.12},
     {"path": "bigcode/the-stack-smol-xl",        "name": None, "label": "stack-smol-xl-nonpython",
      "text_field": "content", "exclude": {"lang": ["Python", "Jupyter Notebook"]},               "weight": 0.20},
-    {"path": "code-search-net/code_search_net",  "name": "javascript", "label": "csn-javascript", "text_field": "whole_func_string", "weight": 0.04},
-    {"path": "code-search-net/code_search_net",  "name": "java",       "label": "csn-java",       "text_field": "whole_func_string", "weight": 0.04},
-    {"path": "code-search-net/code_search_net",  "name": "go",         "label": "csn-go",         "text_field": "whole_func_string", "weight": 0.03},
-    {"path": "code-search-net/code_search_net",  "name": "php",        "label": "csn-php",        "text_field": "whole_func_string", "weight": 0.02},
-    {"path": "code-search-net/code_search_net",  "name": "ruby",       "label": "csn-ruby",       "text_field": "whole_func_string", "weight": 0.02},
-    {"local": "data/sft.jsonl",                   "name": "chat-sft",   "render": "chatml",        "weight": 0.13},
+    {"path": "code-search-net/code_search_net",  "name": "javascript", "label": "csn-javascript", "text_field": "whole_func_string", "weight": 0.04, "epochs": 2},
+    {"path": "code-search-net/code_search_net",  "name": "java",       "label": "csn-java",       "text_field": "whole_func_string", "weight": 0.04, "epochs": 2},
+    {"path": "code-search-net/code_search_net",  "name": "go",         "label": "csn-go",         "text_field": "whole_func_string", "weight": 0.03, "epochs": 2},
+    {"path": "code-search-net/code_search_net",  "name": "php",        "label": "csn-php",        "text_field": "whole_func_string", "weight": 0.02, "epochs": 2},
+    {"path": "code-search-net/code_search_net",  "name": "ruby",       "label": "csn-ruby",       "text_field": "whole_func_string", "weight": 0.02, "epochs": 2},
+    {"local": "data/sft.jsonl",                   "name": "chat-sft",   "render": "chatml",        "weight": 0.13, "epochs": 3},
 ]
+# "epochs": the small sources are far smaller than their share of a 6B-token build (the SFT chat is
+# 127M tokens = 2.1%, all of CodeSearchNet ~280M = 4.7%), so with one pass they run dry early and the
+# big three absorb the difference (v2 build: 52/26/16 math/code/webmath, 2% chat). Repeating them a
+# few times costs little (repeated data is near-free up to ~4 epochs) and lifts chat to ~6% and the
+# CodeSearchNet languages to ~9%; the remaining shortfall still goes to the big sources by ratio.
 
 
 def source_name(spec: dict) -> str:
@@ -111,6 +116,7 @@ class LocalJsonlSource:
                     continue
                 if text:
                     yield {"text": text}
+        self._resume = self.i = 0          # pass finished: the next pass (another epoch) starts at line 0
 
     def state_dict(self) -> dict:
         return {"line": int(self.i)}
@@ -189,7 +195,8 @@ class MixedStream:
             name = source_name(s)
             if s.get("local"):                      # a local jsonl (e.g. the SFT chat data) as a source
                 ds = LocalJsonlSource(s["local"], render=s.get("render"), text_field=s.get("text_field", "text"))
-                srcs.append({"name": name, "ds": ds, "w": float(s["weight"]), "field": "text", "alive": True})
+                srcs.append({"name": name, "ds": ds, "w": float(s["weight"]), "field": "text", "alive": True,
+                             "epochs": max(1, int(s.get("epochs", 1))), "epoch": 0})
                 continue
             from datasets import load_dataset
             try:
@@ -198,7 +205,8 @@ class MixedStream:
                 print(f"[data] WARNING: could not open {name}: {type(e).__name__}: {e}. Skipping it.")
                 continue
             srcs.append({"name": name, "ds": ds, "w": float(s["weight"]),
-                         "field": s.get("text_field", "text"), "alive": True, "exclude": s.get("exclude")})
+                         "field": s.get("text_field", "text"), "alive": True, "exclude": s.get("exclude"),
+                         "epochs": max(1, int(s.get("epochs", 1))), "epoch": 0})
         if not srcs:
             raise RuntimeError("no data sources could be opened (check network / dataset ids)")
         if self._pending_state is not None:
@@ -216,6 +224,7 @@ class MixedStream:
             if not d:
                 continue
             e["alive"] = d["alive"]
+            e["epoch"] = int(d.get("epoch", 0))
             if d.get("ds") is not None:
                 try:
                     e["ds"].load_state_dict(d["ds"])
@@ -232,7 +241,12 @@ class MixedStream:
             try:
                 ex = next(e["it"])
             except StopIteration:
-                print(f"[data] source exhausted: {e['name']}", flush=True)
+                e["epoch"] += 1
+                if e["epoch"] < e["epochs"]:              # another pass over a small source
+                    print(f"[data] source {e['name']}: pass {e['epoch'] + 1} of {e['epochs']}", flush=True)
+                    e["it"] = iter(e["ds"])
+                    continue
+                print(f"[data] source exhausted: {e['name']} (after {e['epoch']} pass(es))", flush=True)
                 e["alive"] = False
                 continue
             except Exception as err:                   # a network / HF error must not kill the whole build
@@ -255,9 +269,14 @@ class MixedStream:
         self._open()
         return {"rng": _rng_state_to_json(self._rng),
                 "chars": dict(self._chars), "rep_chars": dict(self._rep_chars), "rep_tokens": dict(self._rep_tokens),
-                "sources": [{"name": e["name"], "alive": e["alive"],
+                "sources": [{"name": e["name"], "alive": e["alive"], "epoch": e["epoch"],
                              "ds": (e["ds"].state_dict() if e["alive"] else None)}
                             for e in self._sources]}
+
+    def exhausted(self) -> list[tuple[str, int]]:
+        """(name, passes) of every source that ran dry, so a build can report which shares fell short."""
+        self._open()
+        return [(e["name"], e["epoch"]) for e in self._sources if not e["alive"]]
 
     def load_state_dict(self, state: dict) -> None:
         # The rng and the token accounting are restored right away: the shard writer replays the

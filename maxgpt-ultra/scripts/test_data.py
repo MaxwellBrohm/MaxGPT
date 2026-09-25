@@ -239,6 +239,39 @@ def main() -> None:
     print(f"  {100*share9:.1f}% long via the writer; crashed at doc 3000 with {len(prog9['pending'])} pending, "
           f"resumed build identical ({r9['total_tokens']} tokens, {len(r9['shards'])} shards) ✓")
 
+    print("\n[10] a small source repeats for its epochs, then runs dry; resume inside a pass is exact")
+    aj, bj = SHARDS + "_epochA.jsonl", SHARDS + "_epochB.jsonl"
+    with open(aj, "w") as f:
+        for i in range(5):
+            f.write(_json.dumps({"text": f"A{i} " + "a" * 40}) + "\n")
+    with open(bj, "w") as f:
+        for i in range(40):
+            f.write(_json.dumps({"text": f"B{i:02d} " + "b" * 40}) + "\n")
+    spec10 = [{"local": aj, "name": "A", "weight": 0.5, "epochs": 3}, {"local": bj, "name": "B", "weight": 0.5}]
+    full = [(t, s) for t, s in MixedStream(spec10, seed=0)]
+    a_docs = [t[:2] for t, s in full if s == "A"]
+    assert a_docs == [f"A{i}" for i in range(5)] * 3, (len(a_docs), a_docs[:8])
+    assert sum(1 for _, s in full if s == "B") == 40
+    ms = MixedStream(spec10, seed=0)
+    it = iter(ms)
+    first = [next(it) for _ in range(6)]           # A is 3 docs into its FIRST pass here
+    st = ms.state_dict()
+    ms2 = MixedStream(spec10, seed=0)
+    ms2.load_state_dict(st)
+    rest = [(t, s) for t, s in ms2]
+    assert first + rest == full, "resume changed the stream across the pass boundaries"
+    assert sorted(ms2.exhausted()) == [("A", 3), ("B", 1)], ms2.exhausted()
+    ms3 = MixedStream(spec10, seed=0)
+    it3 = iter(ms3)
+    first3 = [next(it3) for _ in range(14)]        # A is 2 docs into its SECOND pass here
+    st3 = ms3.state_dict()
+    assert [d for d in st3["sources"] if d["name"] == "A"][0]["epoch"] == 1, st3["sources"]
+    ms4 = MixedStream(spec10, seed=0)
+    ms4.load_state_dict(st3)
+    assert first3 + [(t, s) for t, s in ms4] == full, "resume inside the second pass changed the stream"
+    print(f"  A (5 docs, epochs=3) yielded 15 docs in order, B 40; resumed after 6 docs -> identical; "
+          f"exhausted: {sorted(ms2.exhausted())} ✓")
+
     print("\n" + "=" * 72)
     print("ALL CHECKS PASSED ✅")
     print("=" * 72)
