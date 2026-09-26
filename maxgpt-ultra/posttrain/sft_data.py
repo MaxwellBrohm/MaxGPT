@@ -331,7 +331,10 @@ def _oasst_threads(rows, lang: str = "en") -> list[dict]:
             if not kids:
                 break
             cur, expect = sorted(kids, key=rank_key)[0], nxt
-        if len(msgs) >= 2 and msgs[0]["role"] == "user" and msgs[1]["role"] == "assistant":
+        if msgs and msgs[-1]["role"] == "user":      # a dangling prompt with no reply teaches nothing
+            msgs.pop()                                # (26% of threads in the 2026-09-26 dry run)
+        msgs = clean_messages(msgs)
+        if msgs is not None and len(msgs) >= 2:
             threads.append({"messages": msgs})
     return threads
 

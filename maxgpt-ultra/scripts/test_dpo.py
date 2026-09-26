@@ -17,6 +17,7 @@ import torch
 
 from model import ModelConfig, MaxGPTUltra
 from tokenizer.tokenizer import train_tokenizer, UltraTokenizer
+from tokenizer.tokenizer import IM_END
 from posttrain.dpo import DPODataset, DPOTrainer, dpo_loss, sequence_logprobs
 
 TOK = "/tmp/maxgpt_ultra_dpo_tok.json"
@@ -81,6 +82,17 @@ def main() -> None:
     assert not PD.pair_margin_ok({"chosen_instruct_reward": 1.0, "rejected_instruct_reward": 2.0}, 0.0)
     assert PD.pair_margin_ok({"prompt": "no reward columns"}, 0.0)
     print(f"  LN loss {float(ln_loss):.4f} (gap 0.1/token) vs vanilla {float(va_loss):.4f} (gap 1/sequence); aux NLL adds 0.3 x 1.0; margin filter ✓")
+
+    print("\n[5] a pair with a prompt longer than the context keeps its whole response (prompt trimmed from the left)")
+    long_prompt = [{"role": "user", "content": " ".join(["say a"] * 60)}]
+    dl = DPODataset([{"prompt": long_prompt, "chosen": "a", "rejected": "b"}], tok, seq_len=24)
+    assert len(dl) == 1 and dl.dropped == 0, (len(dl), dl.dropped)
+    cid, cm, rid, rm = dl.items[0]
+    assert len(cid) <= 24 and sum(cm) == len(tok.encode("a" + IM_END + "\n")) and cm[-1] is True, (len(cid), sum(cm))
+    assert tok.decode([t for t, m in zip(cid, cm) if m]).startswith("a"), "the response must be the scored part"
+    huge = DPODataset([{"prompt": long_prompt, "chosen": " ".join(["x"] * 200), "rejected": "b"}], tok, seq_len=24)
+    assert len(huge) == 1 and sum(huge.items[0][1]) == 23, "a response longer than the context is cut to fit, never emptied"
+    print(f"  {len(cid)}-token pair: response tokens all kept ({sum(cm)}), prompt cut to {len(cid) - sum(cm)} ✓")
 
     print("\n[3] after DPO, loss falls and the preference margin grows")
     data.pos = 0

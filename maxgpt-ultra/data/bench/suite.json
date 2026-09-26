@@ -1,0 +1,26 @@
+{
+  "seed": 0,
+  "created": "2026-09-26 00:28",
+  "tasks": {
+    "lambada": {
+      "n": 1000,
+      "source": "EleutherAI/lambada_openai test"
+    },
+    "piqa": {
+      "n": 1000,
+      "source": "ybisk/piqa validation (refs/convert/parquet)"
+    },
+    "winogrande": {
+      "n": 1000,
+      "source": "allenai/winogrande winogrande_xl validation"
+    },
+    "arc_c": {
+      "n": 1000,
+      "source": "allenai/ai2_arc ARC-Challenge test"
+    },
+    "hellaswag": {
+      "n": 1000,
+      "source": "Rowan/hellaswag validation"
+    }
+  }
+}

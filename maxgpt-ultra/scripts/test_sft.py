@@ -130,6 +130,17 @@ def main() -> None:
     assert ReplayBlend(SFTDataset(EXAMPLES, tok, seq_len=24), PackedShardDataset(shards7, 24), frac=0.0).n_replay(8) == 0
     print("  6 SFT + 2 replay windows per batch of 8; resumed blend reproduces the next batch ✓")
 
+    print("\n[8] OpenAssistant threads end on a reply: a dangling final prompt is trimmed, empty turns drop the thread")
+    from posttrain.sft_data import _oasst_threads
+    rows8 = [{"message_id": "r", "parent_id": None, "role": "prompter", "text": "hi", "lang": "en"},
+             {"message_id": "a", "parent_id": "r", "role": "assistant", "text": "hello", "lang": "en", "rank": 0},
+             {"message_id": "p2", "parent_id": "a", "role": "prompter", "text": "and then?", "lang": "en"},   # no reply below it
+             {"message_id": "r2", "parent_id": None, "role": "prompter", "text": "empty reply below", "lang": "en"},
+             {"message_id": "a2", "parent_id": "r2", "role": "assistant", "text": "   ", "lang": "en", "rank": 0}]
+    th = _oasst_threads(rows8)
+    assert len(th) == 1 and [m["role"] for m in th[0]["messages"]] == ["user", "assistant"], th
+    print("  trailing prompt trimmed; thread with a blank reply dropped ✓")
+
     print("\n[3] model learns the assistant replies")
     ds = SFTDataset(EXAMPLES, tok, seq_len=24)
     tcfg = {"micro_batch": 8, "grad_accum": 1, "total_tokens": 24 * 8 * 200,
