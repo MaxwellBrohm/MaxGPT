@@ -174,6 +174,17 @@ def main() -> None:
     assert "piqa" in format_compare(cmp) and "+16.7" in format_compare(cmp)
     print("  outcomes match the accuracies; paired delta, flips, CI and the average check out ✓")
 
+    print("\n[10] activation telemetry: one finite max per layer for the residual stream and the MLP")
+    from eval.harness import activation_stats
+    st = activation_stats(model, data, batch_size=2, device="cpu")
+    assert len(st["act_max_resid"]) == cfg.n_layers == len(st["act_max_mlp"]), st
+    assert all(isinstance(v, float) and v > 0 for v in st["act_max_resid"] + st["act_max_mlp"]), st
+    assert st["act_max"] == max(st["act_max_resid"] + st["act_max_mlp"])
+    ev = evaluate(model, tokenizer=tok, val_data=data, device="cpu")
+    assert "act_max" in ev and "val_loss" in ev, list(ev)
+    assert all(v is not None for v in ev["act_max_mlp"])
+    print(f"  {cfg.n_layers} layers: resid max {st['act_max_resid']}, mlp max {st['act_max_mlp']}; in the eval row ✓")
+
     print("ALL CHECKS PASSED ✅")
     print("=" * 72)
 
