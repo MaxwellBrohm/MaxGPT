@@ -97,17 +97,25 @@ class DPODataset:
         self.seq_len = seq_len
         self.pad = tok.pad_id
         self.items = []
+        self.dropped = 0            # pairs whose responses could not be kept inside seq_len
         for ex in examples:
             p = tok.encode(tok.render_chat(ex["prompt"], add_generation_prompt=True))
 
             def build(text):
-                r = tok.encode(f"{text}{IM_END}\n")
-                ids = (p + r)[:seq_len]
-                mask = ([False] * len(p) + [True] * len(r))[:seq_len]
+                # The response is the signal, so it is kept whole and the PROMPT is trimmed from the
+                # left when the pair does not fit (the 2026-09-26 dry run found pairs whose long
+                # prompt pushed the whole response past seq_len, leaving nothing to score).
+                r = tok.encode(f"{text}{IM_END}\n")[:seq_len - 1]
+                pp = p[-(seq_len - len(r)):] if len(p) > seq_len - len(r) else p
+                ids = pp + r
+                mask = [False] * len(pp) + [True] * len(r)
                 return ids, mask
 
             cid, cm = build(ex["chosen"])
             rid, rm = build(ex["rejected"])
+            if not any(cm[1:]) or not any(rm[1:]):
+                self.dropped += 1
+                continue
             self.items.append((cid, cm, rid, rm))
         self.pos = 0
         self.rank, self.world = 0, 1   # multi-GPU: see shard()
