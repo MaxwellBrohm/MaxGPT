@@ -8,7 +8,9 @@ NaN and rolls back.
 Run from maxgpt-ultra/:  ../venv/bin/python scripts/test_train.py
 """
 import math
+import json
 import os
+import shutil
 import sys
 
 import numpy as np
@@ -338,6 +340,39 @@ def main() -> None:
     w = torch.load(os.path.join(OUT + "_wts", "checkpoints", "weights_00000020.pt"), weights_only=False)
     assert "optimizer" not in w and w["step"] == 20 and set(w["model"]) == set(mw.state_dict())
     print(f"  none before step 10; after step 20 the last 3 of {{10..20 step 2}} remain: {names} (weights only) ✓")
+
+    print("\n[14] duty cycle: idle after each step in proportion, live override file, off by default")
+    import train.trainer as TT
+    sleeps = []
+    real_sleep = TT.time.sleep
+    TT.time.sleep = lambda s: sleeps.append(s)
+    try:
+        out14 = OUT + "_duty"
+        shutil.rmtree(out14, ignore_errors=True)
+        t14 = Trainer(MaxGPTUltra(cfg), PackedShardDataset(SHARDS, seq_len),
+                      {**tcfg, "duty_cycle": 0.5, "log_every": 1}, device="cpu", out_dir=out14, seed=0)
+        t14.train(max_steps=3)
+        rows = [json.loads(l) for l in open(os.path.join(out14, "metrics.jsonl")) if '"duty"' in l]
+        assert len(rows) == 3 and all(r["duty"] == 0.5 for r in rows), rows
+        for r in rows:                                     # duty 0.5: idle for exactly one step's busy time
+            assert abs(r["duty_idle_s"] - r["duty_busy_s"]) <= 1e-3, r
+        assert len(sleeps) == 3 and all(abs(a - r["duty_idle_s"]) <= 1e-3 for a, r in zip(sleeps, rows)), (sleeps, rows)
+        with open(os.path.join(out14, "DUTY"), "w") as f:
+            f.write("0.25\n")
+        t14.train(max_steps=1)                             # the file overrides the config at the next read
+        last = [json.loads(l) for l in open(os.path.join(out14, "metrics.jsonl")) if '"duty"' in l][-1]
+        assert last["duty"] == 0.25 and abs(last["duty_idle_s"] - 3 * last["duty_busy_s"]) <= 3e-3, last
+        n_before = len(sleeps)
+        out14b = OUT + "_duty_off"
+        shutil.rmtree(out14b, ignore_errors=True)
+        t14b = Trainer(MaxGPTUltra(cfg), PackedShardDataset(SHARDS, seq_len), {**tcfg, "log_every": 1},
+                       device="cpu", out_dir=out14b, seed=0)
+        t14b.train(max_steps=2)
+        assert len(sleeps) == n_before, "no duty cycle means no sleeping"
+        assert not any('"duty"' in l for l in open(os.path.join(out14b, "metrics.jsonl")))
+    finally:
+        TT.time.sleep = real_sleep
+    print(f"  duty 0.5 -> idle == busy on 3 steps; DUTY file -> 0.25 (idle == 3 x busy); default -> no sleeps ✓")
 
     print("\n" + "=" * 72)
     print("ALL CHECKS PASSED ✅")
