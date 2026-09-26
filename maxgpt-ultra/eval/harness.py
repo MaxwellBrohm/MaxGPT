@@ -42,6 +42,40 @@ def eval_perplexity(model, data, n_batches: int = 40, batch_size: int = 8, devic
 
 
 @torch.no_grad()
+def activation_stats(model, data, batch_size: int = 2, device: str = "cpu") -> dict:
+    """fp16 headroom telemetry (docs/research_2026-09-22.md 2.7): on one held-out batch, the
+    largest |value| per layer in the residual stream after each block and in each SwiGLU output.
+    fp16 tops out at 65,504; the one published fp16 pretraining run on pre-Ampere hardware saw
+    activations above 10,000 after 1T tokens, and sandwich/QK-norm plus a per-head gate (both
+    here) measured peaks of ~100-200 at 7B. This is measured in fp32 (the eval forward), so it
+    shows the true magnitude even where fp16 would already have overflowed."""
+    raw = model
+    for attr in ("module", "_orig_mod", "module"):
+        raw = getattr(raw, attr, raw)
+    blocks = list(raw.blocks)
+    resid, mlp = [None] * len(blocks), [None] * len(blocks)
+    hooks = []
+    for i, b in enumerate(blocks):
+        hooks.append(b.register_forward_hook(
+            lambda m, inp, out, i=i: resid.__setitem__(i, float(out[0].detach().float().abs().max()))))
+        hooks.append(b.mlp.register_forward_hook(
+            lambda m, inp, out, i=i: mlp.__setitem__(i, float(out.detach().float().abs().max()))))
+    try:
+        model.eval()
+        if hasattr(data, "pos"):
+            data.pos, data.epoch, data._block_i = 0, 0, 0
+        x, _ = data.next_batch(batch_size, device)
+        model(x)
+    finally:
+        for h in hooks:
+            h.remove()
+    resid = [round(v, 2) if v is not None else None for v in resid]
+    mlp = [round(v, 2) if v is not None else None for v in mlp]
+    vals = [v for v in resid + mlp if v is not None]
+    return {"act_max_resid": resid, "act_max_mlp": mlp, "act_max": max(vals) if vals else None}
+
+
+@torch.no_grad()
 def _choice_logprob(model, prompt_ids: list[int], choice_ids: list[int], device: str) -> float:
     """Length-normalized log-likelihood of `choice_ids` continuing `prompt_ids`."""
     ids = torch.tensor([prompt_ids + choice_ids], device=device)
@@ -94,6 +128,8 @@ def evaluate(model, tokenizer=None, val_data=None, mc_examples=None, sample_prom
     if val_data is not None:
         m.update(eval_perplexity(model, val_data, device=device,
                                  n_batches=kw.get("n_batches", 40), batch_size=kw.get("batch_size", 8)))
+        if hasattr(getattr(model, "module", model), "blocks") or hasattr(model, "blocks"):
+            m.update(activation_stats(model, val_data, device=device))   # fp16 headroom, per layer
     if mc_examples and tokenizer is not None:
         m.update(eval_multiple_choice(model, tokenizer, mc_examples, device=device))
     if sample_prompts and tokenizer is not None:
