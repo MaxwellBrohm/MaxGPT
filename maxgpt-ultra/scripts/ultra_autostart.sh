@@ -80,10 +80,38 @@ say "dashboard http://localhost:8800 via: ssh -L 8800:localhost:8800 lambda"
 # keeper: stay alive and press play again whenever the pipeline is idle for a reason that is not the
 # watchdog (a crashed stage, a stray OOM from someone else's job on one of our cards, a reboot of
 # the dashboard). Never overrides a thermal pause: it checks the watchdog's state file first.
-say "keeper: checking every 10 min"
+# Off switch and limits (gui/gate.py is the single gate the dashboard, keeper and watchdog share):
+#   touch ~/MaxGPT/HOLD        nothing starts or restarts, and a running job is paused within 10 min
+#   RUN_HOURS=22-07 ...        training only inside these local hours; paused outside them
+# The keeper also stops itself (by setting HOLD) after 3 dashboard restarts or 6 plays in 24 h:
+# something that keeps killing the job is not a crash to paper over.
+HOLD="${MAXGPT_HOLD_FILE:-$HOME/MaxGPT/HOLD}"
+export MAXGPT_HOLD_FILE="$HOLD" MAXGPT_RUN_HOURS="${RUN_HOURS:-}"
+EVENTS="$HOME/MaxGPT/keeper_events"
+count_recent() { [ -f "$EVENTS" ] || { echo 0; return; }; awk -v now="$(date +%s)" -v kind="$1" '$2 == kind && now - $1 < 86400' "$EVENTS" | wc -l | tr -d ' '; }
+note_event() { echo "$(date +%s) $1" >> "$EVENTS"; }
+API=http://127.0.0.1:8800
+said_hold=0
+say "keeper: checking every 10 min (HOLD file: $HOLD; allowed hours: ${RUN_HOURS:-always})"
 while :; do
     sleep 600
+    if ! WHY=$(python3 gui/gate.py 2>&1); then
+        P=$(curl -s -m 5 $API/api/pipeline)
+        if echo "$P" | grep -q '"running": *true'; then
+            curl -s -m 10 -X POST $API/api/pause >/dev/null
+            say "keeper: $WHY: paused the run"
+        fi
+        [ "$said_hold" = 0 ] && say "keeper: $WHY: no restarts, no play"
+        said_hold=1
+        continue
+    fi
+    said_hold=0
     if ! tmux has-session -t ultra 2>/dev/null; then
+        if [ "$(count_recent dashboard)" -ge 3 ]; then
+            touch "$HOLD"; say "keeper: the dashboard has been down 3 times in 24 h: something keeps stopping it; HOLD set, not restarting"
+            continue
+        fi
+        note_event dashboard
         tmux new-session -d -s ultra "cd $HOME/MaxGPT/maxgpt-ultra && source $HOME/venv/bin/activate && export PYTHONUNBUFFERED=1 CUDA_VISIBLE_DEVICES=$CARDS && python gui/server.py --config configs/ultra_lambda_final.yaml --shards data/shards_train --eval-shards data/shards_val_ultra 2>&1 | tee -a $HOME/MaxGPT/ultra_server.log"
         say "keeper: dashboard was down, restarted it"; sleep 15
     fi
@@ -94,7 +122,12 @@ while :; do
     P=$(curl -s -m 5 http://127.0.0.1:8800/api/pipeline)
     WS=$(cut -d' ' -f1 "$HOME/MaxGPT/thermal_state" 2>/dev/null || echo armed)
     if echo "$P" | grep -q '"running": *false' && [ "$WS" = "armed" ] && ! echo "$P" | grep -q '"status": *"ready"'; then
-        R=$(curl -s -m 10 -X POST http://127.0.0.1:8800/api/start)
+        if [ "$(count_recent play)" -ge 6 ]; then
+            touch "$HOLD"; say "keeper: pressed play 6 times in 24 h: the job keeps dying; HOLD set, not pressing again"
+            continue
+        fi
+        note_event play
+        R=$(curl -s -m 10 -X POST $API/api/start)
         say "keeper: pipeline idle (watchdog $WS): pressed play -> $R"
     fi
 done

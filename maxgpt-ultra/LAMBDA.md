@@ -37,6 +37,25 @@ install lives in `$HOME`.
   the grads live in the all-reduce buckets; the trainer binds them there (see TECHNIQUES.md),
   which is what made the 1.1B fit 2 GPUs at micro_batch 2 without checkpointing.
 
+## Incident 2026-09-25 and the off switch
+
+IS (Michael Gilchrist) terminated the processes because the chassis was extremely hot with a
+burning smell, and asked what the workload was. Our keeper could not tell an admin stop from a
+crash and would have restarted the dashboard within 10 minutes. Nothing runs again without a
+written OK from Prof. Rywalt and IS, and these controls now exist so a limit they set can be met:
+
+- **Off switch:** `touch ~/MaxGPT/HOLD`. The dashboard refuses every start (play, keeper, watchdog
+  resume, auto-advance), and the keeper pauses a running job within 10 minutes. `rm` it to allow.
+  The keeper also sets HOLD by itself after 3 dashboard restarts or 6 plays in 24 h.
+- **Allowed hours:** `RUN_HOURS=22-07 bash scripts/ultra_autostart.sh ...` (or `MAXGPT_RUN_HOURS`
+  in the dashboard's environment): training only inside the window, paused outside it.
+- **Duty cycle:** `train.duty_cycle: 0.6` in the config, or a number in `runs/pretrain/DUTY` while
+  the run is going: after each step the cards idle for (1/duty - 1) x the step's time, so 0.6 is
+  roughly 40% less average power and heat, same training, 1/0.6 x the wall time.
+- **Fewer cards:** the card list is the first argument of `scripts/ultra_autostart.sh`; rank shares
+  rebalance themselves. A power cap (`nvidia-smi -pl`) needs root, so only IS can set one.
+- **Stop everything by hand:** `tmux kill-server; pkill -u $USER -f "ultra_autostart|thermal_watch|gui/server.py|scripts/train.py|prepare_data.py|anneal_autoswap|anneal_build"; touch ~/MaxGPT/HOLD`.
+
 ## Sharing the box
 
 - `nvidia-smi` first, every time; the process table shows everyone's jobs.

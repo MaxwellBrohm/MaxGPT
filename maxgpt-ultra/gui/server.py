@@ -26,6 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 from cfg import load_yaml   # torch-free config reader (handles `extends:`)
+from gui import gate
 
 
 def visible_gpu_count() -> int:
@@ -133,15 +134,20 @@ class Pipeline:
         except Exception:
             pass
 
-    def _run(self, i: int):
+    def _run(self, i: int) -> bool:
         st = self.run_stages[i]
+        ok, why = gate.allowed()                    # HOLD file / allowed hours: see gui/gate.py
+        if not ok:
+            st.append(f"[gui] not starting: {why}")
+            st.status = "paused"
+            return False
         os.makedirs(st.run_out, exist_ok=True)
         try:
             cmd = st.build()
         except FriendlyError as e:
             st.append(f"  ERROR: {e}")
             st.status = "error"
-            return
+            return False
         try:
             os.remove(st.stop_file())
         except OSError:
@@ -153,6 +159,7 @@ class Pipeline:
                                      text=True, bufsize=1, cwd=ROOT, env=env)
         threading.Thread(target=self._read, args=(st, self.proc), daemon=True).start()
         threading.Thread(target=self._wait, args=(i, self.proc), daemon=True).start()
+        return True
 
     def _wait(self, i: int, proc):
         rc = proc.wait()
@@ -194,8 +201,7 @@ class Pipeline:
                 self.idx += 1
             if self.idx >= len(self.run_stages):
                 return False
-            self._run(self.idx)
-            return True
+            return self._run(self.idx)
 
     def pause(self) -> bool:
         st = self.current()
@@ -212,10 +218,12 @@ class Pipeline:
     def snapshot(self) -> dict:
         self.sync_from_disk()        # reflect already-built artifacts in the UI (data shows done)
         cur = self.current()
+        ok, why = gate.allowed()
         return {"stages": [{"key": s.key, "label": s.label, "status": s.status, "kind": s.kind}
                            for s in self.stages],
                 "current": cur.key if cur else None,
-                "running": self.running()}
+                "running": self.running(),
+                "gate": why}                # "ok", or why nothing may start (HOLD file / hours)
 
 
 # --------------------------------------------------------------------------- #

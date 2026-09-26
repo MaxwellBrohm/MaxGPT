@@ -192,6 +192,13 @@ class Trainer:
         self.decay_weights_keep = int(tcfg.get("decay_weights_keep", 12))
         self._last_weights_step = -1
         self.eval_every = int(tcfg.get("eval_every", 0))
+        # Duty cycle: the share of wall time the cards may work. 0.6 means every step is followed by
+        # an idle pause of 2/3 of its own duration, which cuts average power and heat by ~40% with no
+        # change to the training itself (same steps, same data, same result, 1/0.6 x the wall time).
+        # A number in <out_dir>/DUTY overrides the config while the run is going (re-read every 10
+        # steps), so a limit an administrator asks for can be applied without a restart.
+        self.duty_cycle = min(1.0, max(0.05, float(tcfg.get("duty_cycle", 1.0))))
+        self.duty_file = os.path.join(out_dir, "DUTY")
 
         # Decay-phase data annealing (docs/research_2026-09-22.md 2.3): once the shards exist, blend
         # them in from the decay start (or an explicit step), ramping up over ramp_tokens.
@@ -493,17 +500,39 @@ class Trainer:
     def resume_if_available(self) -> bool:
         return self._rollback()
 
+    def _read_duty(self, current: float) -> float:
+        """The duty cycle in force: <out_dir>/DUTY if present and sane, else the config value."""
+        duty = self.duty_cycle
+        try:
+            with open(self.duty_file, encoding="utf-8") as f:
+                duty = min(1.0, max(0.05, float(f.read().strip())))
+        except (OSError, ValueError):
+            pass
+        if duty != current and self.is_main:
+            print(f"[train] duty cycle -> {duty:.2f} (idle {1/duty - 1:.2f} x each step's time)", flush=True)
+        return duty
+
     # --- main loop ---
     def train(self, max_steps: int | None = None) -> None:
         target = self.total_steps if max_steps is None else min(self.total_steps, self.step + max_steps)
         self._t0 = time.time()
         self._log({"step": self.step, "event": "meta", "total_steps": self.total_steps,
                    "tokens_per_step": self.tokens_per_step})
+        duty = self._read_duty(1.0)
+        t_step = time.time()
         while self.step < target:
             if self._should_stop():        # GUI pause / Ctrl-C: save and exit cleanly
                 self._log({"step": self.step, "event": "paused"})
                 break
             rec = self.train_step()
+            if self.step % 10 == 0:
+                duty = self._read_duty(duty)
+            if duty < 1.0:                 # idle so the cards work only `duty` of the wall time
+                busy = time.time() - t_step
+                idle = busy * (1.0 / duty - 1.0)
+                time.sleep(idle)
+                rec["duty"], rec["duty_busy_s"], rec["duty_idle_s"] = duty, round(busy, 4), round(idle, 4)
+            t_step = time.time()
             if rec["diverged"]:
                 self._log({**rec, "event": "divergence"})
                 if not self._rollback():
