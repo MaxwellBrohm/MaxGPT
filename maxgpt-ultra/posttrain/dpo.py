@@ -52,7 +52,18 @@ def sequence_logprobs(model, ids: torch.Tensor, mask: torch.Tensor, chunk: int =
     return (tok_logp * m).sum(-1)
 
 
-def dpo_loss(policy, ref, batch, beta: float = 0.1, chunk: int = 0):
+def dpo_loss(policy, ref, batch, beta: float = 0.1, chunk: int = 0, length_norm: bool = True,
+             sft_weight: float = 0.0):
+    """DPO loss on one batch of (chosen, rejected) pairs.
+
+    length_norm=True is length-normalized DPO (Tulu 3): each sequence's log-ratio is divided by
+    its response token count before the difference, so a longer response cannot win just by
+    being longer (vanilla DPO's known failure mode, very visible in a small chat model that
+    starts rambling). The research report measured LN-DPO 47.3 vs vanilla 46.2 vs SFT 42.6.
+    sft_weight>0 adds that much of the chosen response's per-token NLL as a regularizer
+    (too much collapses DPO back into SFT). All arithmetic is fp32: the log-probs come back as
+    fp32 sums and the reference ones are stored in fp32, because at beta 0.1 the loss is a
+    difference of differences that fp16 rounding would swallow (the Turing trap)."""
     cids, cm, rids, rm = batch[:4]
     # batch carries precomputed (ref_c, ref_r) when the frozen reference was cached up front
     ref_c, ref_r = (batch[4], batch[5]) if len(batch) >= 6 else (None, None)
@@ -62,13 +73,22 @@ def dpo_loss(policy, ref, batch, beta: float = 0.1, chunk: int = 0):
         with torch.no_grad():
             ref_c = sequence_logprobs(ref, cids, cm, chunk)
             ref_r = sequence_logprobs(ref, rids, rm, chunk)
-    logits = beta * ((pol_c - pol_r) - (ref_c - ref_r))
+    len_c = cm[:, 1:].sum(-1).clamp(min=1).to(pol_c.dtype)      # response tokens actually scored
+    len_r = rm[:, 1:].sum(-1).clamp(min=1).to(pol_r.dtype)
+    gap_c, gap_r = pol_c - ref_c, pol_r - ref_r
+    if length_norm:
+        gap_c, gap_r = gap_c / len_c, gap_r / len_r
+    logits = beta * (gap_c - gap_r)
     loss = -F.logsigmoid(logits).mean()
-    chosen_reward = float((beta * (pol_c - ref_c)).mean().detach())   # stats are logging-only -> detach
-    rejected_reward = float((beta * (pol_r - ref_r)).mean().detach())
+    chosen_nll = (-pol_c / len_c).mean()                         # per-token NLL of the chosen response
+    if sft_weight > 0:
+        loss = loss + sft_weight * chosen_nll
+    chosen_reward = float((beta * gap_c).mean().detach())        # stats are logging-only -> detach
+    rejected_reward = float((beta * gap_r).mean().detach())
     stats = {"dpo_loss": float(loss.detach()), "reward_margin": chosen_reward - rejected_reward,
              "chosen_reward": chosen_reward, "rejected_reward": rejected_reward,
-             "acc": float((logits > 0).float().mean())}
+             "acc": float((logits > 0).float().mean()), "chosen_nll": float(chosen_nll.detach()),
+             "chosen_len": float(len_c.mean()), "rejected_len": float(len_r.mean())}
     return loss, stats
 
 
@@ -164,7 +184,8 @@ class DPODataset:
 class DPOTrainer:
     def __init__(self, policy, ref, data: DPODataset, tcfg: dict, device: str, out_dir: str,
                  beta: float = 0.1, seed: int = 0, stop_file: str | None = None,
-                 eval_fn=None, eval_every: int = 0):
+                 eval_fn=None, eval_every: int = 0, length_norm: bool = True, sft_weight: float = 0.0,
+                 ref_cache: str | None = None):
         self.world, self.rank, self.is_main = D.world_size(), D.rank(), D.is_main()
         self.policy = policy.to(device)
         self.ref = ref.to(device)
@@ -174,6 +195,8 @@ class DPOTrainer:
         self.data = data
         self.device = device
         self.beta = beta
+        self.length_norm, self.sft_weight = bool(length_norm), float(sft_weight)
+        self.ref_cache = ref_cache          # a shared reference-logprob cache (the beta sweep reuses one)
         self.seed = seed
         self.stop_file = stop_file
         self.out_dir = out_dir
@@ -195,7 +218,10 @@ class DPOTrainer:
         self.log_every = int(tcfg.get("log_every", 10))
         self.policy.grad_checkpointing = bool(tcfg.get("grad_checkpointing", False))
         self.optimizer = make_optimizer(self.policy, self.max_lr, tuple(tcfg.get("betas", [0.9, 0.95])),
-                                        float(tcfg.get("weight_decay", 0.0)), bool(tcfg.get("optimizer_8bit", False)))
+                                        float(tcfg.get("weight_decay", 0.0)), bool(tcfg.get("optimizer_8bit", False)),
+                                        kind=str(tcfg.get("optimizer", "adamw")).lower(),
+                                        muon_opts={"cautious_wd": tcfg.get("cautious_wd", False),
+                                                   "momentum": tcfg.get("muon_momentum", 0.95)})
         self.eval_fn = eval_fn
         self.eval_every = int(eval_every or tcfg.get("eval_every", 0))
         from train.trainer import _enable_fast_math
@@ -262,7 +288,7 @@ class DPOTrainer:
     def _precompute_reference(self) -> None:
         n = len(self.data)
         fp = self._ref_fingerprint()
-        cache = os.path.join(self.out_dir, "ref_logps.npz")
+        cache = self.ref_cache or os.path.join(self.out_dir, "ref_logps.npz")
         D.barrier()                 # every rank must see the same cache state before deciding
         if os.path.exists(cache):   # reuse across resumes; fingerprint guards against a changed SFT init
             try:
@@ -303,7 +329,8 @@ class DPOTrainer:
         while True:
             try:
                 with ctx, nosync:
-                    loss, stats = dpo_loss(self.fwd, self.ref, batch, self.beta, self.logp_chunk)
+                    loss, stats = dpo_loss(self.fwd, self.ref, batch, self.beta, self.logp_chunk,
+                                           self.length_norm, self.sft_weight)
                     self.scaler.scale(loss / self.grad_accum).backward()
                     return stats
             except Exception as e:
@@ -326,7 +353,8 @@ class DPOTrainer:
             batch = self.data.next_batch(self.batch_size, self.device)
             ctx = (torch.autocast("cuda", dtype=self.amp_dtype) if self.use_amp else nullcontext())
             with ctx:
-                loss, _ = dpo_loss(self.fwd, self.ref, batch, self.beta, self.logp_chunk)
+                loss, _ = dpo_loss(self.fwd, self.ref, batch, self.beta, self.logp_chunk,
+                                   self.length_norm, self.sft_weight)
             (loss * 0.0).backward()
             self.optimizer.zero_grad(set_to_none=False)
             self.data.load_state_dict(state)
@@ -410,10 +438,37 @@ class DPOTrainer:
         self.save()
 
 
+PREF_SOURCES = {
+    # UltraFeedback-binarized: the original plan (Zephyr's data).
+    "ultrafeedback": {"name": "HuggingFaceH4/ultrafeedback_binarized", "split": "train_prefs", "min_margin": None},
+    # UltraMix: the preference mix that ranked first for a 1B SFT model in the research report's
+    # sweep (docs/research_2026-09-22.md 3.2: SFT 33.29 -> UltraMix 38.74 average, IFEval +14,
+    # GSM8K +15). The exact 190k cut in the paper is not public; this is the authors' unfiltered
+    # 273k release with the same fields, filtered here to pairs whose reward-model margin is
+    # positive (chosen really scored above rejected), which is the preference filter.
+    "ultramix": {"name": "ketchup123/ultramix_no_pref_filter", "split": "train", "min_margin": 0.0},
+}
+
+
+def pair_margin_ok(ex: dict, min_margin: float) -> bool:
+    """True unless the row carries reward-model scores AND chosen - rejected < min_margin."""
+    c, r = ex.get("chosen_instruct_reward"), ex.get("rejected_instruct_reward")
+    if c is None or r is None:
+        return True
+    try:
+        return float(c) - float(r) >= min_margin
+    except (TypeError, ValueError):
+        return True
+
+
 def build_pref_jsonl(out_path: str, n: int = 60000,
-                     name: str = "HuggingFaceH4/ultrafeedback_binarized", split: str = "train_prefs") -> int:
+                     name: str = "HuggingFaceH4/ultrafeedback_binarized", split: str = "train_prefs",
+                     min_margin: float | None = None) -> int:
     """Stream a preference dataset into {"prompt":[...], "chosen":str, "rejected":str} jsonl
-    for DPO (PC; needs datasets)."""
+    for DPO (needs datasets + network). Rows are the ultrafeedback layout: `prompt` text and
+    `chosen`/`rejected` as message lists whose last message is the response (UltraMix shares it).
+    min_margin drops pairs whose chosen_instruct_reward - rejected_instruct_reward is below it,
+    when those columns exist."""
     from datasets import load_dataset
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     ds = load_dataset(name, split=split, streaming=True)
@@ -422,6 +477,8 @@ def build_pref_jsonl(out_path: str, n: int = 60000,
         for ex in ds:
             prompt, chosen, rejected = ex.get("prompt"), ex.get("chosen"), ex.get("rejected")
             if not (prompt and chosen and rejected):
+                continue
+            if min_margin is not None and not pair_margin_ok(ex, min_margin):
                 continue
             try:
                 c, r = chosen[-1]["content"], rejected[-1]["content"]

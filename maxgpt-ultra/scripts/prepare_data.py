@@ -24,8 +24,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 from model import ModelConfig, load_yaml
 from tokenizer.tokenizer import train_tokenizer, UltraTokenizer
 from data.prepare import tokenize_to_shards, stream_mixed, source_name, PRETRAIN_MIX, ANNEAL_MIX
-from posttrain.sft_data import build_sft_jsonl, append_oasst_jsonl
-from posttrain.dpo import build_pref_jsonl
+from posttrain.sft_data import build_sft_jsonl, build_sft_jsonl_smoltalk2, append_oasst_jsonl, Decontaminator
+from posttrain.dpo import build_pref_jsonl, PREF_SOURCES
 
 SMOKE_DOCS = [
     "The quick brown fox jumps over the lazy dog while 3 cats watch from the fence.",
@@ -167,15 +167,26 @@ def main() -> None:
                         f.write(json.dumps(r) + "\n")
             print(f"[prepare] sft={len(SMOKE_SFT)} rows, prefs={len(SMOKE_PREF)} rows (smoke)")
         else:
-            print(f"[prepare] building SFT chat data -> {args.sft_out} ...")
-            ns = build_sft_jsonl(args.sft_out, n=args.sft_examples)
-            if raw.get("posttrain", {}).get("sft_extra_oasst"):   # ultra only: add OpenAssistant for casual / small-talk
+            pt = raw.get("posttrain", {}) or {}
+            decon = Decontaminator(pt.get("decontaminate_against", "data/bench"))
+            if decon.grams:
+                print(f"[prepare] decontaminating SFT data against {decon.sources:,} eval examples (13-gram overlap)")
+            print(f"[prepare] building SFT chat data ({pt.get('sft_source', 'ultrachat')}) -> {args.sft_out} ...")
+            if pt.get("sft_source", "ultrachat") == "smoltalk2":
+                counts = build_sft_jsonl_smoltalk2(args.sft_out, mix=pt.get("sft_mix") or None, decontaminator=decon)
+                ns = sum(v for k, v in counts.items() if not k.startswith("_"))
+                print(f"[prepare]   dropped {counts['_dropped_contaminated']:,} conversations that overlap the eval suite")
+            else:
+                ns = build_sft_jsonl(args.sft_out, n=args.sft_examples)
+            if pt.get("sft_extra_oasst"):   # ultra only: add OpenAssistant for casual / small-talk
                 print(f"[prepare] adding OpenAssistant (oasst1 + oasst2) on top of UltraChat ...")
                 no = append_oasst_jsonl(args.sft_out)
                 ns += no
                 print(f"[prepare]   +{no:,} OASST conversations")
-            print(f"[prepare] building DPO preference data -> {args.pref_out} ...")
-            npf = build_pref_jsonl(args.pref_out, n=args.pref_examples)
+            src = PREF_SOURCES[pt.get("pref_source", "ultrafeedback")]
+            print(f"[prepare] building DPO preference data ({pt.get('pref_source', 'ultrafeedback')}) -> {args.pref_out} ...")
+            npf = build_pref_jsonl(args.pref_out, n=int(pt.get("pref_examples", args.pref_examples)),
+                                   name=src["name"], split=src["split"], min_margin=src["min_margin"])
             print(f"[prepare] sft={ns:,} rows, prefs={npf:,} rows")
 
     print("[prepare] done. next:  python gui/server.py --config " + args.config)

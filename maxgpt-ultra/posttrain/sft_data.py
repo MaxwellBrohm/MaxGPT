@@ -10,6 +10,8 @@ Examples are dicts: {"messages": [{"role": "system"|"user"|"assistant", "content
 from __future__ import annotations
 
 import json
+import os
+import re
 
 import numpy as np
 import torch
@@ -86,6 +88,167 @@ class SFTDataset:
     def load_state_dict(self, s: dict) -> None:
         self.pos = int(s.get("pos", 0)) % self.n
         self.epoch = int(s.get("epoch", 0))
+
+
+class ReplayBlend:
+    """SFT batches with a share of plain pretraining windows mixed in (research report 3.1:
+    replaying 5-20% of pretraining data into SFT measured up to 1.87x target-data efficiency, and
+    the gain is largest exactly when the target data was scarce in pretraining, as here). Every
+    batch takes round(frac * B) windows from `replay` (a PackedShardDataset: ordinary next-token
+    targets, nothing masked) and the rest from `main` (the SFTDataset). Same interface as both."""
+
+    def __init__(self, main, replay, frac: float = 0.1):
+        assert 0.0 <= frac < 1.0, frac
+        self.main, self.replay, self.frac = main, replay, float(frac)
+        self.seq_len = main.seq_len
+
+    def n_replay(self, batch_size: int) -> int:
+        return min(batch_size - 1, int(round(self.frac * batch_size))) if self.frac > 0 else 0
+
+    def shard(self, rank: int, world: int, shares=None) -> None:
+        self.main.shard(rank, world)
+        self.replay.shard(rank, world)
+
+    def next_batch(self, batch_size: int, device: str = "cpu"):
+        k = self.n_replay(batch_size)
+        x, y = self.main.next_batch(batch_size - k, device)
+        if k:
+            xr, yr = self.replay.next_batch(k, device)
+            x, y = torch.cat([x, xr]), torch.cat([y, yr])
+        return x, y
+
+    @property
+    def epoch(self):
+        return self.main.epoch
+
+    @property
+    def n(self):
+        return self.main.n
+
+    def state_dict(self) -> dict:
+        return {"blend": True, "main": self.main.state_dict(), "replay": self.replay.state_dict()}
+
+    def load_state_dict(self, s: dict) -> None:
+        if s.get("blend"):
+            self.main.load_state_dict(s["main"])
+            self.replay.load_state_dict(s["replay"])
+        else:                                    # a state saved before replay existed
+            self.main.load_state_dict(s)
+
+
+class Decontaminator:
+    """Drops training text that overlaps the evaluation suite. n-gram (default 13 words, the
+    lm-eval convention) hashes of every text field in data/bench/*.jsonl are collected once;
+    is_contaminated(text) is True when any n-gram of the text is among them. The research
+    report's instruction: re-run decontamination against what WE evaluate on, since the
+    datasets' own decontamination targeted their eval sets."""
+
+    _FIELDS = ("context", "target", "continuation", "choices", "contexts")
+
+    def __init__(self, bench_dir: str, n: int = 13):
+        self.n = n
+        self.grams: set[int] = set()
+        self.sources = 0
+        if not os.path.isdir(bench_dir):
+            return
+        for fn in sorted(os.listdir(bench_dir)):
+            if not fn.endswith(".jsonl"):
+                continue
+            with open(os.path.join(bench_dir, fn), encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    row = json.loads(line)
+                    for k in self._FIELDS:
+                        v = row.get(k)
+                        for t in (v if isinstance(v, list) else [v]):
+                            if isinstance(t, str):
+                                self.grams.update(self._ngrams(t))
+                    self.sources += 1
+
+    @staticmethod
+    def _words(text: str) -> list[str]:
+        return re.findall(r"\w+", text.lower())
+
+    def _ngrams(self, text: str):
+        w = self._words(text)
+        return (hash(tuple(w[i:i + self.n])) for i in range(0, len(w) - self.n + 1))
+
+    def is_contaminated(self, text: str) -> bool:
+        return self.grams and any(g in self.grams for g in self._ngrams(text))
+
+    def conversation_contaminated(self, messages: list[dict]) -> bool:
+        return any(self.is_contaminated(m.get("content") or "") for m in messages)
+
+
+# SmolTalk2, no-think subsets only (docs/research_2026-09-22.md 3.1): the SFT mix that measured
+# best for a small base model in the one controlled comparison, minus the parts a 1.1B model at
+# seq 2048 cannot use (thinking traces, 64k long-context, tool calling) and the multilingual
+# subsets (this model is English). Counts are per subset; the total is ~350k conversations,
+# in the report's 200k-400k range. OpenAssistant is appended on top for human-written chat.
+SMOLTALK2_MIX = {
+    "smoltalk_smollm3_smol_magpie_ultra_no_think": 120_000,       # general instructions + chat
+    "OpenHermes_2.5_no_think": 60_000,                            # broad instruction following
+    "smoltalk_smollm3_systemchats_30k_no_think": 34_000,          # system-prompt persona chats (all)
+    "smoltalk_smollm3_everyday_conversations_no_think": 2_300,    # small talk (all)
+    "smoltalk_smollm3_smol_rewrite_no_think": 20_000,
+    "smoltalk_smollm3_smol_summarize_no_think": 20_000,
+    "smoltalk_smollm3_explore_instruct_rewriting_no_think": 10_000,
+    "tulu_3_sft_personas_instruction_following_no_think": 30_000, # IFEval-style constraints (all)
+    "Mixture_of_Thoughts_science_no_think": 15_000,
+    "OpenThoughts3_1.2M_no_think_no_think": 30_000,               # math / code answers, no traces
+    "table_gpt_no_think": 5_000,
+}
+_ROLES = {"system", "user", "assistant"}
+
+
+def clean_messages(messages) -> list[dict] | None:
+    """The conversation as [{role, content}] with only system/user/assistant turns, non-empty
+    content, ending in an assistant turn; None if it cannot be used."""
+    if not isinstance(messages, list):
+        return None
+    out = []
+    for m in messages:
+        role, content = (m or {}).get("role"), (m or {}).get("content")
+        if role not in _ROLES or not isinstance(content, str) or not content.strip():
+            return None
+        out.append({"role": role, "content": content})
+    if not out or out[-1]["role"] != "assistant" or not any(m["role"] == "user" for m in out):
+        return None
+    return out
+
+
+def build_sft_jsonl_smoltalk2(out_path: str, mix: dict | None = None, seed: int = 0,
+                              decontaminator: Decontaminator | None = None, append: bool = False) -> dict:
+    """Stream the chosen SmolTalk2 no-think subsets into a {"messages": [...]} jsonl (needs
+    datasets + network). Each subset is shuffled with a buffer before taking its count, rows are
+    cleaned by clean_messages, and rows overlapping the evaluation suite are dropped when a
+    Decontaminator is given. Returns {subset: written, ..., "_dropped_contaminated": n}."""
+    from datasets import load_dataset
+    import os as _os
+    mix = dict(mix or SMOLTALK2_MIX)
+    _os.makedirs(_os.path.dirname(out_path) or ".", exist_ok=True)
+    counts, dropped = {}, 0
+    with open(out_path, "a" if append else "w", encoding="utf-8") as f:
+        for subset, n in mix.items():
+            ds = load_dataset("HuggingFaceTB/smoltalk2", "SFT", split=subset, streaming=True)
+            ds = ds.shuffle(seed=seed, buffer_size=10_000)
+            written = 0
+            for ex in ds:
+                msgs = clean_messages(ex.get("messages"))
+                if msgs is None:
+                    continue
+                if decontaminator is not None and decontaminator.conversation_contaminated(msgs):
+                    dropped += 1
+                    continue
+                f.write(json.dumps({"messages": msgs}, ensure_ascii=False) + "\n")
+                written += 1
+                if written >= n:
+                    break
+            counts[subset] = written
+            print(f"[sft] {subset}: {written:,} conversations", flush=True)
+    counts["_dropped_contaminated"] = dropped
+    return counts
 
 
 def load_chat_jsonl(path: str) -> list[dict]:

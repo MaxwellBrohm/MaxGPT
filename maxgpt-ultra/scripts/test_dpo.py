@@ -55,6 +55,33 @@ def main() -> None:
     print(f"  loss={s0['dpo_loss']:.3f} (ln2={math.log(2):.3f})  margin={s0['reward_margin']:+.3f}")
     assert abs(s0["dpo_loss"] - math.log(2)) < 0.05 and abs(s0["reward_margin"]) < 1e-3
 
+    print("\n[4] length-normalized DPO: the log-ratio gap is per token; vanilla is per sequence")
+    import posttrain.dpo as PD
+    real_slp = PD.sequence_logprobs
+    # chosen: 10 scored tokens, policy -10 vs reference -11 (gap +1, +0.1 per token)
+    # rejected: 2 scored tokens, policy -3 vs reference -3 (gap 0)
+    cm = torch.zeros(1, 11, dtype=torch.bool); cm[0, 1:] = True          # 10 response tokens after position 0
+    rm = torch.zeros(1, 3, dtype=torch.bool);  rm[0, 1:] = True          # 2 response tokens
+    fake = {"c": torch.tensor([-10.0]), "r": torch.tensor([-3.0])}
+    PD.sequence_logprobs = lambda model, ids, mask, chunk=0: fake["c"] if ids.size(1) == 11 else fake["r"]
+    try:
+        batch = (torch.zeros(1, 11, dtype=torch.long), cm, torch.zeros(1, 3, dtype=torch.long), rm,
+                 torch.tensor([-11.0]), torch.tensor([-3.0]))
+        ln_loss, ln_stats = PD.dpo_loss(None, None, batch, beta=0.5, length_norm=True)
+        va_loss, va_stats = PD.dpo_loss(None, None, batch, beta=0.5, length_norm=False)
+        expect_ln = -math.log(torch.sigmoid(torch.tensor(0.5 * (1.0 / 10 - 0.0))).item())
+        expect_va = -math.log(torch.sigmoid(torch.tensor(0.5 * (1.0 - 0.0))).item())
+        assert abs(float(ln_loss) - expect_ln) < 1e-6 and abs(float(va_loss) - expect_va) < 1e-6, (float(ln_loss), expect_ln, float(va_loss), expect_va)
+        assert ln_stats["chosen_len"] == 10.0 and ln_stats["rejected_len"] == 2.0 and abs(ln_stats["chosen_nll"] - 1.0) < 1e-6
+        aux_loss, _ = PD.dpo_loss(None, None, batch, beta=0.5, length_norm=True, sft_weight=0.3)
+        assert abs(float(aux_loss) - (expect_ln + 0.3 * 1.0)) < 1e-6, float(aux_loss)
+    finally:
+        PD.sequence_logprobs = real_slp
+    assert PD.pair_margin_ok({"chosen_instruct_reward": 2.0, "rejected_instruct_reward": 1.0}, 0.0)
+    assert not PD.pair_margin_ok({"chosen_instruct_reward": 1.0, "rejected_instruct_reward": 2.0}, 0.0)
+    assert PD.pair_margin_ok({"prompt": "no reward columns"}, 0.0)
+    print(f"  LN loss {float(ln_loss):.4f} (gap 0.1/token) vs vanilla {float(va_loss):.4f} (gap 1/sequence); aux NLL adds 0.3 x 1.0; margin filter ✓")
+
     print("\n[3] after DPO, loss falls and the preference margin grows")
     data.pos = 0
     tcfg = {"batch_size": 4, "grad_accum": 1, "total_steps": 60, "warmup_steps": 5,
