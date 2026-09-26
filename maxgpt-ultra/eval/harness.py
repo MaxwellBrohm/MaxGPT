@@ -100,6 +100,8 @@ def evaluate(model, tokenizer=None, val_data=None, mc_examples=None, sample_prom
         m["samples"] = run_sample_prompts(model, tokenizer, sample_prompts, device=device,
                                           max_new_tokens=kw.get("max_new_tokens", 48),
                                           chat=kw.get("chat", False))
+        lens = [len(tokenizer.encode(s["completion"])) for s in m["samples"]]
+        m["sample_mean_tokens"] = sum(lens) / max(1, len(lens))    # a sharp rise under DPO = length exploitation
     return m
 
 

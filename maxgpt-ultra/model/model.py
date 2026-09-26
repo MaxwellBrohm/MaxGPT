@@ -120,9 +120,12 @@ class Attention(nn.Module):
             self.vr_alpha = nn.Parameter(torch.tensor([1.0, 0.0]))
 
     def forward(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor,
-                past=None, use_cache: bool = False, v1: torch.Tensor | None = None):
+                past=None, use_cache: bool = False, v1: torch.Tensor | None = None,
+                mask: torch.Tensor | None = None):
         """Returns (out, new_kv or None, v_local). v_local is this layer's own values (pre-mix),
-        which the model hands to later layers as v1 when value_residual is on."""
+        which the model hands to later layers as v1 when value_residual is on. `mask` (B, 1, T, T)
+        bool, True = may attend, replaces plain causal attention: the document mask for packed
+        SFT batches (see MaxGPTUltra.doc_mask)."""
         B, T, _ = x.shape
         q = self.q_proj(x).view(B, T, self.n_heads, self.head_dim)
         k = self.k_proj(x).view(B, T, self.n_kv_heads, self.head_dim)
@@ -155,7 +158,9 @@ class Attention(nn.Module):
 
         kr = repeat_kv(k, self.n_rep)
         vr = repeat_kv(v, self.n_rep)
-        if past is None:
+        if past is None and mask is not None:
+            out = F.scaled_dot_product_attention(q, kr, vr, attn_mask=mask)   # causal AND same document
+        elif past is None:
             out = F.scaled_dot_product_attention(q, kr, vr, is_causal=True)   # prefill / training
         elif q.size(2) == 1:
             out = F.scaled_dot_product_attention(q, kr, vr)                   # 1 new token attends to all cached
@@ -204,13 +209,14 @@ class Block(nn.Module):
         self.norm_scale = (1.0 / math.sqrt(layer_idx + 1)) if cfg.norm_scaling else 1.0
 
     def forward(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor,
-                past=None, use_cache: bool = False, v1: torch.Tensor | None = None):
+                past=None, use_cache: bool = False, v1: torch.Tensor | None = None,
+                mask: torch.Tensor | None = None):
         """Pre-norm residuals: normalize the input to each sublayer, add the result back.
         Returns (x, kv or None, v_local)."""
         h = self.attn_norm(x)
         if self.norm_scale != 1.0:
             h = h * self.norm_scale
-        a, kv, v_local = self.attn(h, cos, sin, past, use_cache, v1)
+        a, kv, v_local = self.attn(h, cos, sin, past, use_cache, v1, mask)
         x = x + a
         h = self.mlp_norm(x)
         if self.norm_scale != 1.0:
@@ -227,6 +233,14 @@ class MaxGPTUltra(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.grad_checkpointing = False   # trainer sets True to trade compute for memory (fits the 1B on 12GB)
+        # Document (block-diagonal) attention for packed batches: with doc_mask on, a token may only
+        # attend to earlier tokens of ITS OWN document, documents being the spans separated by
+        # doc_sep_id (<|endoftext|>, which stays with the document it ends). Without it, packed SFT
+        # conversations attend into each other (measured up to +7% GSM8K / +4% HumanEval for the
+        # fix, docs/research_2026-09-22.md 3.1). RoPE is relative, so no position reset is needed:
+        # a packed conversation gets exactly the logits it would get alone (scripts/test_sft.py [5]).
+        self.doc_mask = False
+        self.doc_sep_id: int | None = None
         self.tok_emb = nn.Embedding(cfg.vocab_size, cfg.d_model)
         self.blocks = nn.ModuleList([Block(cfg, i) for i in range(cfg.n_layers)])
         self.norm = RMSNorm(cfg.d_model, cfg.rms_eps)
@@ -255,6 +269,16 @@ class MaxGPTUltra(nn.Module):
         elif isinstance(module, nn.Embedding):
             nn.init.normal_(module.weight, mean=0.0, std=self.cfg.init_std)
 
+    def document_mask(self, idx: torch.Tensor) -> torch.Tensor:
+        """(B, 1, T, T) bool: causal AND same document, documents split at doc_sep_id (the separator
+        belongs to the document it ends, so the token after it starts a new one)."""
+        assert self.doc_sep_id is not None, "doc_mask needs doc_sep_id (the tokenizer's eos_id)"
+        sep = (idx == self.doc_sep_id).long()
+        seg = torch.cumsum(sep, dim=1) - sep                        # (B, T) document index per token
+        same = seg[:, :, None] == seg[:, None, :]                   # (B, T, T)
+        causal = torch.ones(idx.size(1), idx.size(1), dtype=torch.bool, device=idx.device).tril()
+        return (same & causal)[:, None, :, :]
+
     def forward(self, idx: torch.Tensor, targets: torch.Tensor | None = None,
                 z_loss_weight: float = 0.0, past=None, use_cache: bool = False):
         B, T = idx.shape
@@ -265,13 +289,14 @@ class MaxGPTUltra(nn.Module):
         x = self.tok_emb(idx)
         cos = self.rope_cos[past_len:past_len + T].to(x.dtype)     # positions offset past the cache
         sin = self.rope_sin[past_len:past_len + T].to(x.dtype)
+        mask = self.document_mask(idx) if (self.doc_mask and past is None and not use_cache) else None
         new_caches = [] if use_cache else None
         v1 = None                                                   # layer 1's values (value_residual)
         for i, block in enumerate(self.blocks):
             if self.grad_checkpointing and self.training:
-                x, _, v_loc = grad_checkpoint(block, x, cos, sin, None, False, v1, use_reentrant=False)
+                x, _, v_loc = grad_checkpoint(block, x, cos, sin, None, False, v1, mask, use_reentrant=False)
             else:
-                x, kv, v_loc = block(x, cos, sin, (past[i] if past is not None else None), use_cache, v1)
+                x, kv, v_loc = block(x, cos, sin, (past[i] if past is not None else None), use_cache, v1, mask)
                 if use_cache:
                     new_caches.append(kv)
             if i == 0 and self.cfg.value_residual:

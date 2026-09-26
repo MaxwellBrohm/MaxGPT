@@ -39,7 +39,12 @@ def main() -> None:
     ap.add_argument("--device", default=None)
     ap.add_argument("--epochs", type=float, default=1.0)
     ap.add_argument("--lr", type=float, default=5e-6)
-    ap.add_argument("--beta", type=float, default=0.1)
+    ap.add_argument("--beta", type=float, default=0.1,
+                    help="KL strength; sweep {0.1, 0.3, 0.5} (scripts/dpo_sweep.sh): 0.1 is the 7B value, SmolLM2-1.7B used 0.5")
+    ap.add_argument("--no-length-norm", action="store_true", help="vanilla DPO instead of length-normalized (default LN)")
+    ap.add_argument("--sft-weight", type=float, default=0.0, help="add this x the chosen response's per-token NLL")
+    ap.add_argument("--optimizer", default="config", help="config (the pretraining config's optimizer, i.e. matched) | adamw | normuon")
+    ap.add_argument("--ref-cache", default=None, help="shared reference-logprob cache file, so a beta sweep computes it once")
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--grad-accum", type=int, default=1)
     ap.add_argument("--grad-checkpointing", action="store_true")
@@ -73,8 +78,11 @@ def main() -> None:
         print(f"[dpo] note: {args.batch_size * args.grad_accum} pairs/step does not split evenly over "
               f"{world} GPUs; using {pairs_per_step}", flush=True)
     steps = max(1, int(args.epochs * len(data) / pairs_per_step))
+    _tr = _raw.get("train", {}) or {}
+    _opt = (_tr.get("optimizer", "adamw") if args.optimizer == "config" else args.optimizer).lower()
     tcfg = {"batch_size": bs_total, "grad_accum": ga_total, "total_steps": steps,
-            "precision": _raw.get("train", {}).get("precision", "auto"),
+            "precision": _tr.get("precision", "auto"),
+            "optimizer": _opt, "cautious_wd": _tr.get("cautious_wd", False), "muon_momentum": _tr.get("muon_momentum", 0.95),
             "warmup_steps": max(1, steps // 20), "lr": args.lr, "decay_frac": 0.1,
             "grad_checkpointing": args.grad_checkpointing, "weight_decay": 0.0,
             "autosave_minutes": 15, "log_every": 10,
@@ -89,7 +97,9 @@ def main() -> None:
                 "Write a short poem about stars.", "def reverse(s):"]
     eval_fn = lambda m, step: evaluate(m, tokenizer=tok, sample_prompts=_prompts, device=device, chat=True)
     trainer = DPOTrainer(policy, ref, data, tcfg, device, args.out, beta=args.beta,
-                         seed=0, stop_file=args.stop_file, eval_fn=eval_fn, eval_every=100)
+                         seed=0, stop_file=args.stop_file, eval_fn=eval_fn, eval_every=100,
+                         length_norm=not args.no_length_norm, sft_weight=args.sft_weight,
+                         ref_cache=args.ref_cache)
     resumed = trainer.resume_if_available()
 
     import signal
@@ -99,7 +109,8 @@ def main() -> None:
     except (ValueError, OSError):
         pass
     if D.is_main():
-        print(f"[dpo] device={device} gpus={world} pairs={len(data)} steps={steps} beta={args.beta} resumed={resumed}", flush=True)
+        print(f"[dpo] device={device} gpus={world} pairs={len(data)} steps={steps} beta={args.beta} "
+              f"length_norm={not args.no_length_norm} sft_weight={args.sft_weight} optimizer={_opt} resumed={resumed}", flush=True)
     trainer.train(max_steps=args.max_steps)
     if D.is_main():
         print(f"[dpo] done at step {trainer.step}; checkpoints in {args.out}", flush=True)

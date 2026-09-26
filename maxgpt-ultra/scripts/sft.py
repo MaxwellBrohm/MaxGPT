@@ -20,7 +20,9 @@ import torch
 
 from model import ModelConfig, MaxGPTUltra
 from tokenizer.tokenizer import UltraTokenizer
-from posttrain.sft_data import SFTDataset, load_chat_jsonl
+from posttrain.sft_data import SFTDataset, ReplayBlend, load_chat_jsonl
+from data.loader import PackedShardDataset
+from model import load_yaml
 from train.trainer import Trainer
 from train.checkpoint import load_checkpoint
 from train import dist as D
@@ -40,6 +42,10 @@ def main() -> None:
     ap.add_argument("--grad-accum", type=int, default=4)
     ap.add_argument("--max-steps", type=int, default=None)
     ap.add_argument("--stop-file", default=None)
+    ap.add_argument("--optimizer", default="config", help="config (the pretraining config's optimizer: matched, as the research report advises) | adamw | normuon")
+    ap.add_argument("--replay-shards", default=None, help="pretraining shard dir to replay into SFT batches (data/shards_train)")
+    ap.add_argument("--replay-frac", type=float, default=0.10, help="share of every batch that is replayed pretraining windows")
+    ap.add_argument("--no-doc-mask", action="store_true", help="let packed conversations attend into each other (the old behaviour)")
     args = ap.parse_args()
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -51,8 +57,12 @@ def main() -> None:
     tok = UltraTokenizer(args.tokenizer)
     examples = load_chat_jsonl(args.data)
     ds = SFTDataset(examples, tok, mcfg.seq_len)
+    if args.replay_shards and args.replay_frac > 0:   # 10% pretraining windows in every batch (report 3.1)
+        ds = ReplayBlend(ds, PackedShardDataset(args.replay_shards, mcfg.seq_len), frac=args.replay_frac)
 
     model = MaxGPTUltra(mcfg)
+    if not args.no_doc_mask:                  # packed conversations must not attend into each other
+        model.doc_mask, model.doc_sep_id = True, tok.eos_id
     if args.init:
         load_checkpoint(args.init, model, optimizer=None, map_location=device)  # pretrained weights only
 
@@ -66,11 +76,14 @@ def main() -> None:
         print(f"[sft] note: {windows} windows/step does not split evenly over {world} GPUs; "
               f"using {mb_per_rank * ga_per_rank * world}", flush=True)
     total_tokens = int(args.epochs * ds.n)
+    _tr = load_yaml(args.config).get("train", {}) or {}
+    _opt = (_tr.get("optimizer", "adamw") if args.optimizer == "config" else args.optimizer).lower()
     tcfg = {"micro_batch": mb_per_rank, "grad_accum": ga_per_rank * world,
             "total_tokens": total_tokens, "warmup_tokens": int(0.03 * total_tokens),
             "lr": args.lr, "decay_frac": 0.1, "z_loss": 0.0, "grad_clip": 1.0,
             "autosave_minutes": 15, "log_every": 10, "keep_last_k": 2,
             "grad_checkpointing": False, "optimizer_8bit": False,
+            "optimizer": _opt, "cautious_wd": _tr.get("cautious_wd", False), "muon_momentum": _tr.get("muon_momentum", 0.95),
             "compile": True, "eval_every": 200, "loss_chunk": 2048}
 
     # chat-formatted sample prompts so the dashboard shows the assistant's replies improving

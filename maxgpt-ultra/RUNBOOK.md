@@ -72,10 +72,29 @@ Stages: **data** (retrains tokenizer, tokenizes the 100B mix, builds SFT+OASST +
 - When **pretrain** first starts, torch.compile warms up for a few minutes before steps appear.
 
 ## Phase G — When Ultra finishes (weeks out)
-```bash
-python scripts/save_model.py --run runs/dpo --tokenizer tokenizer/maxgpt-ultra.tokenizer.json --name ultra --config configs/ultra.yaml
-```
-Creates `models/ultra.pt` + `models/ultra.tokenizer.json` for the webui.
+
+Post-training, in the order the research report (docs/research_2026-09-22.md section 3) argues
+for. Every step below is built and tested; none has run on the real model yet.
+
+1. **Score the base** on the fixed suite (the first of three evaluation points):
+   `python scripts/eval_suite.py --config configs/ultra_lambda_final.yaml --checkpoint runs/pretrain/checkpoints/<final>.pt --out runs/eval/base.json`
+2. **Data** (network, once): `python scripts/prepare_data.py --config configs/ultra.yaml` builds
+   `data/sft.jsonl` (SmolTalk2 no-think + OpenAssistant, decontaminated against `data/bench`)
+   and `data/prefs.jsonl` (UltraMix, reward-filtered), per `posttrain:` in the config. The
+   pretraining shards are reused as-is.
+3. **SFT**: the dashboard's SFT stage, or by hand
+   `python scripts/sft.py --config configs/ultra_lambda_final.yaml --init <final ckpt> --tokenizer tokenizer/maxgpt-ultra.tokenizer.json --data data/sft.jsonl --replay-shards data/shards_train --out runs/sft`
+   (document mask on, 10% replay, the pretraining optimizer; add `--optimizer adamw` for the
+   comparison run). Score it: evaluation point two. Keep this checkpoint whatever DPO does.
+4. **DPO beta sweep**: `bash scripts/dpo_sweep.sh runs/sft/checkpoints/<ckpt>.pt` runs 0.1 / 0.3 /
+   0.5 with one shared reference cache and scores each; pick by the suite average and the
+   question-level paired differences, never by preference win-rate, and watch
+   `sample_mean_tokens` in the eval rows (a sharp rise = length exploitation). Evaluation point
+   three. If every beta loses to SFT on the suite, ship SFT.
+5. **Optional soup** (report 3.3): interpolate the DPO weights toward SFT, sweep the coefficient
+   on a held-out slice; CPU only.
+6. `python scripts/save_model.py --run runs/dpo --tokenizer tokenizer/maxgpt-ultra.tokenizer.json --name ultra --config configs/ultra.yaml`
+   creates `models/ultra.pt` + `models/ultra.tokenizer.json` for the webui.
 
 ---
 
