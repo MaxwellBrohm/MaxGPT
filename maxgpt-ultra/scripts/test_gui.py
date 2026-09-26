@@ -94,6 +94,39 @@ def main():
     print("  stop -> pipeline aborted ✓")
 
     print("\n" + "=" * 72)
+
+    print("\n[5] the HOLD file stops every launch (start refused, reason visible), removing it allows again")
+    import datetime
+    from gui import gate
+    hold = os.path.join(d, "HOLD")
+    gate.HOLD_FILE, gate.RUN_HOURS = hold, ""
+    open(hold, "w").close()
+    h5 = dummy(os.path.join(d, "held"), "quick")
+    server.PIPE = Pipeline([h5])
+    assert client.post("/api/start").json()["ok"] is False, "start must be refused while HOLD exists"
+    assert not server.PIPE.running() and h5.status == "paused"
+    assert any("not starting" in l and "HOLD" in l for l in h5.lines()), h5.lines()[-3:]
+    assert "HOLD" in client.get("/api/pipeline").json()["gate"]
+    os.remove(hold)
+    assert client.post("/api/start").json()["ok"] is True
+    assert wait_for(lambda: h5.status == "done", 12), h5.status
+    assert client.get("/api/pipeline").json()["gate"] == "ok"
+    print("  refused with the HOLD reason, ran to completion once the file was gone ✓")
+
+    print("\n[6] allowed hours: outside the window nothing starts; inside it does; window arithmetic")
+    assert gate.in_window("22-07", 23) and gate.in_window("22-07", 3) and not gate.in_window("22-07", 12)
+    assert gate.in_window("9-17", 9) and not gate.in_window("9-17", 17) and gate.in_window("", 5) and gate.in_window("5-5", 5)
+    now_h = datetime.datetime.now().hour
+    gate.RUN_HOURS = f"{(now_h + 2) % 24}-{(now_h + 3) % 24}"          # a window that excludes now
+    h6 = dummy(os.path.join(d, "hours"), "quick")
+    server.PIPE = Pipeline([h6])
+    assert client.post("/api/start").json()["ok"] is False and "hours" in client.get("/api/pipeline").json()["gate"]
+    gate.RUN_HOURS = f"{now_h}-{(now_h + 1) % 24}"                      # a window that includes now
+    assert client.post("/api/start").json()["ok"] is True
+    assert wait_for(lambda: h6.status == "done", 12), h6.status
+    gate.RUN_HOURS = ""
+    print(f"  hour {now_h}: refused outside the window, ran inside it ✓")
+
     print("ALL CHECKS PASSED ✅")
     print("=" * 72)
 
