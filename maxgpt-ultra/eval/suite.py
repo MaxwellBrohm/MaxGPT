@@ -168,17 +168,18 @@ def _se(p: float, n: int) -> float:
 def eval_lambada(model, tokenizer, rows, **kw) -> dict:
     res = score_continuations(model, tokenizer, [(r["context"], r["target"]) for r in rows], **kw)
     n = len(rows)
-    acc = sum(g for _, _, _, g in res) / max(1, n)
+    correct = [bool(g) for _, _, _, g in res]
+    acc = sum(correct) / max(1, n)
     toks = sum(k for _, k, _, _ in res)
     nll = -sum(lp for lp, _, _, _ in res) / max(1, toks)
-    return {"acc": acc, "se": _se(acc, n), "ppl": math.exp(min(20.0, nll)), "n": n}
+    return {"acc": acc, "se": _se(acc, n), "ppl": math.exp(min(20.0, nll)), "n": n, "correct": correct}
 
 
 def eval_mc(model, tokenizer, rows, **kw) -> dict:
     """piqa / arc_c / hellaswag: one context, k choices; acc by raw log-likelihood, acc_norm per byte."""
     pairs = [(r["context"], ch) for r in rows for ch in r["choices"]]
     res = score_continuations(model, tokenizer, pairs, **kw)
-    n, raw_ok, norm_ok, j = len(rows), 0, 0, 0
+    n, raw_ok, norm_ok, j, correct = len(rows), 0, 0, 0, []
     for r in rows:
         k = len(r["choices"])
         sc = res[j:j + k]
@@ -186,29 +187,36 @@ def eval_mc(model, tokenizer, rows, **kw) -> dict:
         raw = [lp for lp, _, _, _ in sc]
         norm = [lp / max(1, nb) for lp, _, nb, _ in sc]
         raw_ok += int(max(range(k), key=lambda i: raw[i]) == r["answer"])
-        norm_ok += int(max(range(k), key=lambda i: norm[i]) == r["answer"])
+        ok_norm = max(range(k), key=lambda i: norm[i]) == r["answer"]
+        norm_ok += int(ok_norm)
+        correct.append(bool(ok_norm))                                 # the primary metric, per example
     acc, acc_norm = raw_ok / max(1, n), norm_ok / max(1, n)
-    return {"acc": acc, "acc_norm": acc_norm, "se": _se(acc_norm, n), "n": n}
+    return {"acc": acc, "acc_norm": acc_norm, "se": _se(acc_norm, n), "n": n, "correct": correct}
 
 
 def eval_winogrande(model, tokenizer, rows, **kw) -> dict:
     """Partial scoring: the same continuation under each option-filled prefix; higher likelihood wins."""
     pairs = [(c, r["continuation"]) for r in rows for c in r["contexts"]]
     res = score_continuations(model, tokenizer, pairs, **kw)
-    n, ok, j = len(rows), 0, 0
+    n, ok, j, correct = len(rows), 0, 0, []
     for r in rows:
         k = len(r["contexts"])
         sc = [lp for lp, _, _, _ in res[j:j + k]]
         j += k
-        ok += int(max(range(k), key=lambda i: sc[i]) == r["answer"])
+        hit = max(range(k), key=lambda i: sc[i]) == r["answer"]
+        ok += int(hit)
+        correct.append(bool(hit))
     acc = ok / max(1, n)
-    return {"acc": acc, "se": _se(acc, n), "n": n}
+    return {"acc": acc, "se": _se(acc, n), "n": n, "correct": correct}
 
 
 def run_suite(model, tokenizer, suite: dict[str, list[dict]], device: str = "cpu", batch_size: int = 8,
-              precision: str = "auto") -> dict:
+              precision: str = "auto", details: bool = False) -> dict:
     """All tasks in `suite` -> {task: metrics, 'avg': mean of the primary metrics, 'avg_se': its
-    standard error, 'precision': the autocast dtype used, 'seconds': wall time}."""
+    standard error, 'precision': the autocast dtype used, 'seconds': wall time}. With details=True
+    each task also keeps 'correct', its per-example primary-metric outcomes (what
+    scripts/eval_compare.py pairs between two checkpoints); the in-run eval drops them to keep
+    the metrics rows small."""
     amp = None
     if str(device).startswith("cuda"):
         from train.trainer import amp_dtype
@@ -228,6 +236,9 @@ def run_suite(model, tokenizer, suite: dict[str, list[dict]], device: str = "cpu
             out[task] = eval_winogrande(model, tokenizer, rows, **kw)
         else:
             out[task] = eval_mc(model, tokenizer, rows, **kw)
+    if not details:
+        for t in out:
+            out[t].pop("correct", None)
     prim = [out[t][PRIMARY.get(t, "acc")] for t in out]
     ses = [out[t]["se"] for t in out]
     out["avg"] = sum(prim) / max(1, len(prim))
@@ -248,6 +259,56 @@ def format_table(res: dict) -> str:
                      f"{100 * m['se']:>7.1f}{m['ppl'] if 'ppl' in m else float('nan'):>8.2f}")
     lines.append(f"{'average':<11}{'':>6}{100 * res['avg']:>8.1f}{'':>10}{100 * res['avg_se']:>7.1f}"
                  f"   ({res.get('precision')}, {res.get('seconds')}s)")
+    return "\n".join(lines)
+
+
+def paired_compare(a: dict, b: dict, boot: int = 2000, seed: int = 0) -> dict:
+    """Question-level paired differences between two suite results that carry 'correct' lists
+    (research report 3.4: pairing is the single biggest variance reduction available at 1B,
+    where most of the movement between two recipes is noise). Per task: acc_a, acc_b, the
+    paired delta, its standard error, a 95% bootstrap interval, and how many examples flipped
+    each way; plus the same for the average over tasks."""
+    rng = random.Random(seed)
+    out, deltas_by_task = {}, {}
+    for t in TASKS:
+        if t not in a or t not in b or "correct" not in a[t] or "correct" not in b[t]:
+            continue
+        ca, cb = a[t]["correct"], b[t]["correct"]
+        n = min(len(ca), len(cb))
+        d = [int(cb[i]) - int(ca[i]) for i in range(n)]
+        mean = sum(d) / max(1, n)
+        var = sum((x - mean) ** 2 for x in d) / max(1, n - 1)
+        se = math.sqrt(var / max(1, n))
+        boots = sorted(sum(d[rng.randrange(n)] for _ in range(n)) / n for _ in range(boot)) if n else [0.0]
+        out[t] = {"n": n, "acc_a": sum(ca[:n]) / max(1, n), "acc_b": sum(cb[:n]) / max(1, n), "delta": mean,
+                  "se": se, "ci95": [boots[int(0.025 * (boot - 1))], boots[int(0.975 * (boot - 1))]],
+                  "b_wins": sum(1 for x in d if x > 0), "a_wins": sum(1 for x in d if x < 0)}
+        deltas_by_task[t] = d
+    if deltas_by_task:
+        ts = list(deltas_by_task)
+        avg = sum(out[t]["delta"] for t in ts) / len(ts)
+        se_avg = math.sqrt(sum(out[t]["se"] ** 2 for t in ts)) / len(ts)
+        boots = []
+        for _ in range(boot):
+            boots.append(sum(sum(deltas_by_task[t][rng.randrange(len(deltas_by_task[t]))]
+                                 for _ in range(len(deltas_by_task[t]))) / len(deltas_by_task[t]) for t in ts) / len(ts))
+        boots.sort()
+        out["avg"] = {"delta": avg, "se": se_avg, "ci95": [boots[int(0.025 * (boot - 1))], boots[int(0.975 * (boot - 1))]]}
+    return out
+
+
+def format_compare(cmp: dict, name_a: str = "A", name_b: str = "B") -> str:
+    lines = [f"{'task':<11}{'n':>6}{name_a:>8}{name_b:>8}{'delta':>8}{'se':>6}{'95% CI':>16}{'b>a':>6}{'a>b':>6}"]
+    for t in TASKS:
+        m = cmp.get(t)
+        if not m:
+            continue
+        lines.append(f"{t:<11}{m['n']:>6}{100 * m['acc_a']:>8.1f}{100 * m['acc_b']:>8.1f}{100 * m['delta']:>+8.1f}"
+                     f"{100 * m['se']:>6.1f}  [{100 * m['ci95'][0]:>+5.1f}, {100 * m['ci95'][1]:>+5.1f}]{m['b_wins']:>6}{m['a_wins']:>6}")
+    if "avg" in cmp:
+        m = cmp["avg"]
+        lines.append(f"{'average':<11}{'':>6}{'':>8}{'':>8}{100 * m['delta']:>+8.1f}{100 * m['se']:>6.1f}"
+                     f"  [{100 * m['ci95'][0]:>+5.1f}, {100 * m['ci95'][1]:>+5.1f}]")
     return "\n".join(lines)
 
 
