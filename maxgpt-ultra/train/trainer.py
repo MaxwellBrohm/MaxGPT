@@ -180,6 +180,7 @@ class Trainer:
         self.warmup_steps = int(float(tcfg.get("warmup_tokens", 0)) // self.tokens_per_step)
         self.max_lr = float(tcfg["lr"])
         self.decay_frac = float(tcfg.get("decay_frac", 0.15))
+        self.decay_shape = str(tcfg.get("decay_shape", "cosine"))
         self.grad_clip = float(tcfg.get("grad_clip", 1.0))
         self.z_loss = float(tcfg.get("z_loss", 0.0))
         self.betas = tuple(tcfg.get("betas", [0.9, 0.95]))
@@ -426,7 +427,7 @@ class Trainer:
     # --- one optimizer step (grad_accum micro-steps) ---
     def train_step(self) -> dict:
         lr = wsd_lr(self.step, total_steps=self.total_steps, warmup_steps=self.warmup_steps,
-                    decay_frac=self.decay_frac, max_lr=self.max_lr)
+                    decay_frac=self.decay_frac, max_lr=self.max_lr, decay_shape=self.decay_shape)
         self._set_lr(lr)
         if hasattr(self.data, "set_step"):                  # annealing blend: the mix depends on the step
             self.data.set_step(self.step)

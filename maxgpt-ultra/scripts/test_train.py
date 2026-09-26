@@ -63,7 +63,18 @@ def main() -> None:
     lr_mid = wsd_lr(trainer.warmup_steps + 1, total_steps=trainer.total_steps, warmup_steps=trainer.warmup_steps, decay_frac=0.2, max_lr=3e-3)
     lr_end = wsd_lr(trainer.total_steps - 1, total_steps=trainer.total_steps, warmup_steps=trainer.warmup_steps, decay_frac=0.2, max_lr=3e-3)
     assert lr0 < lr_mid and abs(lr_mid - 3e-3) < 1e-9 and lr_end < lr_mid, (lr0, lr_mid, lr_end)
-    print(f"  warmup {lr0:.2e} < stable {lr_mid:.2e} > decay {lr_end:.2e} ✓")
+    T, W = 1000, 10                                     # 1-sqrt decay: max at the decay start, 0 at the end, under cosine in between
+    kw = dict(total_steps=T, warmup_steps=W, decay_frac=0.2, max_lr=1.0)
+    s0, s_q, s_end = T - 200, T - 200 + 50, T - 1                 # t = 0, 0.25, ~1
+    assert abs(wsd_lr(s0, **kw, decay_shape="1-sqrt") - 1.0) < 1e-9
+    assert abs(wsd_lr(s_q, **kw, decay_shape="1-sqrt") - 0.5) < 1e-9, wsd_lr(s_q, **kw, decay_shape="1-sqrt")   # 1 - sqrt(0.25)
+    assert abs(wsd_lr(s_q, **kw, decay_shape="cosine") - 0.5 * (1 + math.cos(math.pi * 0.25))) < 1e-9
+    assert wsd_lr(s_end, **kw, decay_shape="1-sqrt") < 0.04 and wsd_lr(s_end, **kw) < 0.04
+    try:
+        wsd_lr(s_q, **kw, decay_shape="linear"); raise AssertionError("unknown shape must be rejected")
+    except ValueError:
+        pass
+    print(f"  warmup {lr0:.2e} < stable {lr_mid:.2e} > decay {lr_end:.2e}; 1-sqrt = 0.5 at t=0.25 vs cosine {0.5 * (1 + math.cos(math.pi * 0.25)):.3f} ✓")
 
     print("\n[2] loss decreases over 30 steps")
     first = trainer.train_step()["loss"]

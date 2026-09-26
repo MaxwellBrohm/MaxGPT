@@ -30,7 +30,8 @@ train:
   schedule: wsd
   warmup_tokens: 1.0e9
   total_tokens: 1.0e11   # ~100B target (time-no-object); ship earlier via decay
-  decay_frac: 0.15
+  decay_frac: 0.15       # research report 2.6: 20% matched a full cosine at 430M (10% undertrained, 30% worse); 15% is the plan. Decide BEFORE step ~162k
+  decay_shape: cosine    # or 1-sqrt (IMU-1 / WSM; ~0.005-0.015 nats over cosine in the report's sources). Same deadline: before the decay begins
   z_loss: 1.0e-4
   micro_batch: 4         # per GPU; tune to fit 12GB
   grad_accum: 64         # TOTAL micro-steps per optimizer step across all GPUs: 4*64*2048 = ~0.5M tokens/step (the LR schedule is set by this, so it must not change with the GPU count)

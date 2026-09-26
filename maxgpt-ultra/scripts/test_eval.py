@@ -156,6 +156,24 @@ def main() -> None:
     print("  " + format_table(res).replace("\n", "\n  "))
     print("  memorized model scores 100% in all three formats; files round-trip; last suite step = 500 ✓")
 
+    print("\n[9] per-example outcomes + paired comparison between two models")
+    from eval.suite import paired_compare, format_compare
+    det = run_suite(model, tok, suite, device="cpu", batch_size=4, details=True)
+    for t in ("lambada", "piqa", "winogrande"):
+        assert len(det[t]["correct"]) == det[t]["n"] and all(det[t]["correct"]), det[t]
+    assert "correct" not in run_suite(model, tok, suite, device="cpu", batch_size=4)["piqa"], "in-run rows must stay slim"
+    A = {"piqa": {"correct": [True, True, False, False, True, False]}, "winogrande": {"correct": [True, False]}}
+    B = {"piqa": {"correct": [True, True, True, False, False, True]}, "winogrande": {"correct": [True, True]}}
+    cmp = paired_compare(A, B, boot=500)
+    p = cmp["piqa"]
+    assert p["n"] == 6 and abs(p["acc_a"] - 0.5) < 1e-9 and abs(p["acc_b"] - 4 / 6) < 1e-9
+    assert abs(p["delta"] - 1 / 6) < 1e-9 and p["b_wins"] == 2 and p["a_wins"] == 1
+    assert p["ci95"][0] <= p["delta"] <= p["ci95"][1] and p["se"] > 0
+    assert abs(cmp["winogrande"]["delta"] - 0.5) < 1e-9 and cmp["winogrande"]["a_wins"] == 0
+    assert abs(cmp["avg"]["delta"] - (1 / 6 + 0.5) / 2) < 1e-9
+    assert "piqa" in format_compare(cmp) and "+16.7" in format_compare(cmp)
+    print("  outcomes match the accuracies; paired delta, flips, CI and the average check out ✓")
+
     print("ALL CHECKS PASSED ✅")
     print("=" * 72)
 
