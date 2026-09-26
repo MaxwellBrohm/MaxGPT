@@ -482,8 +482,42 @@ preferred after SFT, needing only a frozen copy of the model and a logsigmoid lo
 Memory note: two model copies are resident, so on 12GB use a small batch + gradient
 checkpointing.
 
-- ☐ **Reasoning / CoT data**: teaching "thinking" (include reasoning traces in SFT)
-- ☐ **(stretch) GRPO RL**: on checkable math
+**Post-training recipe after the research sweep** (docs/research_2026-09-22.md section 3;
+all of it built and tested 2026-09-25, none of it run yet):
+- *Document-masked packing* (`MaxGPTUltra.doc_mask`, `scripts/test_sft.py` [4]-[5]): packed
+  conversations may only attend within themselves (causal AND same document, split at
+  `<|endoftext|>`). Naive packing lets conversation B read conversation A; the fix measured up to
+  +7% GSM8K / +4% HumanEval. The test the report demanded is there: B's logits are bit-identical
+  when A is rewritten, and a packed conversation equals the same conversation alone (RoPE is
+  relative, so no position reset is needed).
+- *Pretraining replay* (`ReplayBlend`): 10% of every SFT batch is ordinary pretraining windows,
+  measured up to 1.87x target-data efficiency when the target data was scarce in pretraining.
+- *Decontamination* (`Decontaminator`): 13-gram overlap against our own fixed eval suite
+  (`data/bench`), because the datasets decontaminate against their eval sets, not ours.
+- *Data*: SmolTalk2 no-think subsets (~350k conversations: magpie-ultra, OpenHermes, system
+  chats, rewrite/summarize, Tulu persona instruction-following, science, math/code answers;
+  no thinking traces, no 64k long-context, no tool calling, no multilingual) plus OpenAssistant;
+  UltraMix for DPO (the mix that ranked first for a 1B SFT model: SFT 33.3 -> 38.7 average),
+  filtered to pairs the reward model actually preferred. `posttrain:` in `configs/ultra.yaml`.
+- *Matched optimizer*: SFT and DPO default to the pretraining config's optimizer (NorMuon on
+  2D, AdamW on the rest), since a mismatched full fine-tune moves weights against the
+  pretraining geometry (5-10% relative perplexity in the report's sources). `--optimizer adamw`
+  is the fallback if it misbehaves; run both and compare.
+- *Length-normalized DPO* (`dpo_loss(length_norm=True)`, `scripts/test_dpo.py` [4]): each
+  sequence's log-ratio is divided by its token count, which removes DPO's "longer wins"
+  exploit (Tulu 3: LN-DPO 47.3 vs vanilla 46.2 vs SFT 42.6). Optional `--sft-weight` adds the
+  chosen response's NLL as a regularizer. All DPO arithmetic is fp32 (reference log-probs are
+  stored in fp32): at beta 0.1 the loss is a difference of differences that fp16 would swallow.
+- *Beta sweep* (`scripts/dpo_sweep.sh`): {0.1, 0.3, 0.5} on one shared reference cache, each
+  scored on the fixed suite against the SFT checkpoint, which stays the shippable fallback.
+  `sample_mean_tokens` in every eval row shows length inflation if the objective is exploited.
+
+- ☐ **Reasoning / CoT data**: teaching "thinking" (include reasoning traces in SFT); the report
+  argues against it at 1.1B (a few thousand GSM8K chain-of-thought examples buy the format)
+- ☐ **(stretch) GRPO RL**: on checkable math; argued against in the report (RLVR sharpens a
+  latent competence this base will not have; 1-2 weeks of work that halves throughput)
+- ☐ **Weight-space soup at the end** (report 3.3): interpolate DPO back toward SFT, sweep
+  {0.5, 0.7, 0.85, 1.0} on a held-out slice; CPU only, gets most of any alignment tax back
 
 ## 7. Inference  ◐ (`rag/`, verified by `scripts/test_rag.py`)
 

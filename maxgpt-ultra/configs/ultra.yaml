@@ -52,6 +52,13 @@ io:
   keep_best: true
 
 posttrain:
+  # Research report (docs/research_2026-09-22.md, section 3): SmolTalk2 no-think + OpenAssistant
+  # for SFT, UltraMix for DPO, decontaminated against the fixed eval suite in data/bench.
+  sft_source: smoltalk2           # smoltalk2 | ultrachat (the shakedown's original plan)
+  # sft_mix: {subset: count}      # optional override of posttrain/sft_data.py SMOLTALK2_MIX
+  pref_source: ultramix           # ultramix | ultrafeedback
+  pref_examples: 190000
+  decontaminate_against: data/bench
   # Blend OpenAssistant (oasst1 + oasst2) into the SFT data on top of UltraChat.
   # UltraChat is all long instructional turns; OASST adds the casual/varied chat and
   # greetings it lacks, so the model handles small talk naturally. Ultra only (the
