@@ -25,8 +25,10 @@ The four models above are the **Classic** series, the GPT-2-style lineage. The *
 
 | Model | Params | Architecture | Context | Status |
 |---|---|---|---|---|
-| **MaxGPT-Mini** | 113M | 12 layers x 768 dim, 12 heads (4 KV) | 1024 | The prototype: an exact scaled-down replica of Ultra, trained first to prove out the pipeline |
+| **MaxGPT-Mini** | 113M | 12 layers x 768 dim, 12 heads (4 KV) | 1024 | The prototype: the same modern design at 113M, trained first to prove out the pipeline |
 | **MaxGPT-Ultra** | 1.09B | 22 layers x 2048 dim, 16 heads (4 KV) | 2048 | Pretraining on a planned 100B tokens, paused early (see below) |
+
+Ultra adds four things Mini does not have: gated attention, a normalized value residual, depth-scaled norms, and the NorMuon optimizer with cautious weight decay. That recipe won an A/B test of four variants at the prototype's size, with 6.9% lower held-out loss than the original one.
 
 **Ultra's run is paused.** It was at about step 6,500 on 2026-09-24 (about 3.4B tokens, at roughly 0.5M tokens per step) and was stopped on 2026-09-25, a few percent of the way to its 100B-token target. The plan, every technique and why I chose it, and the recipe A/B test are in [maxgpt-ultra/](maxgpt-ultra/).
 
