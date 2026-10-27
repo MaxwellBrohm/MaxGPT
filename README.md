@@ -183,6 +183,8 @@ maxgpt-3/finetune_data.py       SFT data loader with byte-level loss masking
 maxgpt-3/finetune.py            supervised fine-tuning loop
 maxgpt-3/eval_compare.py        single-turn multi-sample evaluation
 maxgpt-3/eval_multiturn.py      multi-turn context-tracking evaluation
+maxgpt-ultra/                   Neo series (MaxGPT-Mini, MaxGPT-Ultra): model/, train/,
+                                posttrain/, eval/, rag/, gui/, configs/, TECHNIQUES.md
 webui/app.py                    Streamlit demo (chat + compare)
 CITATIONS.md                    datasets, papers, libraries, AI-use disclosure
 ```
