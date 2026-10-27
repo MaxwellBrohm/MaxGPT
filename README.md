@@ -197,7 +197,9 @@ To run the demo: `cd webui && streamlit run app.py` (needs the trained checkpoin
 
 Full citations are in [CITATIONS.md](CITATIONS.md). In short: the architecture comes from the Transformer and BPE papers, the "small model on focused data" idea from TinyStories, and the scaling recipe from Chinchilla and LLaMA. My main tutorial reference was Andrej Karpathy's "Let's build GPT" videos.
 
-I used Claude (Anthropic) as a collaborator for architecture discussions, pseudo-code, code review, debugging, and help with the evaluation and write-up. Following the assignment's rules, I wrote and understand every line of the model, tokenizer, and training code, and I can explain the reasoning behind each decision.
+For the four Classic models, which were my CS final, I used Claude (Anthropic) as a collaborator for architecture discussions, pseudo-code, code review, debugging, and help with the evaluation and write-up. Following the assignment's rules, I wrote and understand every line of their model, tokenizer, and training code, and I can explain the reasoning behind each decision.
+
+The Neo series came after the final, and I built it with Claude Code as a co-author: most of the commits in [maxgpt-ultra/](maxgpt-ultra/) carry a `Co-Authored-By: Claude` line.
 
 ---
 
