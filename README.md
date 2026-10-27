@@ -19,6 +19,19 @@ Same architecture, scaled about 10x from the first model to the last. Total trai
 
 ---
 
+## The Neo series
+
+The four models above are the **Classic** series, the GPT-2-style lineage. The **Neo** series is their successor: new models trained from scratch on a modern decoder design (RoPE, RMSNorm, SwiGLU, grouped-query attention, QK-norm) with a 49k-token byte-level BPE tokenizer. It picks up most of the "What I would do in version 2" list below: the bigger vocabulary, the modern architecture pieces, resume-from-checkpoint training, and an evaluation harness with perplexity and benchmark scores.
+
+| Model | Params | Architecture | Context | Status |
+|---|---|---|---|---|
+| **MaxGPT-Mini** | 113M | 12 layers x 768 dim, 12 heads (4 KV) | 1024 | The prototype: an exact scaled-down replica of Ultra, trained first to prove out the pipeline |
+| **MaxGPT-Ultra** | 1.09B | 22 layers x 2048 dim, 16 heads (4 KV) | 2048 | Pretraining on a planned 100B tokens, paused early (see below) |
+
+**Ultra's run is paused.** It was at about step 6,500 on 2026-09-24 (about 3.4B tokens, at roughly 0.5M tokens per step) and was stopped on 2026-09-25, a few percent of the way to its 100B-token target. The plan, every technique and why I chose it, and the recipe A/B test are in [maxgpt-ultra/](maxgpt-ultra/).
+
+---
+
 ## Why build from scratch?
 
 Most ML projects call a pretrained API. That hides everything interesting. Building from scratch forced me to understand every architectural decision and every line of code, and it makes a point that is easy to forget: a language model is not magic, it is a stack of matrix multiplications trained to predict the next token.
