@@ -30,7 +30,9 @@ The four models above are the **Classic** series, the GPT-2-style lineage. The *
 
 Ultra adds four things Mini does not have: gated attention, a normalized value residual, depth-scaled norms, and the NorMuon optimizer with cautious weight decay. That recipe won an A/B test of four variants at the prototype's size, with 6.9% lower held-out loss than the original one.
 
-**Ultra's pretraining stopped early.** It was at about step 6,500 on 2026-09-24 (about 3.4B tokens, at roughly 0.5M tokens per step) and stopped on 2026-09-25, a few percent of the way to its 100B-token target. The plan, every technique and why I chose it, and the recipe A/B test are in [maxgpt-ultra/](maxgpt-ultra/).
+**Ultra's pretraining stopped early.** It was at about step 6,500 on 2026-09-24 (about 3.4B tokens, at roughly 0.5M tokens per step) and stopped on 2026-09-25, a few percent of the way to its 100B-token target.
+
+The details are in [maxgpt-ultra/](maxgpt-ultra/): [TECHNIQUES.md](maxgpt-ultra/TECHNIQUES.md) explains every technique and the reasoning behind it, and [docs/ab_2026-09-21/](maxgpt-ultra/docs/ab_2026-09-21/) has the A/B test. That folder's README and [PLAN.md](maxgpt-ultra/PLAN.md) are the original June plan, so some of their numbers (such as a 124M prototype) are out of date.
 
 ---
 
