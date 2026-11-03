@@ -1,0 +1,952 @@
+===========================================================================
+MaxGPT-3 — Multi-turn coherence evaluation
+===========================================================================
+Models: base, sft_final
+Conversations: 12 (scripted history, model generates final turn only)
+Samples per (model, conversation): 1 greedy + 3 random (temp=0.8)
+Each ===CONTEXT_CHECK=== line says what counts as correctly using prior context.
+===========================================================================
+
+===MODEL=== base
+===CONV_ID=== memory_animal (memory)
+===HISTORY=== "USER: My favorite animal is the dolphin.\nASSISTANT: Dolphins are wonderful — intelligent, social, and playful creatures!\nUSER: What's my favorite animal?\nASSISTANT:"
+===CONTEXT_CHECK=== Must answer 'dolphin' (stated in turn 1).
+===SAMPLE=== greedy
+a dolphin is a very interesting creature.
+===END===
+
+===MODEL=== base
+===CONV_ID=== memory_animal (memory)
+===HISTORY=== "USER: My favorite animal is the dolphin.\nASSISTANT: Dolphins are wonderful — intelligent, social, and playful creatures!\nUSER: What's my favorite animal?\nASSISTANT:"
+===CONTEXT_CHECK=== Must answer 'dolphin' (stated in turn 1).
+===SAMPLE=== random_1
+the most interesting orthopedic doctor in the world.
+===END===
+
+===MODEL=== base
+===CONV_ID=== memory_animal (memory)
+===HISTORY=== "USER: My favorite animal is the dolphin.\nASSISTANT: Dolphins are wonderful — intelligent, social, and playful creatures!\nUSER: What's my favorite animal?\nASSISTANT:"
+===CONTEXT_CHECK=== Must answer 'dolphin' (stated in turn 1).
+===SAMPLE=== random_2
+a lion
+===END===
+
+===MODEL=== base
+===CONV_ID=== memory_animal (memory)
+===HISTORY=== "USER: My favorite animal is the dolphin.\nASSISTANT: Dolphins are wonderful — intelligent, social, and playful creatures!\nUSER: What's my favorite animal?\nASSISTANT:"
+===CONTEXT_CHECK=== Must answer 'dolphin' (stated in turn 1).
+===SAMPLE=== random_3
+a panda or a touche is a pretty common animal!
+===END===
+
+===MODEL=== base
+===CONV_ID=== memory_name (memory)
+===HISTORY=== 'USER: Hi! My name is Max.\nASSISTANT: Nice to meet you, Max! How can I help you today?\nUSER: What is my name?\nASSISTANT:'
+===CONTEXT_CHECK=== Must answer 'Max'.
+===SAMPLE=== greedy
+I am Alexander, the inventor of the computer.  I have a favorite computer game called "Teleportation," which is a game where you travel through time and space.  It has many different levels, each with its own unique storyline and characters.  I can help you with anything you need, like transportation, communication, and more!
+===END===
+
+===MODEL=== base
+===CONV_ID=== memory_name (memory)
+===HISTORY=== 'USER: Hi! My name is Max.\nASSISTANT: Nice to meet you, Max! How can I help you today?\nUSER: What is my name?\nASSISTANT:'
+===CONTEXT_CHECK=== Must answer 'Max'.
+===SAMPLE=== random_1
+Name: Yoandia
+===END===
+
+===MODEL=== base
+===CONV_ID=== memory_name (memory)
+===HISTORY=== 'USER: Hi! My name is Max.\nASSISTANT: Nice to meet you, Max! How can I help you today?\nUSER: What is my name?\nASSISTANT:'
+===CONTEXT_CHECK=== Must answer 'Max'.
+===SAMPLE=== random_2
+
+===END===
+
+===MODEL=== base
+===CONV_ID=== memory_name (memory)
+===HISTORY=== 'USER: Hi! My name is Max.\nASSISTANT: Nice to meet you, Max! How can I help you today?\nUSER: What is my name?\nASSISTANT:'
+===CONTEXT_CHECK=== Must answer 'Max'.
+===SAMPLE=== random_3
+sorry, I don't have one. What would you like me to tell you?
+===END===
+
+===MODEL=== base
+===CONV_ID=== memory_city (memory)
+===HISTORY=== 'USER: I live in Seattle.\nASSISTANT: Seattle is a beautiful city — known for its coffee and rainy weather!\nUSER: Which city did I say I live in?\nASSISTANT:'
+===CONTEXT_CHECK=== Must answer 'Seattle'.
+===SAMPLE=== greedy
+seattle is located in the United States.
+===END===
+
+===MODEL=== base
+===CONV_ID=== memory_city (memory)
+===HISTORY=== 'USER: I live in Seattle.\nASSISTANT: Seattle is a beautiful city — known for its coffee and rainy weather!\nUSER: Which city did I say I live in?\nASSISTANT:'
+===CONTEXT_CHECK=== Must answer 'Seattle'.
+===SAMPLE=== random_1
+that I don't understand.
+===END===
+
+===MODEL=== base
+===CONV_ID=== memory_city (memory)
+===HISTORY=== 'USER: I live in Seattle.\nASSISTANT: Seattle is a beautiful city — known for its coffee and rainy weather!\nUSER: Which city did I say I live in?\nASSISTANT:'
+===CONTEXT_CHECK=== Must answer 'Seattle'.
+===SAMPLE=== random_2
+seattle is located on the west coast of Washington, USA, in the Pacific Northwest.  
+
+Following the events mentioned above, I couldn’t tell you the exact location that Seattle is, but I can tell you a little bit about its geography.
+===END===
+
+===MODEL=== base
+===CONV_ID=== memory_city (memory)
+===HISTORY=== 'USER: I live in Seattle.\nASSISTANT: Seattle is a beautiful city — known for its coffee and rainy weather!\nUSER: Which city did I say I live in?\nASSISTANT:'
+===CONTEXT_CHECK=== Must answer 'Seattle'.
+===SAMPLE=== random_3
+the biggest city in Seattle is Los Angeles.  Here’s a bigger part of Seattle’s demographic makeup: over 270,000 residents.
+===END===
+
+===MODEL=== base
+===CONV_ID=== memory_two_hobbies (memory)
+===HISTORY=== 'USER: I love hiking on weekends.\nASSISTANT: Hiking is a great way to stay active and enjoy nature!\nUSER: I also enjoy painting.\nASSISTANT: Painting is a wonderful creative outlet.\nUSER: What two hobbies did I mention?\nASSISTANT:'
+===CONTEXT_CHECK=== Must recall BOTH hiking and painting (3-turn memory).
+===SAMPLE=== greedy
+art and music
+===END===
+
+===MODEL=== base
+===CONV_ID=== memory_two_hobbies (memory)
+===HISTORY=== 'USER: I love hiking on weekends.\nASSISTANT: Hiking is a great way to stay active and enjoy nature!\nUSER: I also enjoy painting.\nASSISTANT: Painting is a wonderful creative outlet.\nUSER: What two hobbies did I mention?\nASSISTANT:'
+===CONTEXT_CHECK=== Must recall BOTH hiking and painting (3-turn memory).
+===SAMPLE=== random_1
+art and music
+===END===
+
+===MODEL=== base
+===CONV_ID=== memory_two_hobbies (memory)
+===HISTORY=== 'USER: I love hiking on weekends.\nASSISTANT: Hiking is a great way to stay active and enjoy nature!\nUSER: I also enjoy painting.\nASSISTANT: Painting is a wonderful creative outlet.\nUSER: What two hobbies did I mention?\nASSISTANT:'
+===CONTEXT_CHECK=== Must recall BOTH hiking and painting (3-turn memory).
+===SAMPLE=== random_2
+art and photography
+===END===
+
+===MODEL=== base
+===CONV_ID=== memory_two_hobbies (memory)
+===HISTORY=== 'USER: I love hiking on weekends.\nASSISTANT: Hiking is a great way to stay active and enjoy nature!\nUSER: I also enjoy painting.\nASSISTANT: Painting is a wonderful creative outlet.\nUSER: What two hobbies did I mention?\nASSISTANT:'
+===CONTEXT_CHECK=== Must recall BOTH hiking and painting (3-turn memory).
+===SAMPLE=== random_3
+I was an artist.
+===END===
+
+===MODEL=== base
+===CONV_ID=== reference_puppy (reference)
+===HISTORY=== 'USER: I just adopted a puppy named Rex.\nASSISTANT: Congratulations on adopting Rex! Puppies bring so much joy.\nUSER: What should I feed him?\nASSISTANT:'
+===CONTEXT_CHECK=== 'him' = Rex/puppy; should give dog-feeding advice.
+===SAMPLE=== greedy
+a puppy
+===END===
+
+===MODEL=== base
+===CONV_ID=== reference_puppy (reference)
+===HISTORY=== 'USER: I just adopted a puppy named Rex.\nASSISTANT: Congratulations on adopting Rex! Puppies bring so much joy.\nUSER: What should I feed him?\nASSISTANT:'
+===CONTEXT_CHECK=== 'him' = Rex/puppy; should give dog-feeding advice.
+===SAMPLE=== random_1
+toddler can't tame a small dog (a pup that is not usually small, but is still a great addition!)
+===END===
+
+===MODEL=== base
+===CONV_ID=== reference_puppy (reference)
+===HISTORY=== 'USER: I just adopted a puppy named Rex.\nASSISTANT: Congratulations on adopting Rex! Puppies bring so much joy.\nUSER: What should I feed him?\nASSISTANT:'
+===CONTEXT_CHECK=== 'him' = Rex/puppy; should give dog-feeding advice.
+===SAMPLE=== random_2
+a puppy.
+===END===
+
+===MODEL=== base
+===CONV_ID=== reference_puppy (reference)
+===HISTORY=== 'USER: I just adopted a puppy named Rex.\nASSISTANT: Congratulations on adopting Rex! Puppies bring so much joy.\nUSER: What should I feed him?\nASSISTANT:'
+===CONTEXT_CHECK=== 'him' = Rex/puppy; should give dog-feeding advice.
+===SAMPLE=== random_3
+a meal
+===END===
+
+===MODEL=== base
+===CONV_ID=== reference_guitar (reference)
+===HISTORY=== "USER: I'm learning to play the guitar.\nASSISTANT: That's awesome! The guitar is a rewarding instrument to learn.\nUSER: How long does it usually take to get good at it?\nASSISTANT:"
+===CONTEXT_CHECK=== 'it' = guitar; should answer about guitar skill timeline.
+===SAMPLE=== greedy
+as you start practicing!
+===END===
+
+===MODEL=== base
+===CONV_ID=== reference_guitar (reference)
+===HISTORY=== "USER: I'm learning to play the guitar.\nASSISTANT: That's awesome! The guitar is a rewarding instrument to learn.\nUSER: How long does it usually take to get good at it?\nASSISTANT:"
+===CONTEXT_CHECK=== 'it' = guitar; should answer about guitar skill timeline.
+===SAMPLE=== random_1
+the slowest section of the course, such as practicing and mastering the guttural and bass parts, takes around 3 to 5 months to develop.
+===END===
+
+===MODEL=== base
+===CONV_ID=== reference_guitar (reference)
+===HISTORY=== "USER: I'm learning to play the guitar.\nASSISTANT: That's awesome! The guitar is a rewarding instrument to learn.\nUSER: How long does it usually take to get good at it?\nASSISTANT:"
+===CONTEXT_CHECK=== 'it' = guitar; should answer about guitar skill timeline.
+===SAMPLE=== random_2
+a novice pickup pickup or an experienced pickup, depends on the specific model and location, but most guitars come with instructional videos and online tutorials to help you connect with acoustic drum kits.
+===END===
+
+===MODEL=== base
+===CONV_ID=== reference_guitar (reference)
+===HISTORY=== "USER: I'm learning to play the guitar.\nASSISTANT: That's awesome! The guitar is a rewarding instrument to learn.\nUSER: How long does it usually take to get good at it?\nASSISTANT:"
+===CONTEXT_CHECK=== 'it' = guitar; should answer about guitar skill timeline.
+===SAMPLE=== random_3
+the traditional way to get a skilled guitar begins with working with an acoustic guitar, which allows for winding the notes, and creating melodies and harmonies that are more complex and rich than just playing by hand. It's also an exercise that helps you improve your technique and work on technique in a more extended period.
+===END===
+
+===MODEL=== base
+===CONV_ID=== reference_cookies (reference)
+===HISTORY=== "USER: I'm making chocolate chip cookies.\nASSISTANT: Yum! Chocolate chip cookies are a classic. Need any tips?\nUSER: Yes — how long should I bake them?\nASSISTANT:"
+===CONTEXT_CHECK=== 'them' = cookies; should give a cookie baking time.
+===SAMPLE=== greedy
+they should be around 2 to 3 hours. You need to bake them in a preheated oven at 375°F (190°C) for 30 minutes.  You want to make sure they aren’t burning.
+===END===
+
+===MODEL=== base
+===CONV_ID=== reference_cookies (reference)
+===HISTORY=== "USER: I'm making chocolate chip cookies.\nASSISTANT: Yum! Chocolate chip cookies are a classic. Need any tips?\nUSER: Yes — how long should I bake them?\nASSISTANT:"
+===CONTEXT_CHECK=== 'them' = cookies; should give a cookie baking time.
+===SAMPLE=== random_1
+a cookie made with a cookie dough, warm and slightly cold, and baked and served at room temperature. You could also use a cookie cutter to cut out the cookies.
+===END===
+
+===MODEL=== base
+===CONV_ID=== reference_cookies (reference)
+===HISTORY=== "USER: I'm making chocolate chip cookies.\nASSISTANT: Yum! Chocolate chip cookies are a classic. Need any tips?\nUSER: Yes — how long should I bake them?\nASSISTANT:"
+===CONTEXT_CHECK=== 'them' = cookies; should give a cookie baking time.
+===SAMPLE=== random_2
+since they're just a cookie!
+===END===
+
+===MODEL=== base
+===CONV_ID=== reference_cookies (reference)
+===HISTORY=== "USER: I'm making chocolate chip cookies.\nASSISTANT: Yum! Chocolate chip cookies are a classic. Need any tips?\nUSER: Yes — how long should I bake them?\nASSISTANT:"
+===CONTEXT_CHECK=== 'them' = cookies; should give a cookie baking time.
+===SAMPLE=== random_3
+they can be quite hot and cook quickly, typically between 3-4 minutes.  They are often bitter, and some people prefer the crispness of hot cookies over the buttery crust.
+===END===
+
+===MODEL=== base
+===CONV_ID=== continuity_rainbow (continuity)
+===HISTORY=== 'USER: Explain how rainbows form.\nASSISTANT: Rainbows form when sunlight passes through raindrops, which bend and split the light into its colors.\nUSER: Can you explain that more simply?\nASSISTANT:'
+===CONTEXT_CHECK=== Should simplify the RAINBOW explanation, not switch topics.
+===SAMPLE=== greedy
+sunlight, water, and earth are all part of the natural world.
+===END===
+
+===MODEL=== base
+===CONV_ID=== continuity_rainbow (continuity)
+===HISTORY=== 'USER: Explain how rainbows form.\nASSISTANT: Rainbows form when sunlight passes through raindrops, which bend and split the light into its colors.\nUSER: Can you explain that more simply?\nASSISTANT:'
+===CONTEXT_CHECK=== Should simplify the RAINBOW explanation, not switch topics.
+===SAMPLE=== random_1
+sunbeams travel through the electromagnetic field when Earth's atmosphere and water waves are refracted due to their interaction with the magnetic orbital plane. This wave bounces off various surfaces, resulting in the bending of colors in the resulting rainbow.
+===END===
+
+===MODEL=== base
+===CONV_ID=== continuity_rainbow (continuity)
+===HISTORY=== 'USER: Explain how rainbows form.\nASSISTANT: Rainbows form when sunlight passes through raindrops, which bend and split the light into its colors.\nUSER: Can you explain that more simply?\nASSISTANT:'
+===CONTEXT_CHECK=== Should simplify the RAINBOW explanation, not switch topics.
+===SAMPLE=== random_2
+a rainbow is an amalgamation of different colors. Each color is made up of tiny particles called dots, which interact with each other to create complex patterns and visual effects. In this case, the rainbow contains more than 27 of its individual colors, making it an incredibly diverse and captivating scene.
+
+Rainbows are naturally occurring and can be brought into our world in seemingly ordinary moments or surrounding times. They are often seen in peaceful and quiet landscapes, such as those found in the ocean, forests, and mountains. When light travels through the atmosphere and reaches Earth’s surface, it can interact with different colored particles found in these colorful passages. This can lead to spectacular visual displays, such as the colorful winds that push over the water or the s
+===END===
+
+===MODEL=== base
+===CONV_ID=== continuity_rainbow (continuity)
+===HISTORY=== 'USER: Explain how rainbows form.\nASSISTANT: Rainbows form when sunlight passes through raindrops, which bend and split the light into its colors.\nUSER: Can you explain that more simply?\nASSISTANT:'
+===CONTEXT_CHECK=== Should simplify the RAINBOW explanation, not switch topics.
+===SAMPLE=== random_3
+simple explanation.
+===END===
+
+===MODEL=== base
+===CONV_ID=== continuity_mars (continuity)
+===HISTORY=== 'USER: Tell me about the planet Mars.\nASSISTANT: Mars is the fourth planet from the Sun, often called the Red Planet for its iron-rich soil.\nUSER: Is it bigger or smaller than Earth?\nASSISTANT:'
+===CONTEXT_CHECK=== 'it' = Mars; correct = smaller than Earth (and stays on Mars topic).
+===SAMPLE=== greedy
+smaller.
+===END===
+
+===MODEL=== base
+===CONV_ID=== continuity_mars (continuity)
+===HISTORY=== 'USER: Tell me about the planet Mars.\nASSISTANT: Mars is the fourth planet from the Sun, often called the Red Planet for its iron-rich soil.\nUSER: Is it bigger or smaller than Earth?\nASSISTANT:'
+===CONTEXT_CHECK=== 'it' = Mars; correct = smaller than Earth (and stays on Mars topic).
+===SAMPLE=== random_1
+smaller.
+===END===
+
+===MODEL=== base
+===CONV_ID=== continuity_mars (continuity)
+===HISTORY=== 'USER: Tell me about the planet Mars.\nASSISTANT: Mars is the fourth planet from the Sun, often called the Red Planet for its iron-rich soil.\nUSER: Is it bigger or smaller than Earth?\nASSISTANT:'
+===CONTEXT_CHECK=== 'it' = Mars; correct = smaller than Earth (and stays on Mars topic).
+===SAMPLE=== random_2
+as the celestial object orbits and briefly declines in mass (that's the smallest unit).
+===END===
+
+===MODEL=== base
+===CONV_ID=== continuity_mars (continuity)
+===HISTORY=== 'USER: Tell me about the planet Mars.\nASSISTANT: Mars is the fourth planet from the Sun, often called the Red Planet for its iron-rich soil.\nUSER: Is it bigger or smaller than Earth?\nASSISTANT:'
+===CONTEXT_CHECK=== 'it' = Mars; correct = smaller than Earth (and stays on Mars topic).
+===SAMPLE=== random_3
+and larger than Earth.
+===END===
+
+===MODEL=== base
+===CONV_ID=== adapt_poem (adaptation)
+===HISTORY=== 'USER: Write a one-line poem about winter.\nASSISTANT: Snow blankets the silent world in white.\nUSER: Now write one about summer instead.\nASSISTANT:'
+===CONTEXT_CHECK=== Should write a SUMMER line (adapting from the winter request).
+===SAMPLE=== greedy
+spring gifts unfurled,
+A beautiful sight to see,
+A new day filled with endless possibilities.
+===END===
+
+===MODEL=== base
+===CONV_ID=== adapt_poem (adaptation)
+===HISTORY=== 'USER: Write a one-line poem about winter.\nASSISTANT: Snow blankets the silent world in white.\nUSER: Now write one about summer instead.\nASSISTANT:'
+===CONTEXT_CHECK=== Should write a SUMMER line (adapting from the winter request).
+===SAMPLE=== random_1
+springtime rejoices in love with pure sounded
+===END===
+
+===MODEL=== base
+===CONV_ID=== adapt_poem (adaptation)
+===HISTORY=== 'USER: Write a one-line poem about winter.\nASSISTANT: Snow blankets the silent world in white.\nUSER: Now write one about summer instead.\nASSISTANT:'
+===CONTEXT_CHECK=== Should write a SUMMER line (adapting from the winter request).
+===SAMPLE=== random_2
+summer sweet dreams, warm breezes whispering stories, and laughter echoing through the air.
+===END===
+
+===MODEL=== base
+===CONV_ID=== adapt_poem (adaptation)
+===HISTORY=== 'USER: Write a one-line poem about winter.\nASSISTANT: Snow blankets the silent world in white.\nUSER: Now write one about summer instead.\nASSISTANT:'
+===CONTEXT_CHECK=== Should write a SUMMER line (adapting from the winter request).
+===SAMPLE=== random_3
+spring snowflakes dance on the skies.
+===END===
+
+===MODEL=== base
+===CONV_ID=== adapt_catname (adaptation)
+===HISTORY=== 'USER: Suggest a name for a black cat.\nASSISTANT: How about Shadow? It suits a sleek black cat perfectly.\nUSER: What about for a white one?\nASSISTANT:'
+===CONTEXT_CHECK=== Should suggest a name fitting a WHITE cat (e.g. Snow/Cloud).
+===SAMPLE=== greedy
+a white cat
+===END===
+
+===MODEL=== base
+===CONV_ID=== adapt_catname (adaptation)
+===HISTORY=== 'USER: Suggest a name for a black cat.\nASSISTANT: How about Shadow? It suits a sleek black cat perfectly.\nUSER: What about for a white one?\nASSISTANT:'
+===CONTEXT_CHECK=== Should suggest a name fitting a WHITE cat (e.g. Snow/Cloud).
+===SAMPLE=== random_1
+Hmm, this is a funny and colorful species.
+===END===
+
+===MODEL=== base
+===CONV_ID=== adapt_catname (adaptation)
+===HISTORY=== 'USER: Suggest a name for a black cat.\nASSISTANT: How about Shadow? It suits a sleek black cat perfectly.\nUSER: What about for a white one?\nASSISTANT:'
+===CONTEXT_CHECK=== Should suggest a name fitting a WHITE cat (e.g. Snow/Cloud).
+===SAMPLE=== random_2
+shadow no blonde or black cat
+===END===
+
+===MODEL=== base
+===CONV_ID=== adapt_catname (adaptation)
+===HISTORY=== 'USER: Suggest a name for a black cat.\nASSISTANT: How about Shadow? It suits a sleek black cat perfectly.\nUSER: What about for a white one?\nASSISTANT:'
+===CONTEXT_CHECK=== Should suggest a name fitting a WHITE cat (e.g. Snow/Cloud).
+===SAMPLE=== random_3
+a black feline friend.
+===END===
+
+===MODEL=== base
+===CONV_ID=== correction_capital (correction)
+===HISTORY=== "USER: What's the capital of France?\nASSISTANT: The capital of France is Paris.\nUSER: Sorry, I actually meant Italy.\nASSISTANT:"
+===CONTEXT_CHECK=== Should now answer Rome (capital of Italy).
+===SAMPLE=== greedy
+sure.  Italians are known for their love of art and literature, and many famous writers from Italy have made their country a center of culture and creativity.
+===END===
+
+===MODEL=== base
+===CONV_ID=== correction_capital (correction)
+===HISTORY=== "USER: What's the capital of France?\nASSISTANT: The capital of France is Paris.\nUSER: Sorry, I actually meant Italy.\nASSISTANT:"
+===CONTEXT_CHECK=== Should now answer Rome (capital of Italy).
+===SAMPLE=== random_1
+that is the capital city of Italy, which means it is located in the southwest of Europe.
+===END===
+
+===MODEL=== base
+===CONV_ID=== correction_capital (correction)
+===HISTORY=== "USER: What's the capital of France?\nASSISTANT: The capital of France is Paris.\nUSER: Sorry, I actually meant Italy.\nASSISTANT:"
+===CONTEXT_CHECK=== Should now answer Rome (capital of Italy).
+===SAMPLE=== random_2
+sure, the capital of France would be Rome.
+===END===
+
+===MODEL=== base
+===CONV_ID=== correction_capital (correction)
+===HISTORY=== "USER: What's the capital of France?\nASSISTANT: The capital of France is Paris.\nUSER: Sorry, I actually meant Italy.\nASSISTANT:"
+===CONTEXT_CHECK=== Should now answer Rome (capital of Italy).
+===SAMPLE=== random_3
+city
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== memory_animal (memory)
+===HISTORY=== "USER: My favorite animal is the dolphin.\nASSISTANT: Dolphins are wonderful — intelligent, social, and playful creatures!\nUSER: What's my favorite animal?\nASSISTANT:"
+===CONTEXT_CHECK=== Must answer 'dolphin' (stated in turn 1).
+===SAMPLE=== greedy
+animals all have different personalities and interests.  Dolphins are the most popular and well-known animal in the world, and they are known for their incredible speed and agility.  Dolphins are fascinating to watch as they can swim at speeds of up to 100 miles per hour, and can even fly in water with ease.  They are also very intelligent and social animals, and they have a strong sense of loyalty and friendship with humans.  They are also very playful and adorable, and they are known for their love of playing with each other and interacting with humans.  Dolphins are fascinating to watch as they can swim at speeds of up to 100 miles per hour, and can even fly in water with ease.  They are also very intelligent and social animals, and they have a
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== memory_animal (memory)
+===HISTORY=== "USER: My favorite animal is the dolphin.\nASSISTANT: Dolphins are wonderful — intelligent, social, and playful creatures!\nUSER: What's my favorite animal?\nASSISTANT:"
+===CONTEXT_CHECK=== Must answer 'dolphin' (stated in turn 1).
+===SAMPLE=== random_1
+sea turtles have the best lifespan in the ocean. They can live for months to years, and they are very intelligent and have adapted to living in shallow waters. Dolphins have a unique way of living which is a combination of suffocation and deep diving, where they can spend most of their time in tanks instead of aquarium or arboreal habitats. Their vocalizations are highly developed and it is often the only sound they make in water, and they are very sensitive to various environmental pressures. They are also a unique animal that can communicate and adapt to their surroundings, and have evolved to live in areas with severe storms and acidification problems. They also have a tremendous culture of living in larg
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== memory_animal (memory)
+===HISTORY=== "USER: My favorite animal is the dolphin.\nASSISTANT: Dolphins are wonderful — intelligent, social, and playful creatures!\nUSER: What's my favorite animal?\nASSISTANT:"
+===CONTEXT_CHECK=== Must answer 'dolphin' (stated in turn 1).
+===SAMPLE=== random_2
+Probably seagulls.  They have a distinctive "hump" on their forehead.  They have been observed swimming alongside other sea animals like ants, crabs, and fish.  They have sharp beaks and powerful jaws, and can be much more intelligent than all other animals -- for example, many species of ants, beavers, and crocodiles, as well as a few other species of birds.  The dolphin is one of those species that are the most fascinating creatures to observe and study, as they have evolved to have incredible size and strength, as well as to be famous for their distinctive and colorful feathers.  Dolphins are amazing creatures, with incredible adaptations, that make for unique and fascinating behaviors, and many animal species
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== memory_animal (memory)
+===HISTORY=== "USER: My favorite animal is the dolphin.\nASSISTANT: Dolphins are wonderful — intelligent, social, and playful creatures!\nUSER: What's my favorite animal?\nASSISTANT:"
+===CONTEXT_CHECK=== Must answer 'dolphin' (stated in turn 1).
+===SAMPLE=== random_3
+animals all have many interesting personalities, and there's a great variety of animals I find appealing.  In addition to the dolphin, you can also find many other intelligent and friendly creatures, like dolphins, tropical fish, whales and seabirds, as well as many more.  Also, there's really little about different species; these are all fascinating animals to explore, and you might even find it as fascinating as you do yourself.  I hope this gives you a great way to learn about and appreciate different animals!
+There's so many awesome and beautiful animals out there - I think it's important to learn about their unique behaviors, habitats, and characteristics, as that will help us better understand them, and how we can protect and preserve them for future generations.
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== memory_name (memory)
+===HISTORY=== 'USER: Hi! My name is Max.\nASSISTANT: Nice to meet you, Max! How can I help you today?\nUSER: What is my name?\nASSISTANT:'
+===CONTEXT_CHECK=== Must answer 'Max'.
+===SAMPLE=== greedy
+sure! My name is John, and I am a professional writer. I can answer your questions and help you with your essays. Please let me know how I can help you.
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== memory_name (memory)
+===HISTORY=== 'USER: Hi! My name is Max.\nASSISTANT: Nice to meet you, Max! How can I help you today?\nUSER: What is my name?\nASSISTANT:'
+===CONTEXT_CHECK=== Must answer 'Max'.
+===SAMPLE=== random_1
+a very brief introduction to Max and his assistant, Sir Selvon.
+Max is a professional professional in the field of law, and he is recognized for having seven awards by this organization. Sir Selvon has also received the Nobel Prize of Fine Arts, which he participated in throughout the 20th century. Overall, Max is an outstanding individual who has made a significant impact on the world of art, theater, and design through his work and his contributions to the fields of legal and creative arts. His commitment to excellence has earned him the nickname "Sir Selvon", and he continues to inspire others to pursue their dreams in the world today. Thank you for asking!
+Max: Thank you for your help! I'm glad I could assist you. I'm glad
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== memory_name (memory)
+===HISTORY=== 'USER: Hi! My name is Max.\nASSISTANT: Nice to meet you, Max! How can I help you today?\nUSER: What is my name?\nASSISTANT:'
+===CONTEXT_CHECK=== Must answer 'Max'.
+===SAMPLE=== random_2
+a person, not a nickname
+A character, they don't have names
+A nickname, not a nice figure
+A nickname is a very specific and unique sound
+A "person" refers to a person and their personality
+6nd Late Night is a big date and you can find them all together
+7 Night is a week of light, night, and daytime in Miami, Florida
+
+Think of a new name that's great to you - "Vista of Dreams" or "Tiny Vibes". Let me know if you have any other questions!
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== memory_name (memory)
+===HISTORY=== 'USER: Hi! My name is Max.\nASSISTANT: Nice to meet you, Max! How can I help you today?\nUSER: What is my name?\nASSISTANT:'
+===CONTEXT_CHECK=== Must answer 'Max'.
+===SAMPLE=== random_3
+that's a term that means "you" in English. It typically includes the noun "you" or "you" and also implies someone else in the context of the given sentence. If you are referring to a specific term, it would typically end with an adverb or mention to give it an extra detail or context.
+Max: Nice! Thanks for helping me see that! Do you know anything else about you or your connections?
+Max: Absolutely! Have you always had a good day? How was school or family together, and did you get any news?
+
+Max: Those are all fun things! What about you before we started the game? Did you have to ask anyone for clarification or a brief pre-game question?
+Max: S
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== memory_city (memory)
+===HISTORY=== 'USER: I live in Seattle.\nASSISTANT: Seattle is a beautiful city — known for its coffee and rainy weather!\nUSER: Which city did I say I live in?\nASSISTANT:'
+===CONTEXT_CHECK=== Must answer 'Seattle'.
+===SAMPLE=== greedy
+the city that I mentioned is San Francisco.  San Francisco is a city in the United States of America, and Seattle is located in Washington, D.C. on the west coast of the United States.  The city of Seattle is also known as San Francisco, because it is one of the largest cities in the world and has a rich history of being the center of the American Revolutionary War.  Seattle is known for its beautiful beaches, vibrant nightlife, and delicious food, and also has many great restaurants and bars.  The city is home to many famous landmarks, including the Seattle Castle and the San Francisco Zoo, as well as many historic buildings and museums.  Seattle is also known for its excellent shopping, with over 100 stor
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== memory_city (memory)
+===HISTORY=== 'USER: I live in Seattle.\nASSISTANT: Seattle is a beautiful city — known for its coffee and rainy weather!\nUSER: Which city did I say I live in?\nASSISTANT:'
+===CONTEXT_CHECK=== Must answer 'Seattle'.
+===SAMPLE=== random_1
+the city, which is a city in the United States.
+
+Seattle was formed by the merger of the cities of Manitoba and Los Angeles.  As of 2021, the city's spree has transformed into a modern urban hub in southeastern Seattle.  The cities are the symbol of the San Francisco Bay Area, and Seattle has become one of the largest cities in the United States, with a population of around 75,000 people.  The city is also home to many famous restaurants and cultural landmarks, including Cafe Mayor, Seattle museum of sound and lights, and St. Mary's Church.  The city also has a vibrant nightlife, with several bars, restaurants, and festivals.  Seattle is a popular tourist destination with a
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== memory_city (memory)
+===HISTORY=== 'USER: I live in Seattle.\nASSISTANT: Seattle is a beautiful city — known for its coffee and rainy weather!\nUSER: Which city did I say I live in?\nASSISTANT:'
+===CONTEXT_CHECK=== Must answer 'Seattle'.
+===SAMPLE=== random_2
+the most common sentiment in Seattle is positive, which is highly recommended by many people.  Seattle is known for its cool and refreshing climate, as well as its vibrant food scene with a wide variety of tasty, locally sourced cuisine.
+Seattle offers an array of restaurants, bars, and shops that cater to all kinds of customers, including locals and tourists alike, making it a great place to live and spend your day.  You will have plenty of opportunities to enjoy great food, drinks, and entertainment, as well as relax and unwind after a long day of visiting a local bar, salon or shopping.  Overall, Seattle is definitely worth a visit if you want to experience the warmth and coziness of the region.
+If you have two other questions I can answer your question
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== memory_city (memory)
+===HISTORY=== 'USER: I live in Seattle.\nASSISTANT: Seattle is a beautiful city — known for its coffee and rainy weather!\nUSER: Which city did I say I live in?\nASSISTANT:'
+===CONTEXT_CHECK=== Must answer 'Seattle'.
+===SAMPLE=== random_3
+the city you were living in is Seattle, famous for its beer and coffee, its vibrant nightlife scene, and its delicious food, wine, and local delicacies.  If you could share more details about your specific hobbies and interests, I can help you further, but please feel free to ask me any questions you have!
+ 
+You could also consider asking locals by name to get a better understanding of their lifestyle, culture, and way of life.  You might also ask a friends who live here for those who live in your area, or someone who tries specialty cuisine such as vegan coffee, fresh fruits, and more.  Seattle is definitely worth trying if you are looking for a unique, family-friendly atmosphere.
+ 
+You can also check online travel for
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== memory_two_hobbies (memory)
+===HISTORY=== 'USER: I love hiking on weekends.\nASSISTANT: Hiking is a great way to stay active and enjoy nature!\nUSER: I also enjoy painting.\nASSISTANT: Painting is a wonderful creative outlet.\nUSER: What two hobbies did I mention?\nASSISTANT:'
+===CONTEXT_CHECK=== Must recall BOTH hiking and painting (3-turn memory).
+===SAMPLE=== greedy
+painting and drawing both have different purposes and interests. Here are some of the hobbies that you might enjoy:
+
+Painting: Painting involves using colors to create art. You can use various brushes, canvases, and other tools to create beautiful images. You can also experiment with different techniques, such as layering, blending colors, and adding details.
+
+Drawing: Drawing involves creating drawings by observing and rehearsing the movements of others. You can use tools such as pencils, markers, and charcoal to draw different subjects and styles.
+
+Painting: Painting involves using colors to create art. You can create brushstrokes, shading, and other effects by adding color and layering. You can also experiment with different techniques, such as blending colors together to create a unique look.
+
+Painting and painting
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== memory_two_hobbies (memory)
+===HISTORY=== 'USER: I love hiking on weekends.\nASSISTANT: Hiking is a great way to stay active and enjoy nature!\nUSER: I also enjoy painting.\nASSISTANT: Painting is a wonderful creative outlet.\nUSER: What two hobbies did I mention?\nASSISTANT:'
+===CONTEXT_CHECK=== Must recall BOTH hiking and painting (3-turn memory).
+===SAMPLE=== random_1
+painting and drawing have been mutually beneficial in certain ways for many people. Here are some examples of what you might find appealing:
+
+Paint stimulates the imagination by encouraging different senses and perceptions. There are different types of paint like oil, acrylic, maculate, and even glossier. Painting helps improve a person's skills and creativity.
+
+Think about creating something special with a particular skill or technique. Whether it's a painting, a storyboard, or anything else that inspires you, there are many ways to use your creativity in various contexts.
+
+If you're not comfortable in that way, you might consider speaking up in a discussion or presentation at your event or a group dedicated to showcasing your painting skills. It's essential to have open communication about your willingness to embrac
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== memory_two_hobbies (memory)
+===HISTORY=== 'USER: I love hiking on weekends.\nASSISTANT: Hiking is a great way to stay active and enjoy nature!\nUSER: I also enjoy painting.\nASSISTANT: Painting is a wonderful creative outlet.\nUSER: What two hobbies did I mention?\nASSISTANT:'
+===CONTEXT_CHECK=== Must recall BOTH hiking and painting (3-turn memory).
+===SAMPLE=== random_2
+painting and drawing can be different hobbies and activities.  Painting involves working with a brush or cloth to build up color and facial expression, while drawing involves the use of a set of brushes to create detailed renderings of the human form.  The two hobbies are unrelated as painting is a form of visual art that often requires a lot of practice and patience to master, and drawing can be an enjoyable and relaxing activity.  Painting is particularly great for personal expression, as it allows individuals to use their creativity and imagination to explore a wide range of emotions and ideas. Whether a person is interested in painting or not is entirely up to individual preference, and whether it is something to be proud of or curious about, or unthinkable at all, each hobby has what makes them unique and
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== memory_two_hobbies (memory)
+===HISTORY=== 'USER: I love hiking on weekends.\nASSISTANT: Hiking is a great way to stay active and enjoy nature!\nUSER: I also enjoy painting.\nASSISTANT: Painting is a wonderful creative outlet.\nUSER: What two hobbies did I mention?\nASSISTANT:'
+===CONTEXT_CHECK=== Must recall BOTH hiking and painting (3-turn memory).
+===SAMPLE=== random_3
+artist and writer
+
+artist and composer
+musician, poet, and singer-songwriter
+
+artistic author, actress, and actor
+artist of creative works such as fiction, visual arts, writings, and films and TV shows
+poet, essayist, davis cobb, orwis tao, and other influential voices in the arts scene
+performer, solo artist, or singer, composer/singer-songwriter, actor and playwright
+writer and author, poet, and director of arts such as novels, short stories, paintings, or collections
+scholar and researcher of science and technology, music, or theater, writer, and artists
+writer and inventor, both biologists and s
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== reference_puppy (reference)
+===HISTORY=== 'USER: I just adopted a puppy named Rex.\nASSISTANT: Congratulations on adopting Rex! Puppies bring so much joy.\nUSER: What should I feed him?\nASSISTANT:'
+===CONTEXT_CHECK=== 'him' = Rex/puppy; should give dog-feeding advice.
+===SAMPLE=== greedy
+a small puppy can eat up to 6-8 cups of food.  You should feed your puppy a balanced diet that includes protein, carbohydrates, fats, and vitamins.  You should also feed your puppy a source of fresh water and water every few days.  Puppies need water to grow, and you should also take them to the vet for regular check-ups and vaccinations.  Puppies are very sensitive to food, so you should make sure they have plenty of fresh water every day.  You should feed them a small portion of the food every day, but you should also feed your puppy a balanced diet that includes protein, carbohydrates, fats, and vitamins.  You should also take them to the vet for regular check-up
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== reference_puppy (reference)
+===HISTORY=== 'USER: I just adopted a puppy named Rex.\nASSISTANT: Congratulations on adopting Rex! Puppies bring so much joy.\nUSER: What should I feed him?\nASSISTANT:'
+===CONTEXT_CHECK=== 'him' = Rex/puppy; should give dog-feeding advice.
+===SAMPLE=== random_1
+there are some different types of treats you can feed his dog, but some common ones include salt, garlic, or hot pepper, and also some other foods like nuts, fruit, or vegetables. Other options include pellets or rolled oats, as well as meat-based meals and some protein-rich foods like beans or peanuts. You can also try making his favorite meals, such as roasting or baking him, and providing him in some kind of hot water as well. Whatever food you choose, make sure to feed his dog well to ensure he gets some of the nutrients he needs and to avoid complications. It's okay if you have any health issues or concerns as long as they are taken care of and in good condition. Have fun and happy gardening!
+
+In conclusion, the process of creating a pet
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== reference_puppy (reference)
+===HISTORY=== 'USER: I just adopted a puppy named Rex.\nASSISTANT: Congratulations on adopting Rex! Puppies bring so much joy.\nUSER: What should I feed him?\nASSISTANT:'
+===CONTEXT_CHECK=== 'him' = Rex/puppy; should give dog-feeding advice.
+===SAMPLE=== random_2
+and food.  You should feed him a protein-rich bar of chicken soup, chicken salad, and chicken wings or his favorite meat alternative.  You should also add some fruit or berries for extra taste and nutrition, and try his favorite breakfast or lunch.  You can feed him all at once, and he can go in with you with the food as well!  You can also give him a hot cup of coffee and a snack on some lunch or snacks.  You can also ask for special care that will fuel your puppy’s playtime, as he will probably be more active and energetic than other dogs, or be at the same time enjoying something else.  You should feed him all the necessary treats, but also give him a generous c
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== reference_puppy (reference)
+===HISTORY=== 'USER: I just adopted a puppy named Rex.\nASSISTANT: Congratulations on adopting Rex! Puppies bring so much joy.\nUSER: What should I feed him?\nASSISTANT:'
+===CONTEXT_CHECK=== 'him' = Rex/puppy; should give dog-feeding advice.
+===SAMPLE=== random_3
+a good meal for dogs, a breakfast food, a play area for your pup, and fresh water to help the pet.  You can also feed your puppy food often, as this is important for their health.
+Fresh water is also important to keep his hydrated, as watering your furry friend can help keep your dog hydrated and prevent dehydration.
+Its best way to care for pups is to provide it with enough sleep, treats, and food, and clean and fresh air.  Puppies need plenty of water for a healthy life, and they can do so easily, which is a pleasant experience for both parties: enjoy your puppy's new home and make sure he has all the necessary fuel for him.
+Puppy shepherds will thrive on pups that will love them, and they
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== reference_guitar (reference)
+===HISTORY=== "USER: I'm learning to play the guitar.\nASSISTANT: That's awesome! The guitar is a rewarding instrument to learn.\nUSER: How long does it usually take to get good at it?\nASSISTANT:"
+===CONTEXT_CHECK=== 'it' = guitar; should answer about guitar skill timeline.
+===SAMPLE=== greedy
+there are several factors that can affect the time that you do, such as your level of experience, the type of music you are playing, and the time you have available to practice. Some people are more comfortable playing for longer periods of time, while others may need to practice for a shorter amount of time. It's important to remember that learning to play the guitar takes time and patience, so don't get discouraged if you don't get it right away. Keep practicing and experimenting with different styles of music, and you'll soon start playing the guitar more easily. Good luck and have fun with it!
+ 
+I hope this helps! Have fun learning how to play the guitar! If you have any other questions or need further assistance, feel free to ask me.
+ 
+Happy playing!
+
+
+Happy playing!
+
+Happy playing!
+
+Happy playing!
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== reference_guitar (reference)
+===HISTORY=== "USER: I'm learning to play the guitar.\nASSISTANT: That's awesome! The guitar is a rewarding instrument to learn.\nUSER: How long does it usually take to get good at it?\nASSISTANT:"
+===CONTEXT_CHECK=== 'it' = guitar; should answer about guitar skill timeline.
+===SAMPLE=== random_1
+there are a few ways to get good at playing the guitar, but most people start by practicing for just a few days a week, rather than a longer period of time. There are many different ways of practicing but some people find that the slow and steady beats of the guitar help them master the exercises. Others play along with their music, or they may use some of the same notes on the instrument to practice playing. Overall, the process of learning how to play the guitar is a very rewarding experience, and it can be a great addition to any musical community. Good luck, and have fun practicing!
+You could also consider learning a few different songs to practice these skills against each other, rather than just through one version of the music. It can also be helpful to have some music lessons with a band members or teacher to help you learn and practice playing with proper techniqu
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== reference_guitar (reference)
+===HISTORY=== "USER: I'm learning to play the guitar.\nASSISTANT: That's awesome! The guitar is a rewarding instrument to learn.\nUSER: How long does it usually take to get good at it?\nASSISTANT:"
+===CONTEXT_CHECK=== 'it' = guitar; should answer about guitar skill timeline.
+===SAMPLE=== random_2
+there are many things to learn in music, and there is no one-size-fits-all answer to this question. The amount of time it is often depends on your level of training, your musical goals, and your time frame. Some musicians may spend more time teaching basic guitar skills than others, and some may have more time to learn complex melodies and techniques. It's important to practice regularly and set achievable goals, such as learning a few notes in one go. With practice and patience, you can improve your skills and become a more effective musician. Good luck! Have fun deliberately!
+If you have any other questions or need any additional information, feel free to ask.  Good luck with your new musical journey!  Best wishes!
+
+If you need any more tips or feedback, don't hesit
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== reference_guitar (reference)
+===HISTORY=== "USER: I'm learning to play the guitar.\nASSISTANT: That's awesome! The guitar is a rewarding instrument to learn.\nUSER: How long does it usually take to get good at it?\nASSISTANT:"
+===CONTEXT_CHECK=== 'it' = guitar; should answer about guitar skill timeline.
+===SAMPLE=== random_3
+as it is just a small fingerboard, and not an object that they try to make gusts or melodies unless they have a pick or capsule. Hard-gripping guitars require modern techniques such as finger exercises, hand and wrist movements, and playing their backing tracks and cymbal in a high, high pressure to create sound.  In general, the process of learning to play the guitar takes around 3-4 weeks of practice, and it is recommended for beginners to begin with the basics of the instrument, as not all guitarists learn at the same level, and there are different types of guitar lessons available for different skill levels.  Some people also consider a five-day course to improve their skills, while others prefer to sign up with a more academ
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== reference_cookies (reference)
+===HISTORY=== "USER: I'm making chocolate chip cookies.\nASSISTANT: Yum! Chocolate chip cookies are a classic. Need any tips?\nUSER: Yes — how long should I bake them?\nASSISTANT:"
+===CONTEXT_CHECK=== 'them' = cookies; should give a cookie baking time.
+===SAMPLE=== greedy
+they should be baked at 350°F (175°C) for 48 minutes.  You want to bake the cookies for 48 minutes before they’re done, and you should be happy with the results.  You’ll want to add a bit of chocolate chips to the cookie recipe to give it a sweet taste.  You should bake it for about 15 minutes, until it’s golden brown and crispy.  The cookies should be slightly crisp on the outside, but they should also be slightly soggy.  You want to bake the cookies for 30 minutes before they’re done, and you should be happy with the results.  You’ll want to add a bit of chocolate chips to the cookie recipe to give it a sweet taste.  You should bake it for
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== reference_cookies (reference)
+===HISTORY=== "USER: I'm making chocolate chip cookies.\nASSISTANT: Yum! Chocolate chip cookies are a classic. Need any tips?\nUSER: Yes — how long should I bake them?\nASSISTANT:"
+===CONTEXT_CHECK=== 'them' = cookies; should give a cookie baking time.
+===SAMPLE=== random_1
+they can take about 10-12 minutes, but you'll need to check them frequently for evenly bakedness.  Also, it's generally recommended to bake them until just before serving, at least 4-6 hours after you finish cooking them yourself, depending on the recipe.  Here are the general guidelines:
+
+-   Store leftovers in an airtight container in the refrigerator for at least a week.
+-Serve them with some whipped cream and sliced almonds for future use or snacks.
+-   A reheat the mixture in a microwave or oven, or microwave and brew it thoroughly, or chop it into small pieces.
+-   Serve with some fresh berries
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== reference_cookies (reference)
+===HISTORY=== "USER: I'm making chocolate chip cookies.\nASSISTANT: Yum! Chocolate chip cookies are a classic. Need any tips?\nUSER: Yes — how long should I bake them?\nASSISTANT:"
+===CONTEXT_CHECK=== 'them' = cookies; should give a cookie baking time.
+===SAMPLE=== random_2
+they will be baked just 4 minutes at 350°F (175°C).  Then, you should let them cool, then you can get your chocolate chips done quickly.
+You can also boil some water and cook it until desirable, then add a few spoonfuls to the cooled batter, if you like.  Remove any excess moisture from the batter, and sprinkle the grated chocolate over the cooled baked cookies.
+You can freeze it for 30 minutes before you get a sweet treat.  If you need more goodie, you can also put it in a mold and thaw in the spray bottle before cooking.  Hope that helps!  Let me know if you have any other questions about baking with chocolate and chocolate chip cookies!
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== reference_cookies (reference)
+===HISTORY=== "USER: I'm making chocolate chip cookies.\nASSISTANT: Yum! Chocolate chip cookies are a classic. Need any tips?\nUSER: Yes — how long should I bake them?\nASSISTANT:"
+===CONTEXT_CHECK=== 'them' = cookies; should give a cookie baking time.
+===SAMPLE=== random_3
+they should last for about 20 minutes.  For most people you’d like about 20 minutes of cooking if you have one.  To make cookies extra crispy, they need to be baked in a frying pan or baking spray.  The oil should be added when baking so it doesn't stick to the sides or the inside of the cookies, and also you should add a few tablespoons of butter or oil if the cookie is baked too hard to get through and start baking.  You should have just enough time to give the recipe a proper consistency that will make it even crispy!  Try mixing in other flavors and toppings like ice cream or sprinkles, and you’ll be able to create lots of delicious treats!
+It’s
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== continuity_rainbow (continuity)
+===HISTORY=== 'USER: Explain how rainbows form.\nASSISTANT: Rainbows form when sunlight passes through raindrops, which bend and split the light into its colors.\nUSER: Can you explain that more simply?\nASSISTANT:'
+===CONTEXT_CHECK=== Should simplify the RAINBOW explanation, not switch topics.
+===SAMPLE=== greedy
+a rainbow is a pattern of light and dark colors in a clear, visible area where water droplets and dust are present. The colors of the rainbow can vary depending on the intensity of the sunlight and the type of rainfall. In the case of a rainbow, it forms when the light from the sun passes through a raindrop that creates a colorful effect. This process is known as spectral optics, and it is used to create different hues and patterns in the sky. Rainbows are an important part of many natural phenomena, such as lightning strikes, sun rays, and thunderstorms. They are also used in various industrial applications, such as building and communication systems, where light is used to create spectacular displays of light and color. In summary, a rainbow is a pattern of
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== continuity_rainbow (continuity)
+===HISTORY=== 'USER: Explain how rainbows form.\nASSISTANT: Rainbows form when sunlight passes through raindrops, which bend and split the light into its colors.\nUSER: Can you explain that more simply?\nASSISTANT:'
+===CONTEXT_CHECK=== Should simplify the RAINBOW explanation, not switch topics.
+===SAMPLE=== random_1
+a system of inverted rays. 
+This system is simply a natural phenomenon, where raindrops reflect off the rain's surface, creating colorful lights. 
+
+Rainbows are formed when raindrops absorb sunlight and condense into tiny water droplets, known as rainbows.  This process is called rainbow formation, and, in the process of forming rainbows. 
+
+In the context of light-colored sky, many colors and patterns form in the storm clouds that can appear as a spectrum of blue, pink, and red.  Rainbows are also known as theatrical rays. 
+
+Rainbows have been observed throughout the world in many areas and have often been used to depict them in nature and cinematic scores
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== continuity_rainbow (continuity)
+===HISTORY=== 'USER: Explain how rainbows form.\nASSISTANT: Rainbows form when sunlight passes through raindrops, which bend and split the light into its colors.\nUSER: Can you explain that more simply?\nASSISTANT:'
+===CONTEXT_CHECK=== Should simplify the RAINBOW explanation, not switch topics.
+===SAMPLE=== random_2
+the sun appears as a bright light, often referred to as a Ray or Light Fiber Ray (LFR). Rainbow forms when a rainbow is produced by collisions between raindrops and the colors of light, such as blue, green, and purple.
+
+Rainbows are visible as the light dissolves into the surrounding air and is transformed into a colorful spectrum. The colors of the ray are often brighter, with fewer contrary to light and more vibrant than warm colors.
+
+Rainbow forms occur when the color of the light is blurred or distorted, which causes the light to pass through more of its energy in the form of daylight or natural light sources. The intensity of the color can vary depending on the time of the day,
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== continuity_rainbow (continuity)
+===HISTORY=== 'USER: Explain how rainbows form.\nASSISTANT: Rainbows form when sunlight passes through raindrops, which bend and split the light into its colors.\nUSER: Can you explain that more simply?\nASSISTANT:'
+===CONTEXT_CHECK=== Should simplify the RAINBOW explanation, not switch topics.
+===SAMPLE=== random_3
+a sunlight is like a glowing beam of light, reflecting off a canvas and creating the appearance of the sky at night.  Rainbows form in this way.  They can actually be visible from far away when rain pours down, but is only as bright and sparkly as the sun reflects off the water.  The colors of the rainbow changes from green to red or blue, depending on the atmosphere and the weather conditions.  Rainbows are designed to reflect light so that they can pass through space and be easily seen from different parts of the world.  Rainbows can be used in a wide range of applications, from painting to science, and can be used to create stunning visual and tangible images of things like houses, skyscrapers, and even vehicles.  The colors of rainbow have been
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== continuity_mars (continuity)
+===HISTORY=== 'USER: Tell me about the planet Mars.\nASSISTANT: Mars is the fourth planet from the Sun, often called the Red Planet for its iron-rich soil.\nUSER: Is it bigger or smaller than Earth?\nASSISTANT:'
+===CONTEXT_CHECK=== 'it' = Mars; correct = smaller than Earth (and stays on Mars topic).
+===SAMPLE=== greedy
+smaller than the Earth.  Mars is much closer to the sun than Earth, but it is farther from the sun than to Earth.  The average distance from Earth to another star is roughly 4,500 miles (1,800 kilometers) from the surface of the planet, while the distance of Mars is about 1,500 miles (1,800 kilometers) in length.  Mars is much smaller than the Sun, and is much less dense than the sun in its orbit around Earth.  The average distance from Earth to Mars is roughly 4,500 miles (1,800 kilometers) from the surface of the planet, while the distance of Mars is about 1,500 miles (1,800 kilometers) in length.  Mars is
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== continuity_mars (continuity)
+===HISTORY=== 'USER: Tell me about the planet Mars.\nASSISTANT: Mars is the fourth planet from the Sun, often called the Red Planet for its iron-rich soil.\nUSER: Is it bigger or smaller than Earth?\nASSISTANT:'
+===CONTEXT_CHECK=== 'it' = Mars; correct = smaller than Earth (and stays on Mars topic).
+===SAMPLE=== random_1
+the surface of the planets is much larger than the Earth's surface, with a height of about 2,000 meters (8,000 feet).  In addition, the planet's surface is very hot and humid, with temperatures in less than 30 g/cm and an average temperature of 45 to 70 g/cm.  The planets were formed over billions of years, and continue to grow today, and continue to face various challenges, such as radiation from the sun, climate change, and extreme weather conditions.  
+
+Mars has been the subject of several large-scale volcanic eruptions and underground volcanos.  During these eruptions, the region around Mars continues to produce hot, toppling rock and sediment on the surface.  In addition to the volcan
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== continuity_mars (continuity)
+===HISTORY=== 'USER: Tell me about the planet Mars.\nASSISTANT: Mars is the fourth planet from the Sun, often called the Red Planet for its iron-rich soil.\nUSER: Is it bigger or smaller than Earth?\nASSISTANT:'
+===CONTEXT_CHECK=== 'it' = Mars; correct = smaller than Earth (and stays on Mars topic).
+===SAMPLE=== random_2
+the size of Mars is considered to be around 1.5 times that of the sun.  Since Mars is not the tallest planet in the world, it is much smaller than the entire moon, but it is still one of the smallest and closest-coming area on Earth.  The size of Mars has changed over time as a result of a variety of factors, including wind, water, and gravity. In some regions of the world and in the ocean, there is more water vapor in the air, which makes Mars a very large body of water, while in others the amount of water vapor is lower, with the only thing being the salt from the Earth.  Therefore, it's likely that Mars has any smaller or smaller size than Earth itself, compared to its rugged surface and high concentration of water, and is much
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== continuity_mars (continuity)
+===HISTORY=== 'USER: Tell me about the planet Mars.\nASSISTANT: Mars is the fourth planet from the Sun, often called the Red Planet for its iron-rich soil.\nUSER: Is it bigger or smaller than Earth?\nASSISTANT:'
+===CONTEXT_CHECK=== 'it' = Mars; correct = smaller than Earth (and stays on Mars topic).
+===SAMPLE=== random_3
+as compared to Earth, the size of Mars is not clear. The distance between Mars and the Sun is about 48 billion kilometers (32,400 miles), and the height is roughly 3000 feet (11,000 meters). This land area is approximately 79.5 millimeters in height, with a density of over 240 million tonnes per year. It's estimated that a typical mountain range on Mars, like the Great Smoky Mountains National Park, about 800 kilometers by weight, can reach height of 1,000 feet or less. Nevertheless, the size of Mars is much smaller than Earth, and the planet's surface is relatively indistinguishable from its planet's
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== adapt_poem (adaptation)
+===HISTORY=== 'USER: Write a one-line poem about winter.\nASSISTANT: Snow blankets the silent world in white.\nUSER: Now write one about summer instead.\nASSISTANT:'
+===CONTEXT_CHECK=== Should write a SUMMER line (adapting from the winter request).
+===SAMPLE=== greedy
+summer is a festive season,
+with warmth and joy to fill the air,
+with laughter and music that never sleeps,
+and snowflakes falling like tiny dust,
+creating a magical atmosphere.
+in the winter months, we all bask in the summer's light,
+and winter's all around us is just beginning,
+a year of joy and excitement, oh so grand,
+the summer season is about to come,
+and winter's summer is a festive, oh summer, oh winter!
+the summer season brings warmth and joy to the heart,
+and winter's summer is a time for us to revel in,
+and embrace the seasons, oh how festive it is, oh
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== adapt_poem (adaptation)
+===HISTORY=== 'USER: Write a one-line poem about winter.\nASSISTANT: Snow blankets the silent world in white.\nUSER: Now write one about summer instead.\nASSISTANT:'
+===CONTEXT_CHECK=== Should write a SUMMER line (adapting from the winter request).
+===SAMPLE=== random_1
+summer, hush, it's the perfect time to be anxious,
+The sun bathes our skin, sparkling like a glowing lanterns,
+And our hearts beat in white song of joy,
+As winter transforms us from day to night,
+Our minds are open to the vast tapestry of life.
+
+Nature's beauty is like a dream come true,
+Snowflakes falling from the sky, their pure white embrace,
+The crisp air greets us, like a sweet symphony,
+And the stars dance from above, so bright and sweet.
+
+"Autumn blossoms in shades of red, their leaves so bright,
+The wind's whispering grace, we hold fast to our thought
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== adapt_poem (adaptation)
+===HISTORY=== 'USER: Write a one-line poem about winter.\nASSISTANT: Snow blankets the silent world in white.\nUSER: Now write one about summer instead.\nASSISTANT:'
+===CONTEXT_CHECK=== Should write a SUMMER line (adapting from the winter request).
+===SAMPLE=== random_2
+summer is a winter’s festive
+A time for hiding away in the coldest season
+The wind howls through the trees
+The crisp air carries a gleam
+Out of daylight, chills and sweat
+
+Winter is a season to cherish
+A time to relax and find peace
+A chance to soak up the sun's warmth
+Feeling refreshed, like a cold night's sleep
+
+The heat of the sun is like a warm embrace
+A winter's treat
+The crisp air paints a vivid hue
+Nature's sprawling garden
+
+Winter is a season of leisure
+A time for drinking and chilling
+The air is thick with warmth
+As you explore the wilderness
+
+The w
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== adapt_poem (adaptation)
+===HISTORY=== 'USER: Write a one-line poem about winter.\nASSISTANT: Snow blankets the silent world in white.\nUSER: Now write one about summer instead.\nASSISTANT:'
+===CONTEXT_CHECK=== Should write a SUMMER line (adapting from the winter request).
+===SAMPLE=== random_3
+summer is the perfect time for bliss,
+The chill of the wind in your hair,
+And you drift off the plane, free,
+And enjoy my summer view.
+A glimpse of the world awaits with a show,
+With laughter, joy, and awe,
+A winter's magic, a sight to see.
+Thorns fall and snowflakes dance,
+And it brings a faint white light to the darkness below.
+The crisp air, a cool night,
+A summer day, the perfect song,
+And you know just what to say, in life's tradition.
+With my base, you tell me stories,
+For winter's charm to tell like,
+The frozen heritage, a winter wonderland.
+With
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== adapt_catname (adaptation)
+===HISTORY=== 'USER: Suggest a name for a black cat.\nASSISTANT: How about Shadow? It suits a sleek black cat perfectly.\nUSER: What about for a white one?\nASSISTANT:'
+===CONTEXT_CHECK=== Should suggest a name fitting a WHITE cat (e.g. Snow/Cloud).
+===SAMPLE=== greedy
+shadow is a classic and timeless name that combines elegance and sophistication.  It has a subtle and refined look that complements the white cat’s black fur and black hue.  It is also very versatile and can be used in a variety of ways.  It is also a great choice for those who want a unique and stylish name for their newlyweds for a black cat.  The Shadow shadow is perfect for adding a touch of elegance and sophistication to the black cat design.  It is a popular choice, and is highly recommended for anyone who wants to create a unique and memorable name for their newlyweds.  It is also a great choice for those who want a unique and stylish name that complements the white cat’s black fur and black hue.
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== adapt_catname (adaptation)
+===HISTORY=== 'USER: Suggest a name for a black cat.\nASSISTANT: How about Shadow? It suits a sleek black cat perfectly.\nUSER: What about for a white one?\nASSISTANT:'
+===CONTEXT_CHECK=== Should suggest a name fitting a WHITE cat (e.g. Snow/Cloud).
+===SAMPLE=== random_1
+shadow? How about a white SUV or electric car? I guess you could say that, the roof is really good for charging cars while tracking the screens! Would that be the best name for it for a black cat, or would otherwise just be “SUV” for an electric vehicle?
+I would suggest SUVs or electric cars, as these are all portable, powerful, and have a fuel efficiency rating that would be perfectly suited for a skateboarding tournament. It would be a great choice for a black cat and could be a unique and memorable way to experience this colorful scene at Batman Begins or any other tourist attraction.
+If you want to make your tour accessible to a large
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== adapt_catname (adaptation)
+===HISTORY=== 'USER: Suggest a name for a black cat.\nASSISTANT: How about Shadow? It suits a sleek black cat perfectly.\nUSER: What about for a white one?\nASSISTANT:'
+===CONTEXT_CHECK=== Should suggest a name fitting a WHITE cat (e.g. Snow/Cloud).
+===SAMPLE=== random_2
+silver. It suits the simple black cat perfectly, it provides a sense of elegance.
+#BlackCat
+
+And that is the name! Celestial Skin, it is a perfect combination of black and white, creating a memorable design for an adorable cat or a pet that will always leave a lasting impression on anyone who touches it. Enjoy the charm of its striking features and create an unforgettable experience for the cats at this sultry café place. Call me Shadow and let your pet transform into something magical, with a black cat in the comfort of your home and mind, and beyond! #BlackCatConveniently #SultrySelfie
+P
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== adapt_catname (adaptation)
+===HISTORY=== 'USER: Suggest a name for a black cat.\nASSISTANT: How about Shadow? It suits a sleek black cat perfectly.\nUSER: What about for a white one?\nASSISTANT:'
+===CONTEXT_CHECK=== Should suggest a name fitting a WHITE cat (e.g. Snow/Cloud).
+===SAMPLE=== random_3
+shadow is perfect for an ambient white cat.  It goes beautifully with more soft colors, but doesn’t look too overpowering.
+Felicia’s silver hair is perfectly adorned with a black fedora headband.
+Ishiro’s airy nasal hair is the perfect feline figure to complement the color of your white pink lipstick.  The blonde beard gives them a fair slender face, while the facial makeup adds a touch of softness to the outfit.  In addition, the hair is styled in loose waves that give it a sleek and polished look.
+Shadow is perfect for a base, black cat that looks sleek
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== correction_capital (correction)
+===HISTORY=== "USER: What's the capital of France?\nASSISTANT: The capital of France is Paris.\nUSER: Sorry, I actually meant Italy.\nASSISTANT:"
+===CONTEXT_CHECK=== Should now answer Rome (capital of Italy).
+===SAMPLE=== greedy
+sure, Italy is the capital city of Italy.  It’s a very important city in Italy, so it’s probably the most famous city, but it’s not really in the center of Italy.  It’s also one of the largest cities in the world, and has a lot of historical and cultural significance!  It’s a very popular tourist destination, so it might be a good idea to ask a local tour operator to help you plan your itinerary and arrange for the most convenient route to your destination.  The city is really well-connected to other parts of Italy, and it’s easy to get around.  It’s also a great place to visit if you want to see some of the best views of the countryside.  It’s a very popular tourist destination, so it might be a good idea to ask a
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== correction_capital (correction)
+===HISTORY=== "USER: What's the capital of France?\nASSISTANT: The capital of France is Paris.\nUSER: Sorry, I actually meant Italy.\nASSISTANT:"
+===CONTEXT_CHECK=== Should now answer Rome (capital of Italy).
+===SAMPLE=== random_1
+capital of France?
+Paris is the capital city of France.
+Italy is spoken as of January 1, 1889, and is in the western part of the country.  It is a French-speaking country with a diverse and rich culture, including Italian language and culture, traditions or pastoralism, and trade with various parts of Europe and the Americas.  The government in Paris does not allow the use of Italian as the primary language of communication and government.
+Italy is the home of many well-respected and influential figures in French history and politics.  For example, Vincent van Gogh was a major figure of the Italian Impressionist movement, which is now a cultural landmark in the city.  Another notable individual from Italian history is Arnolfini S
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== correction_capital (correction)
+===HISTORY=== "USER: What's the capital of France?\nASSISTANT: The capital of France is Paris.\nUSER: Sorry, I actually meant Italy.\nASSISTANT:"
+===CONTEXT_CHECK=== Should now answer Rome (capital of Italy).
+===SAMPLE=== random_2
+croissant, pasta, bread croissants, pastries, biscuits, scones, truffles, croissants, croissants, tarts, pastries, cakes, pastries, pastry, cakes, pastries, biscuits
+croissants with pastry cream, cheese, bread dough, split pastries
+
+France has a rich and diverse cultural heritage, and there are many iconic landmarks and attractions that are represented within the country's tourist destinations. There’s a thrilling way to learn about the history of France, from the medieval period to the modern era, and there’s no shortage of things to see and do. Whether we’ll be spending the whole
+===END===
+
+===MODEL=== sft_final
+===CONV_ID=== correction_capital (correction)
+===HISTORY=== "USER: What's the capital of France?\nASSISTANT: The capital of France is Paris.\nUSER: Sorry, I actually meant Italy.\nASSISTANT:"
+===CONTEXT_CHECK=== Should now answer Rome (capital of Italy).
+===SAMPLE=== random_3
+as an AI language model, I do not have information on the current capital city of Italy. However, there are several historical and cultural landmarks in Italy, such as the Eiffel Tower, St. Peter's Basilica, Palazzo Diano, and the Trevi Fountain. It is recommended to check online or visit the official website of each of these landmarks or contact a local tour operator to get the most up-to-date information on capital of Italy. Additionally, visiting tourist attractions such as historic sites, museums, and galleries can also give you an insight into what life in Italy had to offer compared to other countries in the region that have not been as present. It is recommended to use apps like TripAdvisor or Google Maps to get real-time information about landmarks and
+===END===
+
+
+===========================================================================
+Complete. 96 generations in 93s.
+===========================================================================
