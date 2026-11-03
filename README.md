@@ -130,10 +130,12 @@ The result is a genuine trade-off, not a clean win:
 
 **Where fine-tuning clearly won:**
 
+The two multi-turn rows are graded blind by hand: on 2026-11-03 I graded all 96 replies of the multi-turn test (12 conversations, one greedy and three sampled replies each, from both models), shuffled and with the model hidden, against each conversation's written check. An earlier version of this table used AI raters, who gave 92% and 44%; the hand grades replace them. The replies, the shuffle key and my grades are in [docs/human-grading/](docs/human-grading/).
+
 | Skill | Base MaxGPT-3 | MaxGPT-3.5 (SFT) |
 |---|---|---|
-| Cross-turn reference resolution ("feed *him*" to the puppy) | 25% | **92%** |
-| Multi-turn context use (overall) | 25% | **44%** |
+| Cross-turn reference resolution ("feed *him*" to the puppy) | 25% (3/12) | **58%** (7/12) |
+| Multi-turn context use (overall) | 19% (9/48) | **31%** (15/48) |
 | Factual structure (photosynthesis, correct of 6) | 0 | **4** |
 | Assistant self-awareness ("as an AI, I don't have...") | never | yes |
 
