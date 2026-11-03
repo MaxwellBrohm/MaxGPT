@@ -28,11 +28,11 @@ The four models above are the **Classic** series, the GPT-2-style lineage. The *
 | Model | Params | Architecture | Context | Status |
 |---|---|---|---|---|
 | **MaxGPT-Mini** | 113M | 12 layers x 768 dim, 12 heads (4 KV) | 1024 | The prototype: the same modern design at 113M, trained first to prove out the pipeline |
-| **MaxGPT-Ultra** | 1.09B | 22 layers x 2048 dim, 16 heads (4 KV) | 2048 | Pretraining on a planned 100B tokens, stopped early (see below) |
+| **MaxGPT-Ultra** | 1.09B | 22 layers x 2048 dim, 16 heads (4 KV) | 2048 | Pretraining in progress: about 3.4B of a planned 100B tokens so far (see below) |
 
 Ultra adds four things Mini does not have: gated attention, a normalized value residual, depth-scaled norms, and the NorMuon optimizer with cautious weight decay. That recipe won an A/B test of four variants at the prototype's size, with 6.9% lower held-out loss than the original one.
 
-**Ultra's pretraining stopped early.** It was at about step 6,500 on 2026-09-24 (about 3.4B tokens, at roughly 0.5M tokens per step) and stopped on 2026-09-25, a few percent of the way to its 100B-token target.
+**Ultra's pretraining is in progress.** It has reached about step 6,500 (about 3.4B tokens, at roughly 0.5M tokens per step), a few percent of its 100B-token target. The rest needs more compute than one RTX 5070, so my college instructor has filed a request with the NSF's NAIRR Pilot for H100 time to finish it.
 
 The details are in [maxgpt-ultra/](maxgpt-ultra/): [TECHNIQUES.md](maxgpt-ultra/TECHNIQUES.md) explains every technique and the reasoning behind it, and [docs/ab_2026-09-21/](maxgpt-ultra/docs/ab_2026-09-21/) has the A/B test. That folder's README and [PLAN.md](maxgpt-ultra/PLAN.md) are the original June plan, so some of their numbers (such as a 124M prototype) are out of date.
 
