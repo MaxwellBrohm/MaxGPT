@@ -1,0 +1,742 @@
+[finetune_data] Loaded tokenizer (vocab 16,000)
+[finetune_data] Role markers (byte-level search): b'ASSISTANT:', b'USER:'
+[finetune_data] Lookback for state detection: 2000 tokens
+Using device: cuda
+Model parameters: 235,358,208
+Loading pre-trained checkpoint from checkpoints/final.pt...
+  Starting SFT from pre-training step 2,440,000
+
+Starting SFT — 300,000 steps at LR 5e-05 on chat data...
+SFT step      0 | loss 2.0729 | lr 5.00e-07 | elapsed 0s
+SFT step    500 | loss 2.0511 | lr 5.00e-05 | elapsed 95s
+SFT step   1000 | loss 2.0805 | lr 5.00e-05 | elapsed 189s
+SFT step   1500 | loss 2.2887 | lr 5.00e-05 | elapsed 283s
+SFT step   2000 | loss 2.0146 | lr 5.00e-05 | elapsed 378s
+SFT step   2500 | loss 1.9923 | lr 5.00e-05 | elapsed 474s
+  >> EVAL SFT step 2500: train=2.1798, val=2.2753
+SFT step   3000 | loss 2.1853 | lr 5.00e-05 | elapsed 574s
+SFT step   3500 | loss 2.3937 | lr 5.00e-05 | elapsed 670s
+SFT step   4000 | loss 2.0090 | lr 5.00e-05 | elapsed 765s
+SFT step   4500 | loss 1.9906 | lr 5.00e-05 | elapsed 859s
+SFT step   5000 | loss 2.1351 | lr 5.00e-05 | elapsed 954s
+  >> EVAL SFT step 5000: train=2.2522, val=2.1423
+SFT step   5500 | loss 2.0196 | lr 5.00e-05 | elapsed 1051s
+SFT step   6000 | loss 1.9648 | lr 5.00e-05 | elapsed 1146s
+SFT step   6500 | loss 2.0936 | lr 4.99e-05 | elapsed 1240s
+SFT step   7000 | loss 2.1485 | lr 4.99e-05 | elapsed 1335s
+SFT step   7500 | loss 2.1384 | lr 4.99e-05 | elapsed 1429s
+  >> EVAL SFT step 7500: train=2.1671, val=2.2383
+SFT step   8000 | loss 2.1719 | lr 4.99e-05 | elapsed 1526s
+SFT step   8500 | loss 1.9172 | lr 4.99e-05 | elapsed 1621s
+SFT step   9000 | loss 2.0503 | lr 4.99e-05 | elapsed 1715s
+SFT step   9500 | loss 2.2082 | lr 4.99e-05 | elapsed 1810s
+SFT step  10000 | loss 2.3432 | lr 4.99e-05 | elapsed 1904s
+  >> EVAL SFT step 10000: train=2.1679, val=2.1633
+SFT step  10500 | loss 2.2580 | lr 4.99e-05 | elapsed 2002s
+SFT step  11000 | loss 2.3077 | lr 4.99e-05 | elapsed 2096s
+SFT step  11500 | loss 1.8173 | lr 4.98e-05 | elapsed 2190s
+SFT step  12000 | loss 2.2153 | lr 4.98e-05 | elapsed 2285s
+SFT step  12500 | loss 1.9710 | lr 4.98e-05 | elapsed 2379s
+  >> EVAL SFT step 12500: train=2.2325, val=2.1899
+SFT step  13000 | loss 2.2473 | lr 4.98e-05 | elapsed 2477s
+SFT step  13500 | loss 2.2119 | lr 4.98e-05 | elapsed 2571s
+SFT step  14000 | loss 2.4017 | lr 4.98e-05 | elapsed 2666s
+SFT step  14500 | loss 1.9659 | lr 4.97e-05 | elapsed 2760s
+SFT step  15000 | loss 1.8500 | lr 4.97e-05 | elapsed 2854s
+  >> EVAL SFT step 15000: train=2.1837, val=2.1762
+SFT step  15500 | loss 1.9961 | lr 4.97e-05 | elapsed 2952s
+SFT step  16000 | loss 1.9966 | lr 4.97e-05 | elapsed 3046s
+SFT step  16500 | loss 2.0321 | lr 4.97e-05 | elapsed 3141s
+SFT step  17000 | loss 2.0183 | lr 4.96e-05 | elapsed 3235s
+SFT step  17500 | loss 2.1972 | lr 4.96e-05 | elapsed 3330s
+  >> EVAL SFT step 17500: train=2.1746, val=2.2154
+SFT step  18000 | loss 1.9491 | lr 4.96e-05 | elapsed 3427s
+SFT step  18500 | loss 2.3932 | lr 4.96e-05 | elapsed 3522s
+SFT step  19000 | loss 2.3299 | lr 4.96e-05 | elapsed 3616s
+SFT step  19500 | loss 2.0820 | lr 4.95e-05 | elapsed 3710s
+SFT step  20000 | loss 2.2283 | lr 4.95e-05 | elapsed 3805s
+  >> EVAL SFT step 20000: train=2.1088, val=2.2587
+SFT step  20500 | loss 2.0516 | lr 4.95e-05 | elapsed 3902s
+SFT step  21000 | loss 2.1957 | lr 4.95e-05 | elapsed 3997s
+SFT step  21500 | loss 2.1863 | lr 4.94e-05 | elapsed 4091s
+SFT step  22000 | loss 1.8039 | lr 4.94e-05 | elapsed 4186s
+SFT step  22500 | loss 1.9581 | lr 4.94e-05 | elapsed 4280s
+  >> EVAL SFT step 22500: train=2.1469, val=2.2319
+SFT step  23000 | loss 2.1875 | lr 4.94e-05 | elapsed 4378s
+SFT step  23500 | loss 2.1808 | lr 4.93e-05 | elapsed 4472s
+SFT step  24000 | loss 2.3094 | lr 4.93e-05 | elapsed 4566s
+SFT step  24500 | loss 2.7036 | lr 4.93e-05 | elapsed 4661s
+SFT step  25000 | loss 2.0261 | lr 4.92e-05 | elapsed 4755s
+  >> EVAL SFT step 25000: train=2.1660, val=2.2386
+  >> Saved SFT checkpoint: checkpoints/sft_checkpoint_25000.pt
+SFT step  25500 | loss 1.8439 | lr 4.92e-05 | elapsed 4855s
+SFT step  26000 | loss 2.6702 | lr 4.92e-05 | elapsed 4949s
+SFT step  26500 | loss 2.0137 | lr 4.91e-05 | elapsed 5044s
+SFT step  27000 | loss 2.1914 | lr 4.91e-05 | elapsed 5138s
+SFT step  27500 | loss 2.0284 | lr 4.91e-05 | elapsed 5233s
+  >> EVAL SFT step 27500: train=2.1928, val=2.1463
+SFT step  28000 | loss 2.0104 | lr 4.90e-05 | elapsed 5330s
+SFT step  28500 | loss 2.2605 | lr 4.90e-05 | elapsed 5425s
+SFT step  29000 | loss 2.1553 | lr 4.90e-05 | elapsed 5519s
+SFT step  29500 | loss 2.3552 | lr 4.89e-05 | elapsed 5613s
+SFT step  30000 | loss 2.2091 | lr 4.89e-05 | elapsed 5708s
+  >> EVAL SFT step 30000: train=2.1575, val=2.1797
+SFT step  30500 | loss 2.6337 | lr 4.89e-05 | elapsed 5805s
+SFT step  31000 | loss 2.2661 | lr 4.88e-05 | elapsed 5900s
+SFT step  31500 | loss 2.3253 | lr 4.88e-05 | elapsed 5994s
+SFT step  32000 | loss 2.1241 | lr 4.88e-05 | elapsed 6089s
+SFT step  32500 | loss 2.2629 | lr 4.87e-05 | elapsed 6183s
+  >> EVAL SFT step 32500: train=2.1586, val=2.1617
+SFT step  33000 | loss 2.3714 | lr 4.87e-05 | elapsed 6280s
+SFT step  33500 | loss 2.5637 | lr 4.86e-05 | elapsed 6375s
+SFT step  34000 | loss 2.0709 | lr 4.86e-05 | elapsed 6469s
+SFT step  34500 | loss 2.3625 | lr 4.86e-05 | elapsed 6564s
+SFT step  35000 | loss 2.2147 | lr 4.85e-05 | elapsed 6658s
+  >> EVAL SFT step 35000: train=2.2270, val=2.1985
+SFT step  35500 | loss 1.8675 | lr 4.85e-05 | elapsed 6756s
+SFT step  36000 | loss 1.8893 | lr 4.84e-05 | elapsed 6850s
+SFT step  36500 | loss 2.1631 | lr 4.84e-05 | elapsed 6945s
+SFT step  37000 | loss 2.0294 | lr 4.83e-05 | elapsed 7039s
+SFT step  37500 | loss 2.3120 | lr 4.83e-05 | elapsed 7134s
+  >> EVAL SFT step 37500: train=2.1822, val=2.1833
+SFT step  38000 | loss 1.9004 | lr 4.82e-05 | elapsed 7231s
+SFT step  38500 | loss 2.3590 | lr 4.82e-05 | elapsed 7325s
+SFT step  39000 | loss 2.2004 | lr 4.82e-05 | elapsed 7420s
+SFT step  39500 | loss 2.0496 | lr 4.81e-05 | elapsed 7514s
+SFT step  40000 | loss 2.2029 | lr 4.81e-05 | elapsed 7609s
+  >> EVAL SFT step 40000: train=2.1796, val=2.1941
+SFT step  40500 | loss 2.0845 | lr 4.80e-05 | elapsed 7706s
+SFT step  41000 | loss 2.3810 | lr 4.80e-05 | elapsed 7800s
+SFT step  41500 | loss 2.0168 | lr 4.79e-05 | elapsed 7895s
+SFT step  42000 | loss 2.0052 | lr 4.79e-05 | elapsed 7989s
+SFT step  42500 | loss 2.1314 | lr 4.78e-05 | elapsed 8084s
+  >> EVAL SFT step 42500: train=2.1426, val=2.1360
+SFT step  43000 | loss 2.0193 | lr 4.78e-05 | elapsed 8181s
+SFT step  43500 | loss 2.2023 | lr 4.77e-05 | elapsed 8276s
+SFT step  44000 | loss 2.1658 | lr 4.77e-05 | elapsed 8370s
+SFT step  44500 | loss 2.2022 | lr 4.76e-05 | elapsed 8465s
+SFT step  45000 | loss 2.4158 | lr 4.76e-05 | elapsed 8559s
+  >> EVAL SFT step 45000: train=2.1668, val=2.1272
+SFT step  45500 | loss 2.0459 | lr 4.75e-05 | elapsed 8656s
+SFT step  46000 | loss 1.9682 | lr 4.74e-05 | elapsed 8751s
+SFT step  46500 | loss 2.6591 | lr 4.74e-05 | elapsed 8845s
+SFT step  47000 | loss 2.3151 | lr 4.73e-05 | elapsed 8940s
+SFT step  47500 | loss 2.0443 | lr 4.73e-05 | elapsed 9034s
+  >> EVAL SFT step 47500: train=2.1505, val=2.2547
+SFT step  48000 | loss 2.0510 | lr 4.72e-05 | elapsed 9132s
+SFT step  48500 | loss 2.1402 | lr 4.72e-05 | elapsed 9226s
+SFT step  49000 | loss 2.2516 | lr 4.71e-05 | elapsed 9321s
+SFT step  49500 | loss 1.9233 | lr 4.71e-05 | elapsed 9415s
+SFT step  50000 | loss 2.1685 | lr 4.70e-05 | elapsed 9510s
+  >> EVAL SFT step 50000: train=2.0565, val=2.1819
+  >> Saved SFT checkpoint: checkpoints/sft_checkpoint_50000.pt
+SFT step  50500 | loss 1.8487 | lr 4.69e-05 | elapsed 9609s
+SFT step  51000 | loss 2.5088 | lr 4.69e-05 | elapsed 9704s
+SFT step  51500 | loss 2.1637 | lr 4.68e-05 | elapsed 9798s
+SFT step  52000 | loss 2.2778 | lr 4.68e-05 | elapsed 9892s
+SFT step  52500 | loss 1.9761 | lr 4.67e-05 | elapsed 9987s
+  >> EVAL SFT step 52500: train=2.1052, val=2.2220
+SFT step  53000 | loss 2.0113 | lr 4.66e-05 | elapsed 10084s
+SFT step  53500 | loss 2.1759 | lr 4.66e-05 | elapsed 10179s
+SFT step  54000 | loss 2.2556 | lr 4.65e-05 | elapsed 10273s
+SFT step  54500 | loss 2.0934 | lr 4.64e-05 | elapsed 10368s
+SFT step  55000 | loss 2.1866 | lr 4.64e-05 | elapsed 10462s
+  >> EVAL SFT step 55000: train=2.1092, val=2.2514
+SFT step  55500 | loss 1.9053 | lr 4.63e-05 | elapsed 10560s
+SFT step  56000 | loss 2.0948 | lr 4.63e-05 | elapsed 10654s
+SFT step  56500 | loss 2.2603 | lr 4.62e-05 | elapsed 10748s
+SFT step  57000 | loss 2.3379 | lr 4.61e-05 | elapsed 10843s
+SFT step  57500 | loss 2.0408 | lr 4.61e-05 | elapsed 10937s
+  >> EVAL SFT step 57500: train=2.0935, val=2.2239
+SFT step  58000 | loss 2.0874 | lr 4.60e-05 | elapsed 11035s
+SFT step  58500 | loss 2.2235 | lr 4.59e-05 | elapsed 11129s
+SFT step  59000 | loss 1.9866 | lr 4.59e-05 | elapsed 11224s
+SFT step  59500 | loss 1.8722 | lr 4.58e-05 | elapsed 11318s
+SFT step  60000 | loss 2.0921 | lr 4.57e-05 | elapsed 11412s
+  >> EVAL SFT step 60000: train=2.1249, val=2.1977
+SFT step  60500 | loss 2.2183 | lr 4.56e-05 | elapsed 11510s
+SFT step  61000 | loss 2.0143 | lr 4.56e-05 | elapsed 11604s
+SFT step  61500 | loss 2.1748 | lr 4.55e-05 | elapsed 11699s
+SFT step  62000 | loss 1.9700 | lr 4.54e-05 | elapsed 11793s
+SFT step  62500 | loss 2.0285 | lr 4.54e-05 | elapsed 11888s
+  >> EVAL SFT step 62500: train=2.1518, val=2.2058
+SFT step  63000 | loss 2.2644 | lr 4.53e-05 | elapsed 11985s
+SFT step  63500 | loss 2.0578 | lr 4.52e-05 | elapsed 12079s
+SFT step  64000 | loss 2.2734 | lr 4.51e-05 | elapsed 12174s
+SFT step  64500 | loss 2.2518 | lr 4.51e-05 | elapsed 12268s
+SFT step  65000 | loss 2.0789 | lr 4.50e-05 | elapsed 12363s
+  >> EVAL SFT step 65000: train=2.1838, val=2.1973
+SFT step  65500 | loss 2.0038 | lr 4.49e-05 | elapsed 12460s
+SFT step  66000 | loss 2.1026 | lr 4.48e-05 | elapsed 12555s
+SFT step  66500 | loss 1.9886 | lr 4.48e-05 | elapsed 12649s
+SFT step  67000 | loss 2.4663 | lr 4.47e-05 | elapsed 12743s
+SFT step  67500 | loss 1.9699 | lr 4.46e-05 | elapsed 12838s
+  >> EVAL SFT step 67500: train=2.1154, val=2.1843
+SFT step  68000 | loss 2.3549 | lr 4.45e-05 | elapsed 12935s
+SFT step  68500 | loss 2.1659 | lr 4.45e-05 | elapsed 13030s
+SFT step  69000 | loss 2.4767 | lr 4.44e-05 | elapsed 13124s
+SFT step  69500 | loss 2.0531 | lr 4.43e-05 | elapsed 13219s
+SFT step  70000 | loss 2.1284 | lr 4.42e-05 | elapsed 13313s
+  >> EVAL SFT step 70000: train=2.0947, val=2.2663
+SFT step  70500 | loss 1.8536 | lr 4.42e-05 | elapsed 13410s
+SFT step  71000 | loss 1.6243 | lr 4.41e-05 | elapsed 13505s
+SFT step  71500 | loss 1.8313 | lr 4.40e-05 | elapsed 13599s
+SFT step  72000 | loss 2.4519 | lr 4.39e-05 | elapsed 13694s
+SFT step  72500 | loss 2.0165 | lr 4.38e-05 | elapsed 13788s
+  >> EVAL SFT step 72500: train=2.1763, val=2.1173
+SFT step  73000 | loss 2.0938 | lr 4.38e-05 | elapsed 13886s
+SFT step  73500 | loss 2.0077 | lr 4.37e-05 | elapsed 13980s
+SFT step  74000 | loss 2.0779 | lr 4.36e-05 | elapsed 14075s
+SFT step  74500 | loss 2.2180 | lr 4.35e-05 | elapsed 14169s
+SFT step  75000 | loss 2.5526 | lr 4.34e-05 | elapsed 14263s
+  >> EVAL SFT step 75000: train=2.0924, val=2.1402
+  >> Saved SFT checkpoint: checkpoints/sft_checkpoint_75000.pt
+SFT step  75500 | loss 2.3256 | lr 4.33e-05 | elapsed 14363s
+SFT step  76000 | loss 1.7813 | lr 4.33e-05 | elapsed 14458s
+SFT step  76500 | loss 2.3719 | lr 4.32e-05 | elapsed 14552s
+SFT step  77000 | loss 2.0350 | lr 4.31e-05 | elapsed 14646s
+SFT step  77500 | loss 2.1902 | lr 4.30e-05 | elapsed 14741s
+  >> EVAL SFT step 77500: train=2.0997, val=2.1820
+SFT step  78000 | loss 2.0286 | lr 4.29e-05 | elapsed 14838s
+SFT step  78500 | loss 2.0330 | lr 4.28e-05 | elapsed 14933s
+SFT step  79000 | loss 1.9373 | lr 4.27e-05 | elapsed 15027s
+SFT step  79500 | loss 1.9397 | lr 4.27e-05 | elapsed 15122s
+SFT step  80000 | loss 2.2065 | lr 4.26e-05 | elapsed 15216s
+  >> EVAL SFT step 80000: train=2.0480, val=2.1266
+SFT step  80500 | loss 2.3608 | lr 4.25e-05 | elapsed 15313s
+SFT step  81000 | loss 2.2546 | lr 4.24e-05 | elapsed 15408s
+SFT step  81500 | loss 1.7290 | lr 4.23e-05 | elapsed 15502s
+SFT step  82000 | loss 2.2377 | lr 4.22e-05 | elapsed 15597s
+SFT step  82500 | loss 2.1698 | lr 4.21e-05 | elapsed 15691s
+  >> EVAL SFT step 82500: train=2.0761, val=2.1170
+SFT step  83000 | loss 2.0702 | lr 4.20e-05 | elapsed 15789s
+SFT step  83500 | loss 2.0477 | lr 4.19e-05 | elapsed 15883s
+SFT step  84000 | loss 2.0819 | lr 4.19e-05 | elapsed 15977s
+SFT step  84500 | loss 2.0394 | lr 4.18e-05 | elapsed 16072s
+SFT step  85000 | loss 2.1407 | lr 4.17e-05 | elapsed 16166s
+  >> EVAL SFT step 85000: train=2.0596, val=2.1663
+SFT step  85500 | loss 2.0176 | lr 4.16e-05 | elapsed 16264s
+SFT step  86000 | loss 1.8479 | lr 4.15e-05 | elapsed 16358s
+SFT step  86500 | loss 2.0882 | lr 4.14e-05 | elapsed 16453s
+SFT step  87000 | loss 1.8572 | lr 4.13e-05 | elapsed 16547s
+SFT step  87500 | loss 2.2591 | lr 4.12e-05 | elapsed 16642s
+  >> EVAL SFT step 87500: train=2.1496, val=2.1062
+SFT step  88000 | loss 2.2001 | lr 4.11e-05 | elapsed 16740s
+SFT step  88500 | loss 1.8239 | lr 4.10e-05 | elapsed 16835s
+SFT step  89000 | loss 1.8089 | lr 4.09e-05 | elapsed 16930s
+SFT step  89500 | loss 2.2369 | lr 4.08e-05 | elapsed 17025s
+SFT step  90000 | loss 1.9675 | lr 4.07e-05 | elapsed 17119s
+  >> EVAL SFT step 90000: train=2.1370, val=2.1659
+SFT step  90500 | loss 1.6948 | lr 4.06e-05 | elapsed 17216s
+SFT step  91000 | loss 2.1155 | lr 4.05e-05 | elapsed 17310s
+SFT step  91500 | loss 2.3908 | lr 4.05e-05 | elapsed 17405s
+SFT step  92000 | loss 2.0984 | lr 4.04e-05 | elapsed 17499s
+SFT step  92500 | loss 2.1459 | lr 4.03e-05 | elapsed 17593s
+  >> EVAL SFT step 92500: train=2.1369, val=2.1881
+SFT step  93000 | loss 1.9800 | lr 4.02e-05 | elapsed 17691s
+SFT step  93500 | loss 2.1369 | lr 4.01e-05 | elapsed 17785s
+SFT step  94000 | loss 2.1911 | lr 4.00e-05 | elapsed 17879s
+SFT step  94500 | loss 2.1859 | lr 3.99e-05 | elapsed 17974s
+SFT step  95000 | loss 2.2506 | lr 3.98e-05 | elapsed 18068s
+  >> EVAL SFT step 95000: train=2.0686, val=2.1487
+SFT step  95500 | loss 1.9926 | lr 3.97e-05 | elapsed 18165s
+SFT step  96000 | loss 2.2304 | lr 3.96e-05 | elapsed 18259s
+SFT step  96500 | loss 2.0215 | lr 3.95e-05 | elapsed 18354s
+SFT step  97000 | loss 2.4849 | lr 3.94e-05 | elapsed 18448s
+SFT step  97500 | loss 2.2427 | lr 3.93e-05 | elapsed 18542s
+  >> EVAL SFT step 97500: train=2.0549, val=2.1548
+SFT step  98000 | loss 2.2471 | lr 3.92e-05 | elapsed 18639s
+SFT step  98500 | loss 2.1552 | lr 3.91e-05 | elapsed 18734s
+SFT step  99000 | loss 2.0219 | lr 3.90e-05 | elapsed 18828s
+SFT step  99500 | loss 1.9173 | lr 3.89e-05 | elapsed 18922s
+SFT step 100000 | loss 2.1859 | lr 3.88e-05 | elapsed 19017s
+  >> EVAL SFT step 100000: train=2.1312, val=2.1443
+  >> Saved SFT checkpoint: checkpoints/sft_checkpoint_100000.pt
+SFT step 100500 | loss 1.8891 | lr 3.87e-05 | elapsed 19116s
+SFT step 101000 | loss 2.1541 | lr 3.86e-05 | elapsed 19211s
+SFT step 101500 | loss 1.7602 | lr 3.85e-05 | elapsed 19305s
+SFT step 102000 | loss 1.9577 | lr 3.84e-05 | elapsed 19399s
+SFT step 102500 | loss 1.9528 | lr 3.82e-05 | elapsed 19493s
+  >> EVAL SFT step 102500: train=2.0605, val=2.1579
+SFT step 103000 | loss 2.0382 | lr 3.81e-05 | elapsed 19591s
+SFT step 103500 | loss 2.2002 | lr 3.80e-05 | elapsed 19685s
+SFT step 104000 | loss 1.9697 | lr 3.79e-05 | elapsed 19779s
+SFT step 104500 | loss 2.0829 | lr 3.78e-05 | elapsed 19874s
+SFT step 105000 | loss 2.0451 | lr 3.77e-05 | elapsed 19968s
+  >> EVAL SFT step 105000: train=2.0815, val=2.1279
+SFT step 105500 | loss 1.7249 | lr 3.76e-05 | elapsed 20065s
+SFT step 106000 | loss 2.0226 | lr 3.75e-05 | elapsed 20159s
+SFT step 106500 | loss 2.1660 | lr 3.74e-05 | elapsed 20254s
+SFT step 107000 | loss 1.7423 | lr 3.73e-05 | elapsed 20348s
+SFT step 107500 | loss 2.0598 | lr 3.72e-05 | elapsed 20442s
+  >> EVAL SFT step 107500: train=2.0152, val=2.1346
+SFT step 108000 | loss 2.1415 | lr 3.71e-05 | elapsed 20539s
+SFT step 108500 | loss 1.8122 | lr 3.70e-05 | elapsed 20634s
+SFT step 109000 | loss 2.5203 | lr 3.69e-05 | elapsed 20728s
+SFT step 109500 | loss 1.9497 | lr 3.68e-05 | elapsed 20822s
+SFT step 110000 | loss 1.9282 | lr 3.67e-05 | elapsed 20917s
+  >> EVAL SFT step 110000: train=2.0793, val=2.1060
+SFT step 110500 | loss 2.4225 | lr 3.66e-05 | elapsed 21014s
+SFT step 111000 | loss 1.8740 | lr 3.64e-05 | elapsed 21108s
+SFT step 111500 | loss 2.8792 | lr 3.63e-05 | elapsed 21203s
+SFT step 112000 | loss 1.9920 | lr 3.62e-05 | elapsed 21297s
+SFT step 112500 | loss 1.9503 | lr 3.61e-05 | elapsed 21391s
+  >> EVAL SFT step 112500: train=2.0011, val=2.0476
+SFT step 113000 | loss 2.1934 | lr 3.60e-05 | elapsed 21488s
+SFT step 113500 | loss 1.8684 | lr 3.59e-05 | elapsed 21583s
+SFT step 114000 | loss 1.8484 | lr 3.58e-05 | elapsed 21677s
+SFT step 114500 | loss 2.0457 | lr 3.57e-05 | elapsed 21771s
+SFT step 115000 | loss 1.7802 | lr 3.56e-05 | elapsed 21866s
+  >> EVAL SFT step 115000: train=2.0592, val=2.0734
+SFT step 115500 | loss 2.0415 | lr 3.55e-05 | elapsed 21963s
+SFT step 116000 | loss 1.9469 | lr 3.54e-05 | elapsed 22057s
+SFT step 116500 | loss 2.0844 | lr 3.52e-05 | elapsed 22151s
+SFT step 117000 | loss 1.8805 | lr 3.51e-05 | elapsed 22246s
+SFT step 117500 | loss 2.0757 | lr 3.50e-05 | elapsed 22340s
+  >> EVAL SFT step 117500: train=2.0436, val=2.1507
+SFT step 118000 | loss 2.0625 | lr 3.49e-05 | elapsed 22437s
+SFT step 118500 | loss 2.0719 | lr 3.48e-05 | elapsed 22532s
+SFT step 119000 | loss 2.0717 | lr 3.47e-05 | elapsed 22626s
+SFT step 119500 | loss 2.3805 | lr 3.46e-05 | elapsed 22720s
+SFT step 120000 | loss 2.0112 | lr 3.45e-05 | elapsed 22814s
+  >> EVAL SFT step 120000: train=2.0073, val=2.1491
+SFT step 120500 | loss 2.6959 | lr 3.44e-05 | elapsed 22912s
+SFT step 121000 | loss 2.2354 | lr 3.42e-05 | elapsed 23006s
+SFT step 121500 | loss 1.8822 | lr 3.41e-05 | elapsed 23100s
+SFT step 122000 | loss 1.7616 | lr 3.40e-05 | elapsed 23194s
+SFT step 122500 | loss 2.1223 | lr 3.39e-05 | elapsed 23289s
+  >> EVAL SFT step 122500: train=2.0412, val=2.1769
+SFT step 123000 | loss 2.1329 | lr 3.38e-05 | elapsed 23386s
+SFT step 123500 | loss 1.8062 | lr 3.37e-05 | elapsed 23480s
+SFT step 124000 | loss 2.3316 | lr 3.36e-05 | elapsed 23575s
+SFT step 124500 | loss 2.3962 | lr 3.35e-05 | elapsed 23669s
+SFT step 125000 | loss 2.0192 | lr 3.33e-05 | elapsed 23763s
+  >> EVAL SFT step 125000: train=2.0161, val=2.0301
+  >> Saved SFT checkpoint: checkpoints/sft_checkpoint_125000.pt
+SFT step 125500 | loss 2.0965 | lr 3.32e-05 | elapsed 23863s
+SFT step 126000 | loss 2.1765 | lr 3.31e-05 | elapsed 23957s
+SFT step 126500 | loss 1.7522 | lr 3.30e-05 | elapsed 24051s
+SFT step 127000 | loss 1.8610 | lr 3.29e-05 | elapsed 24146s
+SFT step 127500 | loss 2.2141 | lr 3.28e-05 | elapsed 24240s
+  >> EVAL SFT step 127500: train=2.0258, val=2.1316
+SFT step 128000 | loss 2.1092 | lr 3.27e-05 | elapsed 24337s
+SFT step 128500 | loss 2.1060 | lr 3.25e-05 | elapsed 24431s
+SFT step 129000 | loss 1.9303 | lr 3.24e-05 | elapsed 24526s
+SFT step 129500 | loss 1.7115 | lr 3.23e-05 | elapsed 24620s
+SFT step 130000 | loss 1.9886 | lr 3.22e-05 | elapsed 24714s
+  >> EVAL SFT step 130000: train=2.0192, val=2.1247
+SFT step 130500 | loss 2.4701 | lr 3.21e-05 | elapsed 24811s
+SFT step 131000 | loss 2.0157 | lr 3.20e-05 | elapsed 24906s
+SFT step 131500 | loss 2.0122 | lr 3.18e-05 | elapsed 25000s
+SFT step 132000 | loss 1.9787 | lr 3.17e-05 | elapsed 25094s
+SFT step 132500 | loss 2.1198 | lr 3.16e-05 | elapsed 25189s
+  >> EVAL SFT step 132500: train=2.0813, val=2.0572
+SFT step 133000 | loss 1.9450 | lr 3.15e-05 | elapsed 25286s
+SFT step 133500 | loss 1.8651 | lr 3.14e-05 | elapsed 25380s
+SFT step 134000 | loss 1.8875 | lr 3.13e-05 | elapsed 25474s
+SFT step 134500 | loss 1.7153 | lr 3.11e-05 | elapsed 25569s
+SFT step 135000 | loss 2.2579 | lr 3.10e-05 | elapsed 25663s
+  >> EVAL SFT step 135000: train=2.0282, val=2.1079
+SFT step 135500 | loss 1.8905 | lr 3.09e-05 | elapsed 25760s
+SFT step 136000 | loss 2.4275 | lr 3.08e-05 | elapsed 25855s
+SFT step 136500 | loss 2.5576 | lr 3.07e-05 | elapsed 25949s
+SFT step 137000 | loss 1.9185 | lr 3.06e-05 | elapsed 26043s
+SFT step 137500 | loss 1.8031 | lr 3.04e-05 | elapsed 26137s
+  >> EVAL SFT step 137500: train=1.9993, val=2.1028
+SFT step 138000 | loss 1.7898 | lr 3.03e-05 | elapsed 26235s
+SFT step 138500 | loss 2.0616 | lr 3.02e-05 | elapsed 26329s
+SFT step 139000 | loss 2.1171 | lr 3.01e-05 | elapsed 26423s
+SFT step 139500 | loss 2.1924 | lr 3.00e-05 | elapsed 26518s
+SFT step 140000 | loss 2.1162 | lr 2.99e-05 | elapsed 26612s
+  >> EVAL SFT step 140000: train=2.0247, val=2.0803
+SFT step 140500 | loss 2.2087 | lr 2.97e-05 | elapsed 26709s
+SFT step 141000 | loss 1.9895 | lr 2.96e-05 | elapsed 26803s
+SFT step 141500 | loss 2.0672 | lr 2.95e-05 | elapsed 26898s
+SFT step 142000 | loss 2.0876 | lr 2.94e-05 | elapsed 26992s
+SFT step 142500 | loss 1.8352 | lr 2.93e-05 | elapsed 27086s
+  >> EVAL SFT step 142500: train=1.9786, val=2.0421
+SFT step 143000 | loss 2.0550 | lr 2.92e-05 | elapsed 27184s
+SFT step 143500 | loss 2.0980 | lr 2.90e-05 | elapsed 27278s
+SFT step 144000 | loss 2.2379 | lr 2.89e-05 | elapsed 27372s
+SFT step 144500 | loss 1.8556 | lr 2.88e-05 | elapsed 27466s
+SFT step 145000 | loss 2.0474 | lr 2.87e-05 | elapsed 27561s
+  >> EVAL SFT step 145000: train=2.0327, val=2.1361
+SFT step 145500 | loss 1.7460 | lr 2.86e-05 | elapsed 27658s
+SFT step 146000 | loss 1.9574 | lr 2.85e-05 | elapsed 27752s
+SFT step 146500 | loss 1.6843 | lr 2.83e-05 | elapsed 27847s
+SFT step 147000 | loss 1.8014 | lr 2.82e-05 | elapsed 27941s
+SFT step 147500 | loss 2.1896 | lr 2.81e-05 | elapsed 28035s
+  >> EVAL SFT step 147500: train=2.0051, val=2.0800
+SFT step 148000 | loss 2.1838 | lr 2.80e-05 | elapsed 28132s
+SFT step 148500 | loss 2.1922 | lr 2.79e-05 | elapsed 28227s
+SFT step 149000 | loss 2.1299 | lr 2.77e-05 | elapsed 28321s
+SFT step 149500 | loss 2.0485 | lr 2.76e-05 | elapsed 28415s
+SFT step 150000 | loss 2.2715 | lr 2.75e-05 | elapsed 28510s
+  >> EVAL SFT step 150000: train=2.0194, val=2.0193
+  >> Saved SFT checkpoint: checkpoints/sft_checkpoint_150000.pt
+SFT step 150500 | loss 1.9610 | lr 2.74e-05 | elapsed 28615s
+SFT step 151000 | loss 2.0412 | lr 2.73e-05 | elapsed 28710s
+SFT step 151500 | loss 1.7402 | lr 2.72e-05 | elapsed 28804s
+SFT step 152000 | loss 1.7299 | lr 2.70e-05 | elapsed 28898s
+SFT step 152500 | loss 1.7831 | lr 2.69e-05 | elapsed 28993s
+  >> EVAL SFT step 152500: train=1.9769, val=2.0937
+SFT step 153000 | loss 2.0962 | lr 2.68e-05 | elapsed 29090s
+SFT step 153500 | loss 1.9412 | lr 2.67e-05 | elapsed 29184s
+SFT step 154000 | loss 2.0122 | lr 2.66e-05 | elapsed 29278s
+SFT step 154500 | loss 1.9483 | lr 2.65e-05 | elapsed 29373s
+SFT step 155000 | loss 2.1296 | lr 2.63e-05 | elapsed 29467s
+  >> EVAL SFT step 155000: train=1.9493, val=2.1519
+SFT step 155500 | loss 1.6929 | lr 2.62e-05 | elapsed 29564s
+SFT step 156000 | loss 1.9619 | lr 2.61e-05 | elapsed 29658s
+SFT step 156500 | loss 2.3023 | lr 2.60e-05 | elapsed 29753s
+SFT step 157000 | loss 1.9777 | lr 2.59e-05 | elapsed 29847s
+SFT step 157500 | loss 2.1926 | lr 2.57e-05 | elapsed 29941s
+  >> EVAL SFT step 157500: train=1.9852, val=2.0814
+SFT step 158000 | loss 2.1691 | lr 2.56e-05 | elapsed 30039s
+SFT step 158500 | loss 1.6687 | lr 2.55e-05 | elapsed 30133s
+SFT step 159000 | loss 1.8118 | lr 2.54e-05 | elapsed 30227s
+SFT step 159500 | loss 2.3626 | lr 2.53e-05 | elapsed 30321s
+SFT step 160000 | loss 2.1060 | lr 2.52e-05 | elapsed 30416s
+  >> EVAL SFT step 160000: train=1.9749, val=1.9675
+SFT step 160500 | loss 1.7506 | lr 2.50e-05 | elapsed 30513s
+SFT step 161000 | loss 2.3713 | lr 2.49e-05 | elapsed 30607s
+SFT step 161500 | loss 1.9799 | lr 2.48e-05 | elapsed 30702s
+SFT step 162000 | loss 2.2213 | lr 2.47e-05 | elapsed 30796s
+SFT step 162500 | loss 2.0009 | lr 2.46e-05 | elapsed 30890s
+  >> EVAL SFT step 162500: train=1.9731, val=2.0605
+SFT step 163000 | loss 1.6779 | lr 2.45e-05 | elapsed 30987s
+SFT step 163500 | loss 2.0651 | lr 2.43e-05 | elapsed 31082s
+SFT step 164000 | loss 2.0942 | lr 2.42e-05 | elapsed 31176s
+SFT step 164500 | loss 1.9566 | lr 2.41e-05 | elapsed 31270s
+SFT step 165000 | loss 1.8486 | lr 2.40e-05 | elapsed 31365s
+  >> EVAL SFT step 165000: train=2.0270, val=2.0337
+SFT step 165500 | loss 1.9382 | lr 2.39e-05 | elapsed 31462s
+SFT step 166000 | loss 1.9787 | lr 2.38e-05 | elapsed 31556s
+SFT step 166500 | loss 2.0133 | lr 2.36e-05 | elapsed 31650s
+SFT step 167000 | loss 1.7154 | lr 2.35e-05 | elapsed 31745s
+SFT step 167500 | loss 1.8117 | lr 2.34e-05 | elapsed 31839s
+  >> EVAL SFT step 167500: train=2.0487, val=2.0158
+SFT step 168000 | loss 2.2225 | lr 2.33e-05 | elapsed 31936s
+SFT step 168500 | loss 1.9572 | lr 2.32e-05 | elapsed 32030s
+SFT step 169000 | loss 1.6801 | lr 2.31e-05 | elapsed 32125s
+SFT step 169500 | loss 1.6209 | lr 2.29e-05 | elapsed 32219s
+SFT step 170000 | loss 2.0392 | lr 2.28e-05 | elapsed 32313s
+  >> EVAL SFT step 170000: train=2.0149, val=2.0187
+SFT step 170500 | loss 2.1282 | lr 2.27e-05 | elapsed 32411s
+SFT step 171000 | loss 2.1548 | lr 2.26e-05 | elapsed 32505s
+SFT step 171500 | loss 1.9647 | lr 2.25e-05 | elapsed 32599s
+SFT step 172000 | loss 1.8962 | lr 2.24e-05 | elapsed 32693s
+SFT step 172500 | loss 2.0104 | lr 2.23e-05 | elapsed 32788s
+  >> EVAL SFT step 172500: train=2.0335, val=2.0828
+SFT step 173000 | loss 2.0065 | lr 2.21e-05 | elapsed 32885s
+SFT step 173500 | loss 1.8582 | lr 2.20e-05 | elapsed 32979s
+SFT step 174000 | loss 1.7443 | lr 2.19e-05 | elapsed 33074s
+SFT step 174500 | loss 2.1667 | lr 2.18e-05 | elapsed 33168s
+SFT step 175000 | loss 1.7046 | lr 2.17e-05 | elapsed 33262s
+  >> EVAL SFT step 175000: train=1.9205, val=2.0004
+  >> Saved SFT checkpoint: checkpoints/sft_checkpoint_175000.pt
+SFT step 175500 | loss 2.0703 | lr 2.16e-05 | elapsed 33370s
+SFT step 176000 | loss 1.6976 | lr 2.15e-05 | elapsed 33464s
+SFT step 176500 | loss 2.0284 | lr 2.13e-05 | elapsed 33558s
+SFT step 177000 | loss 2.0063 | lr 2.12e-05 | elapsed 33652s
+SFT step 177500 | loss 1.9215 | lr 2.11e-05 | elapsed 33747s
+  >> EVAL SFT step 177500: train=1.9525, val=2.0032
+SFT step 178000 | loss 2.2651 | lr 2.10e-05 | elapsed 33844s
+SFT step 178500 | loss 1.7126 | lr 2.09e-05 | elapsed 33938s
+SFT step 179000 | loss 1.7798 | lr 2.08e-05 | elapsed 34032s
+SFT step 179500 | loss 2.2600 | lr 2.07e-05 | elapsed 34127s
+SFT step 180000 | loss 2.0350 | lr 2.06e-05 | elapsed 34221s
+  >> EVAL SFT step 180000: train=1.9824, val=2.0602
+SFT step 180500 | loss 1.7752 | lr 2.04e-05 | elapsed 34318s
+SFT step 181000 | loss 1.6215 | lr 2.03e-05 | elapsed 34413s
+SFT step 181500 | loss 1.8711 | lr 2.02e-05 | elapsed 34507s
+SFT step 182000 | loss 1.8168 | lr 2.01e-05 | elapsed 34601s
+SFT step 182500 | loss 2.0709 | lr 2.00e-05 | elapsed 34695s
+  >> EVAL SFT step 182500: train=1.9924, val=1.9087
+SFT step 183000 | loss 2.0037 | lr 1.99e-05 | elapsed 34793s
+SFT step 183500 | loss 1.6306 | lr 1.98e-05 | elapsed 34887s
+SFT step 184000 | loss 1.8313 | lr 1.97e-05 | elapsed 34981s
+SFT step 184500 | loss 2.1875 | lr 1.96e-05 | elapsed 35075s
+SFT step 185000 | loss 1.7958 | lr 1.94e-05 | elapsed 35170s
+  >> EVAL SFT step 185000: train=2.0293, val=2.0331
+SFT step 185500 | loss 1.9451 | lr 1.93e-05 | elapsed 35267s
+SFT step 186000 | loss 1.9633 | lr 1.92e-05 | elapsed 35361s
+SFT step 186500 | loss 1.7789 | lr 1.91e-05 | elapsed 35456s
+SFT step 187000 | loss 1.9300 | lr 1.90e-05 | elapsed 35550s
+SFT step 187500 | loss 1.5808 | lr 1.89e-05 | elapsed 35644s
+  >> EVAL SFT step 187500: train=1.9920, val=2.0120
+SFT step 188000 | loss 2.5753 | lr 1.88e-05 | elapsed 35741s
+SFT step 188500 | loss 1.7319 | lr 1.87e-05 | elapsed 35836s
+SFT step 189000 | loss 2.0707 | lr 1.86e-05 | elapsed 35930s
+SFT step 189500 | loss 1.9675 | lr 1.85e-05 | elapsed 36024s
+SFT step 190000 | loss 2.1291 | lr 1.84e-05 | elapsed 36118s
+  >> EVAL SFT step 190000: train=1.9672, val=1.9783
+SFT step 190500 | loss 1.8854 | lr 1.82e-05 | elapsed 36216s
+SFT step 191000 | loss 2.0772 | lr 1.81e-05 | elapsed 36310s
+SFT step 191500 | loss 1.8422 | lr 1.80e-05 | elapsed 36404s
+SFT step 192000 | loss 1.8315 | lr 1.79e-05 | elapsed 36499s
+SFT step 192500 | loss 2.1824 | lr 1.78e-05 | elapsed 36593s
+  >> EVAL SFT step 192500: train=1.9305, val=2.0633
+SFT step 193000 | loss 1.7361 | lr 1.77e-05 | elapsed 36690s
+SFT step 193500 | loss 1.7107 | lr 1.76e-05 | elapsed 36784s
+SFT step 194000 | loss 2.0226 | lr 1.75e-05 | elapsed 36879s
+SFT step 194500 | loss 1.7582 | lr 1.74e-05 | elapsed 36973s
+SFT step 195000 | loss 1.9286 | lr 1.73e-05 | elapsed 37067s
+  >> EVAL SFT step 195000: train=1.9068, val=2.0493
+SFT step 195500 | loss 1.8827 | lr 1.72e-05 | elapsed 37164s
+SFT step 196000 | loss 2.0704 | lr 1.71e-05 | elapsed 37259s
+SFT step 196500 | loss 1.4412 | lr 1.70e-05 | elapsed 37353s
+SFT step 197000 | loss 1.9591 | lr 1.69e-05 | elapsed 37447s
+SFT step 197500 | loss 2.0551 | lr 1.68e-05 | elapsed 37542s
+  >> EVAL SFT step 197500: train=1.9722, val=1.9294
+SFT step 198000 | loss 2.0398 | lr 1.67e-05 | elapsed 37639s
+SFT step 198500 | loss 2.3439 | lr 1.66e-05 | elapsed 37733s
+SFT step 199000 | loss 1.8046 | lr 1.65e-05 | elapsed 37827s
+SFT step 199500 | loss 2.1281 | lr 1.64e-05 | elapsed 37922s
+SFT step 200000 | loss 1.9207 | lr 1.63e-05 | elapsed 38016s
+  >> EVAL SFT step 200000: train=1.9564, val=1.9835
+  >> Saved SFT checkpoint: checkpoints/sft_checkpoint_200000.pt
+SFT step 200500 | loss 2.0492 | lr 1.62e-05 | elapsed 38121s
+SFT step 201000 | loss 1.9386 | lr 1.61e-05 | elapsed 38215s
+SFT step 201500 | loss 1.8700 | lr 1.60e-05 | elapsed 38309s
+SFT step 202000 | loss 1.9460 | lr 1.59e-05 | elapsed 38404s
+SFT step 202500 | loss 1.8571 | lr 1.58e-05 | elapsed 38498s
+  >> EVAL SFT step 202500: train=2.0055, val=1.9958
+SFT step 203000 | loss 1.9036 | lr 1.56e-05 | elapsed 38595s
+SFT step 203500 | loss 2.0709 | lr 1.55e-05 | elapsed 38689s
+SFT step 204000 | loss 1.6819 | lr 1.55e-05 | elapsed 38784s
+SFT step 204500 | loss 1.7759 | lr 1.54e-05 | elapsed 38878s
+SFT step 205000 | loss 1.7354 | lr 1.53e-05 | elapsed 38972s
+  >> EVAL SFT step 205000: train=1.9440, val=2.0225
+SFT step 205500 | loss 2.0647 | lr 1.52e-05 | elapsed 39069s
+SFT step 206000 | loss 1.9033 | lr 1.51e-05 | elapsed 39164s
+SFT step 206500 | loss 2.0445 | lr 1.50e-05 | elapsed 39258s
+SFT step 207000 | loss 1.9058 | lr 1.49e-05 | elapsed 39352s
+SFT step 207500 | loss 1.7425 | lr 1.48e-05 | elapsed 39447s
+  >> EVAL SFT step 207500: train=1.9252, val=2.0787
+SFT step 208000 | loss 1.6842 | lr 1.47e-05 | elapsed 39544s
+SFT step 208500 | loss 1.8152 | lr 1.46e-05 | elapsed 39638s
+SFT step 209000 | loss 1.9557 | lr 1.45e-05 | elapsed 39733s
+SFT step 209500 | loss 1.5635 | lr 1.44e-05 | elapsed 39827s
+SFT step 210000 | loss 2.0327 | lr 1.43e-05 | elapsed 39921s
+  >> EVAL SFT step 210000: train=1.9397, val=2.0308
+SFT step 210500 | loss 1.9282 | lr 1.42e-05 | elapsed 40018s
+SFT step 211000 | loss 1.4058 | lr 1.41e-05 | elapsed 40113s
+SFT step 211500 | loss 1.9461 | lr 1.40e-05 | elapsed 40207s
+SFT step 212000 | loss 1.7957 | lr 1.39e-05 | elapsed 40301s
+SFT step 212500 | loss 1.8255 | lr 1.38e-05 | elapsed 40395s
+  >> EVAL SFT step 212500: train=1.9479, val=1.9360
+SFT step 213000 | loss 2.1111 | lr 1.37e-05 | elapsed 40493s
+SFT step 213500 | loss 1.7551 | lr 1.36e-05 | elapsed 40587s
+SFT step 214000 | loss 1.8150 | lr 1.35e-05 | elapsed 40681s
+SFT step 214500 | loss 1.4515 | lr 1.34e-05 | elapsed 40776s
+SFT step 215000 | loss 2.2241 | lr 1.33e-05 | elapsed 40870s
+  >> EVAL SFT step 215000: train=1.9180, val=2.0237
+SFT step 215500 | loss 1.8876 | lr 1.33e-05 | elapsed 40967s
+SFT step 216000 | loss 2.0517 | lr 1.32e-05 | elapsed 41061s
+SFT step 216500 | loss 2.0151 | lr 1.31e-05 | elapsed 41156s
+SFT step 217000 | loss 1.9327 | lr 1.30e-05 | elapsed 41250s
+SFT step 217500 | loss 2.2815 | lr 1.29e-05 | elapsed 41344s
+  >> EVAL SFT step 217500: train=1.9661, val=2.0574
+SFT step 218000 | loss 2.0150 | lr 1.28e-05 | elapsed 41441s
+SFT step 218500 | loss 2.0315 | lr 1.27e-05 | elapsed 41536s
+SFT step 219000 | loss 2.0166 | lr 1.26e-05 | elapsed 41630s
+SFT step 219500 | loss 1.6489 | lr 1.25e-05 | elapsed 41724s
+SFT step 220000 | loss 2.1272 | lr 1.24e-05 | elapsed 41818s
+  >> EVAL SFT step 220000: train=1.9195, val=1.9477
+SFT step 220500 | loss 1.9887 | lr 1.24e-05 | elapsed 41916s
+SFT step 221000 | loss 1.9190 | lr 1.23e-05 | elapsed 42010s
+SFT step 221500 | loss 2.1567 | lr 1.22e-05 | elapsed 42104s
+SFT step 222000 | loss 2.3414 | lr 1.21e-05 | elapsed 42199s
+SFT step 222500 | loss 1.7624 | lr 1.20e-05 | elapsed 42293s
+  >> EVAL SFT step 222500: train=1.9160, val=1.9763
+SFT step 223000 | loss 1.7482 | lr 1.19e-05 | elapsed 42390s
+SFT step 223500 | loss 1.8959 | lr 1.18e-05 | elapsed 42484s
+SFT step 224000 | loss 1.9249 | lr 1.18e-05 | elapsed 42579s
+SFT step 224500 | loss 1.9538 | lr 1.17e-05 | elapsed 42673s
+SFT step 225000 | loss 1.8301 | lr 1.16e-05 | elapsed 42767s
+  >> EVAL SFT step 225000: train=1.9400, val=1.8914
+  >> Saved SFT checkpoint: checkpoints/sft_checkpoint_225000.pt
+SFT step 225500 | loss 2.1080 | lr 1.15e-05 | elapsed 42873s
+SFT step 226000 | loss 1.5080 | lr 1.14e-05 | elapsed 42967s
+SFT step 226500 | loss 2.1472 | lr 1.13e-05 | elapsed 43061s
+SFT step 227000 | loss 1.9634 | lr 1.13e-05 | elapsed 43156s
+SFT step 227500 | loss 1.8388 | lr 1.12e-05 | elapsed 43250s
+  >> EVAL SFT step 227500: train=1.9425, val=1.9927
+SFT step 228000 | loss 2.0983 | lr 1.11e-05 | elapsed 43347s
+SFT step 228500 | loss 1.8283 | lr 1.10e-05 | elapsed 43442s
+SFT step 229000 | loss 2.3036 | lr 1.09e-05 | elapsed 43536s
+SFT step 229500 | loss 1.7598 | lr 1.09e-05 | elapsed 43630s
+SFT step 230000 | loss 2.2131 | lr 1.08e-05 | elapsed 43724s
+  >> EVAL SFT step 230000: train=1.8366, val=2.0206
+SFT step 230500 | loss 1.8563 | lr 1.07e-05 | elapsed 43822s
+SFT step 231000 | loss 2.2196 | lr 1.06e-05 | elapsed 43916s
+SFT step 231500 | loss 1.7073 | lr 1.05e-05 | elapsed 44010s
+SFT step 232000 | loss 1.9326 | lr 1.05e-05 | elapsed 44104s
+SFT step 232500 | loss 1.8634 | lr 1.04e-05 | elapsed 44199s
+  >> EVAL SFT step 232500: train=1.9186, val=1.9477
+SFT step 233000 | loss 2.0343 | lr 1.03e-05 | elapsed 44296s
+SFT step 233500 | loss 1.8729 | lr 1.02e-05 | elapsed 44390s
+SFT step 234000 | loss 2.0630 | lr 1.02e-05 | elapsed 44485s
+SFT step 234500 | loss 1.8356 | lr 1.01e-05 | elapsed 44579s
+SFT step 235000 | loss 1.7613 | lr 1.00e-05 | elapsed 44673s
+  >> EVAL SFT step 235000: train=1.8570, val=1.9617
+SFT step 235500 | loss 2.1384 | lr 9.94e-06 | elapsed 44770s
+SFT step 236000 | loss 1.6258 | lr 9.87e-06 | elapsed 44865s
+SFT step 236500 | loss 2.2354 | lr 9.80e-06 | elapsed 44959s
+SFT step 237000 | loss 2.0857 | lr 9.72e-06 | elapsed 45053s
+SFT step 237500 | loss 1.7345 | lr 9.65e-06 | elapsed 45147s
+  >> EVAL SFT step 237500: train=1.8504, val=2.0326
+SFT step 238000 | loss 1.9431 | lr 9.58e-06 | elapsed 45245s
+SFT step 238500 | loss 1.9733 | lr 9.51e-06 | elapsed 45339s
+SFT step 239000 | loss 1.7767 | lr 9.44e-06 | elapsed 45433s
+SFT step 239500 | loss 2.0606 | lr 9.37e-06 | elapsed 45527s
+SFT step 240000 | loss 1.7674 | lr 9.30e-06 | elapsed 45622s
+  >> EVAL SFT step 240000: train=1.9436, val=1.9228
+SFT step 240500 | loss 1.8243 | lr 9.23e-06 | elapsed 45719s
+SFT step 241000 | loss 1.7029 | lr 9.16e-06 | elapsed 45813s
+SFT step 241500 | loss 1.7338 | lr 9.09e-06 | elapsed 45908s
+SFT step 242000 | loss 2.1626 | lr 9.03e-06 | elapsed 46002s
+SFT step 242500 | loss 1.6699 | lr 8.96e-06 | elapsed 46096s
+  >> EVAL SFT step 242500: train=1.9025, val=1.8992
+SFT step 243000 | loss 1.4429 | lr 8.89e-06 | elapsed 46193s
+SFT step 243500 | loss 1.9368 | lr 8.83e-06 | elapsed 46288s
+SFT step 244000 | loss 1.9434 | lr 8.76e-06 | elapsed 46382s
+SFT step 244500 | loss 1.8609 | lr 8.70e-06 | elapsed 46476s
+SFT step 245000 | loss 1.9208 | lr 8.63e-06 | elapsed 46570s
+  >> EVAL SFT step 245000: train=1.9405, val=2.0023
+SFT step 245500 | loss 2.1198 | lr 8.57e-06 | elapsed 46668s
+SFT step 246000 | loss 1.9942 | lr 8.50e-06 | elapsed 46762s
+SFT step 246500 | loss 1.8214 | lr 8.44e-06 | elapsed 46856s
+SFT step 247000 | loss 1.9215 | lr 8.38e-06 | elapsed 46950s
+SFT step 247500 | loss 1.8191 | lr 8.32e-06 | elapsed 47045s
+  >> EVAL SFT step 247500: train=1.8474, val=2.0003
+SFT step 248000 | loss 2.0662 | lr 8.26e-06 | elapsed 47142s
+SFT step 248500 | loss 1.9317 | lr 8.20e-06 | elapsed 47236s
+SFT step 249000 | loss 2.1978 | lr 8.14e-06 | elapsed 47331s
+SFT step 249500 | loss 2.0463 | lr 8.08e-06 | elapsed 47425s
+SFT step 250000 | loss 2.2617 | lr 8.02e-06 | elapsed 47519s
+  >> EVAL SFT step 250000: train=1.9054, val=1.9218
+  >> Saved SFT checkpoint: checkpoints/sft_checkpoint_250000.pt
+SFT step 250500 | loss 1.7740 | lr 7.96e-06 | elapsed 47625s
+SFT step 251000 | loss 1.6019 | lr 7.90e-06 | elapsed 47720s
+SFT step 251500 | loss 1.8518 | lr 7.84e-06 | elapsed 47814s
+SFT step 252000 | loss 2.0254 | lr 7.78e-06 | elapsed 47908s
+SFT step 252500 | loss 1.7204 | lr 7.73e-06 | elapsed 48003s
+  >> EVAL SFT step 252500: train=1.8548, val=1.8983
+SFT step 253000 | loss 1.7139 | lr 7.67e-06 | elapsed 48100s
+SFT step 253500 | loss 2.0405 | lr 7.62e-06 | elapsed 48194s
+SFT step 254000 | loss 2.0670 | lr 7.56e-06 | elapsed 48288s
+SFT step 254500 | loss 1.8270 | lr 7.51e-06 | elapsed 48383s
+SFT step 255000 | loss 1.8625 | lr 7.45e-06 | elapsed 48477s
+  >> EVAL SFT step 255000: train=1.9282, val=1.9295
+SFT step 255500 | loss 1.9058 | lr 7.40e-06 | elapsed 48574s
+SFT step 256000 | loss 1.8471 | lr 7.35e-06 | elapsed 48669s
+SFT step 256500 | loss 1.8265 | lr 7.30e-06 | elapsed 48763s
+SFT step 257000 | loss 1.6629 | lr 7.24e-06 | elapsed 48857s
+SFT step 257500 | loss 2.1943 | lr 7.19e-06 | elapsed 48951s
+  >> EVAL SFT step 257500: train=1.8613, val=1.9107
+SFT step 258000 | loss 1.6368 | lr 7.14e-06 | elapsed 49049s
+SFT step 258500 | loss 1.7975 | lr 7.09e-06 | elapsed 49143s
+SFT step 259000 | loss 2.0251 | lr 7.04e-06 | elapsed 49237s
+SFT step 259500 | loss 2.0181 | lr 6.99e-06 | elapsed 49332s
+SFT step 260000 | loss 1.8575 | lr 6.95e-06 | elapsed 49426s
+  >> EVAL SFT step 260000: train=1.9392, val=1.9468
+SFT step 260500 | loss 1.9255 | lr 6.90e-06 | elapsed 49523s
+SFT step 261000 | loss 2.1432 | lr 6.85e-06 | elapsed 49617s
+SFT step 261500 | loss 2.2674 | lr 6.81e-06 | elapsed 49712s
+SFT step 262000 | loss 1.9028 | lr 6.76e-06 | elapsed 49806s
+SFT step 262500 | loss 1.9245 | lr 6.71e-06 | elapsed 49900s
+  >> EVAL SFT step 262500: train=1.8480, val=1.9134
+SFT step 263000 | loss 1.8784 | lr 6.67e-06 | elapsed 49997s
+SFT step 263500 | loss 1.6648 | lr 6.62e-06 | elapsed 50092s
+SFT step 264000 | loss 2.3027 | lr 6.58e-06 | elapsed 50186s
+SFT step 264500 | loss 1.8221 | lr 6.54e-06 | elapsed 50280s
+SFT step 265000 | loss 1.9698 | lr 6.50e-06 | elapsed 50374s
+  >> EVAL SFT step 265000: train=1.8523, val=1.9473
+SFT step 265500 | loss 1.9736 | lr 6.45e-06 | elapsed 50472s
+SFT step 266000 | loss 1.6687 | lr 6.41e-06 | elapsed 50566s
+SFT step 266500 | loss 1.9997 | lr 6.37e-06 | elapsed 50660s
+SFT step 267000 | loss 1.7292 | lr 6.33e-06 | elapsed 50755s
+SFT step 267500 | loss 2.2333 | lr 6.29e-06 | elapsed 50849s
+  >> EVAL SFT step 267500: train=1.9228, val=1.8735
+SFT step 268000 | loss 1.5940 | lr 6.25e-06 | elapsed 50946s
+SFT step 268500 | loss 1.9454 | lr 6.21e-06 | elapsed 51040s
+SFT step 269000 | loss 2.0860 | lr 6.18e-06 | elapsed 51135s
+SFT step 269500 | loss 1.7988 | lr 6.14e-06 | elapsed 51229s
+SFT step 270000 | loss 1.7006 | lr 6.10e-06 | elapsed 51323s
+  >> EVAL SFT step 270000: train=1.9221, val=1.9705
+SFT step 270500 | loss 1.9681 | lr 6.07e-06 | elapsed 51421s
+SFT step 271000 | loss 1.7909 | lr 6.03e-06 | elapsed 51515s
+SFT step 271500 | loss 1.9235 | lr 6.00e-06 | elapsed 51609s
+SFT step 272000 | loss 2.5951 | lr 5.96e-06 | elapsed 51703s
+SFT step 272500 | loss 1.9916 | lr 5.93e-06 | elapsed 51798s
+  >> EVAL SFT step 272500: train=1.8887, val=1.9222
+SFT step 273000 | loss 1.7212 | lr 5.89e-06 | elapsed 51895s
+SFT step 273500 | loss 1.9012 | lr 5.86e-06 | elapsed 51989s
+SFT step 274000 | loss 2.0134 | lr 5.83e-06 | elapsed 52083s
+SFT step 274500 | loss 1.8026 | lr 5.80e-06 | elapsed 52178s
+SFT step 275000 | loss 1.9599 | lr 5.77e-06 | elapsed 52272s
+  >> EVAL SFT step 275000: train=1.8433, val=1.9036
+  >> Saved SFT checkpoint: checkpoints/sft_checkpoint_275000.pt
+SFT step 275500 | loss 1.8794 | lr 5.74e-06 | elapsed 52382s
+SFT step 276000 | loss 1.6674 | lr 5.71e-06 | elapsed 52476s
+SFT step 276500 | loss 1.5893 | lr 5.68e-06 | elapsed 52571s
+SFT step 277000 | loss 1.8866 | lr 5.65e-06 | elapsed 52665s
+SFT step 277500 | loss 1.6854 | lr 5.62e-06 | elapsed 52759s
+  >> EVAL SFT step 277500: train=1.9634, val=1.9159
+SFT step 278000 | loss 1.8610 | lr 5.59e-06 | elapsed 52857s
+SFT step 278500 | loss 2.0071 | lr 5.57e-06 | elapsed 52951s
+SFT step 279000 | loss 2.0056 | lr 5.54e-06 | elapsed 53047s
+SFT step 279500 | loss 1.9251 | lr 5.52e-06 | elapsed 53141s
+SFT step 280000 | loss 1.9319 | lr 5.49e-06 | elapsed 53236s
+  >> EVAL SFT step 280000: train=1.8768, val=1.9427
+SFT step 280500 | loss 1.7442 | lr 5.47e-06 | elapsed 53333s
+SFT step 281000 | loss 2.5538 | lr 5.44e-06 | elapsed 53428s
+SFT step 281500 | loss 1.9634 | lr 5.42e-06 | elapsed 53522s
+SFT step 282000 | loss 1.5601 | lr 5.40e-06 | elapsed 53617s
+SFT step 282500 | loss 2.0688 | lr 5.38e-06 | elapsed 53711s
+  >> EVAL SFT step 282500: train=1.8431, val=1.9827
+SFT step 283000 | loss 1.7968 | lr 5.36e-06 | elapsed 53808s
+SFT step 283500 | loss 2.0601 | lr 5.34e-06 | elapsed 53903s
+SFT step 284000 | loss 1.6836 | lr 5.32e-06 | elapsed 53997s
+SFT step 284500 | loss 2.2474 | lr 5.30e-06 | elapsed 54092s
+SFT step 285000 | loss 1.9128 | lr 5.28e-06 | elapsed 54186s
+  >> EVAL SFT step 285000: train=1.9115, val=1.9556
+SFT step 285500 | loss 1.7952 | lr 5.26e-06 | elapsed 54283s
+SFT step 286000 | loss 2.1038 | lr 5.24e-06 | elapsed 54378s
+SFT step 286500 | loss 1.8239 | lr 5.22e-06 | elapsed 54472s
+SFT step 287000 | loss 1.6751 | lr 5.21e-06 | elapsed 54567s
+SFT step 287500 | loss 1.6312 | lr 5.19e-06 | elapsed 54661s
+  >> EVAL SFT step 287500: train=1.9037, val=1.9298
+SFT step 288000 | loss 1.9581 | lr 5.18e-06 | elapsed 54759s
+SFT step 288500 | loss 1.9120 | lr 5.16e-06 | elapsed 54853s
+SFT step 289000 | loss 2.2354 | lr 5.15e-06 | elapsed 54947s
+SFT step 289500 | loss 1.9054 | lr 5.14e-06 | elapsed 55042s
+SFT step 290000 | loss 1.6162 | lr 5.12e-06 | elapsed 55136s
+  >> EVAL SFT step 290000: train=1.8571, val=1.9534
+SFT step 290500 | loss 1.8840 | lr 5.11e-06 | elapsed 55234s
+SFT step 291000 | loss 2.0382 | lr 5.10e-06 | elapsed 55328s
+SFT step 291500 | loss 1.7463 | lr 5.09e-06 | elapsed 55423s
+SFT step 292000 | loss 1.9158 | lr 5.08e-06 | elapsed 55517s
+SFT step 292500 | loss 2.1416 | lr 5.07e-06 | elapsed 55611s
+  >> EVAL SFT step 292500: train=1.8713, val=1.9860
+SFT step 293000 | loss 1.5696 | lr 5.06e-06 | elapsed 55709s
+SFT step 293500 | loss 1.6043 | lr 5.05e-06 | elapsed 55803s
+SFT step 294000 | loss 1.6671 | lr 5.04e-06 | elapsed 55898s
+SFT step 294500 | loss 1.7367 | lr 5.04e-06 | elapsed 55992s
+SFT step 295000 | loss 1.9036 | lr 5.03e-06 | elapsed 56087s
+  >> EVAL SFT step 295000: train=1.8288, val=1.9366
+SFT step 295500 | loss 1.8432 | lr 5.02e-06 | elapsed 56184s
+SFT step 296000 | loss 1.9059 | lr 5.02e-06 | elapsed 56278s
+SFT step 296500 | loss 1.8894 | lr 5.02e-06 | elapsed 56373s
+SFT step 297000 | loss 1.7336 | lr 5.01e-06 | elapsed 56467s
+SFT step 297500 | loss 1.7902 | lr 5.01e-06 | elapsed 56562s
+  >> EVAL SFT step 297500: train=1.9065, val=1.9385
+SFT step 298000 | loss 1.6399 | lr 5.00e-06 | elapsed 56659s
+SFT step 298500 | loss 1.8562 | lr 5.00e-06 | elapsed 56754s
+SFT step 299000 | loss 1.9073 | lr 5.00e-06 | elapsed 56848s
+SFT step 299500 | loss 2.0155 | lr 5.00e-06 | elapsed 56943s
+
+SFT complete! Final checkpoint: checkpoints/final_sft.pt
+(Base pre-trained model still at checkpoints/final.pt)
