@@ -1,0 +1,340 @@
+Using device: cuda
+Model parameters: 23,033,856
+Starting training...
+step     0 | loss 9.8426 | lr 2.00e-06 | elapsed 0s
+step    50 | loss 9.2226 | lr 1.02e-04 | elapsed 7s
+step   100 | loss 8.8403 | lr 2.02e-04 | elapsed 15s
+step   150 | loss 8.8434 | lr 3.02e-04 | elapsed 22s
+step   200 | loss 8.7569 | lr 4.00e-04 | elapsed 29s
+step   250 | loss 8.3079 | lr 4.00e-04 | elapsed 36s
+step   300 | loss 7.8727 | lr 4.00e-04 | elapsed 42s
+step   350 | loss 7.4730 | lr 4.00e-04 | elapsed 48s
+step   400 | loss 7.1243 | lr 4.00e-04 | elapsed 54s
+step   450 | loss 6.8731 | lr 4.00e-04 | elapsed 61s
+step   500 | loss 6.6255 | lr 4.00e-04 | elapsed 67s
+  >> EVAL step 500: train=6.6459, val=6.6513
+step   550 | loss 6.4730 | lr 4.00e-04 | elapsed 78s
+step   600 | loss 6.3326 | lr 3.99e-04 | elapsed 84s
+step   650 | loss 6.1434 | lr 3.99e-04 | elapsed 90s
+step   700 | loss 6.0368 | lr 3.99e-04 | elapsed 96s
+step   750 | loss 5.9556 | lr 3.99e-04 | elapsed 102s
+step   800 | loss 5.9211 | lr 3.99e-04 | elapsed 109s
+step   850 | loss 5.8293 | lr 3.98e-04 | elapsed 115s
+step   900 | loss 5.7658 | lr 3.98e-04 | elapsed 121s
+step   950 | loss 5.6384 | lr 3.98e-04 | elapsed 127s
+step  1000 | loss 5.6021 | lr 3.97e-04 | elapsed 133s
+  >> EVAL step 1000: train=5.6310, val=5.6423
+step  1050 | loss 5.5558 | lr 3.97e-04 | elapsed 144s
+step  1100 | loss 5.6165 | lr 3.97e-04 | elapsed 150s
+step  1150 | loss 5.4126 | lr 3.96e-04 | elapsed 157s
+step  1200 | loss 5.4004 | lr 3.96e-04 | elapsed 163s
+step  1250 | loss 5.4094 | lr 3.96e-04 | elapsed 169s
+step  1300 | loss 5.3020 | lr 3.95e-04 | elapsed 175s
+step  1350 | loss 5.3121 | lr 3.95e-04 | elapsed 181s
+step  1400 | loss 5.2847 | lr 3.94e-04 | elapsed 188s
+step  1450 | loss 5.2211 | lr 3.94e-04 | elapsed 193s
+step  1500 | loss 5.1685 | lr 3.93e-04 | elapsed 199s
+  >> EVAL step 1500: train=5.1578, val=5.1754
+step  1550 | loss 5.1353 | lr 3.93e-04 | elapsed 210s
+step  1600 | loss 5.0155 | lr 3.92e-04 | elapsed 216s
+step  1650 | loss 5.1279 | lr 3.92e-04 | elapsed 223s
+step  1700 | loss 5.0038 | lr 3.91e-04 | elapsed 229s
+step  1750 | loss 5.0370 | lr 3.90e-04 | elapsed 235s
+step  1800 | loss 5.0130 | lr 3.90e-04 | elapsed 241s
+step  1850 | loss 4.8861 | lr 3.89e-04 | elapsed 247s
+step  1900 | loss 4.8163 | lr 3.88e-04 | elapsed 254s
+step  1950 | loss 4.8452 | lr 3.88e-04 | elapsed 260s
+step  2000 | loss 4.7859 | lr 3.87e-04 | elapsed 266s
+  >> EVAL step 2000: train=4.8521, val=4.8560
+  >> Saved checkpoint: checkpoints\checkpoint_2000.pt
+step  2050 | loss 4.7967 | lr 3.86e-04 | elapsed 277s
+step  2100 | loss 4.7641 | lr 3.86e-04 | elapsed 283s
+step  2150 | loss 4.7994 | lr 3.85e-04 | elapsed 289s
+step  2200 | loss 4.7714 | lr 3.84e-04 | elapsed 296s
+step  2250 | loss 4.6888 | lr 3.83e-04 | elapsed 302s
+step  2300 | loss 4.7155 | lr 3.82e-04 | elapsed 308s
+step  2350 | loss 4.6575 | lr 3.82e-04 | elapsed 314s
+step  2400 | loss 4.6333 | lr 3.81e-04 | elapsed 321s
+step  2450 | loss 4.6531 | lr 3.80e-04 | elapsed 327s
+step  2500 | loss 4.5167 | lr 3.79e-04 | elapsed 333s
+  >> EVAL step 2500: train=4.5938, val=4.5883
+step  2550 | loss 4.5060 | lr 3.78e-04 | elapsed 344s
+step  2600 | loss 4.5766 | lr 3.77e-04 | elapsed 350s
+step  2650 | loss 4.5586 | lr 3.76e-04 | elapsed 356s
+step  2700 | loss 4.5020 | lr 3.75e-04 | elapsed 362s
+step  2750 | loss 4.4914 | lr 3.74e-04 | elapsed 369s
+step  2800 | loss 4.4108 | lr 3.73e-04 | elapsed 375s
+step  2850 | loss 4.4688 | lr 3.72e-04 | elapsed 381s
+step  2900 | loss 4.4098 | lr 3.71e-04 | elapsed 387s
+step  2950 | loss 4.3545 | lr 3.70e-04 | elapsed 393s
+step  3000 | loss 4.4082 | lr 3.69e-04 | elapsed 400s
+  >> EVAL step 3000: train=4.4008, val=4.4001
+step  3050 | loss 4.3868 | lr 3.68e-04 | elapsed 410s
+step  3100 | loss 4.3563 | lr 3.67e-04 | elapsed 417s
+step  3150 | loss 4.2901 | lr 3.66e-04 | elapsed 423s
+step  3200 | loss 4.3078 | lr 3.65e-04 | elapsed 429s
+step  3250 | loss 4.2539 | lr 3.64e-04 | elapsed 435s
+step  3300 | loss 4.3267 | lr 3.62e-04 | elapsed 442s
+step  3350 | loss 4.2921 | lr 3.61e-04 | elapsed 448s
+step  3400 | loss 4.3224 | lr 3.60e-04 | elapsed 454s
+step  3450 | loss 4.2692 | lr 3.59e-04 | elapsed 460s
+step  3500 | loss 4.2767 | lr 3.58e-04 | elapsed 467s
+  >> EVAL step 3500: train=4.2424, val=4.2511
+step  3550 | loss 4.2102 | lr 3.56e-04 | elapsed 477s
+step  3600 | loss 4.1308 | lr 3.55e-04 | elapsed 483s
+step  3650 | loss 4.1564 | lr 3.54e-04 | elapsed 489s
+step  3700 | loss 4.1264 | lr 3.53e-04 | elapsed 496s
+step  3750 | loss 4.1697 | lr 3.51e-04 | elapsed 502s
+step  3800 | loss 4.1513 | lr 3.50e-04 | elapsed 508s
+step  3850 | loss 4.1858 | lr 3.49e-04 | elapsed 514s
+step  3900 | loss 4.1795 | lr 3.47e-04 | elapsed 521s
+step  3950 | loss 4.1460 | lr 3.46e-04 | elapsed 527s
+step  4000 | loss 4.1835 | lr 3.45e-04 | elapsed 533s
+  >> EVAL step 4000: train=4.1171, val=4.1367
+  >> Saved checkpoint: checkpoints\checkpoint_4000.pt
+step  4050 | loss 4.1054 | lr 3.43e-04 | elapsed 544s
+step  4100 | loss 4.1661 | lr 3.42e-04 | elapsed 550s
+step  4150 | loss 4.0404 | lr 3.40e-04 | elapsed 556s
+step  4200 | loss 4.0649 | lr 3.39e-04 | elapsed 563s
+step  4250 | loss 3.9459 | lr 3.37e-04 | elapsed 569s
+step  4300 | loss 4.0411 | lr 3.36e-04 | elapsed 575s
+step  4350 | loss 4.1152 | lr 3.35e-04 | elapsed 581s
+step  4400 | loss 3.9982 | lr 3.33e-04 | elapsed 587s
+step  4450 | loss 4.0075 | lr 3.32e-04 | elapsed 594s
+step  4500 | loss 4.0132 | lr 3.30e-04 | elapsed 600s
+  >> EVAL step 4500: train=4.0079, val=4.0329
+step  4550 | loss 3.9971 | lr 3.29e-04 | elapsed 610s
+step  4600 | loss 4.0266 | lr 3.27e-04 | elapsed 617s
+step  4650 | loss 3.9906 | lr 3.25e-04 | elapsed 623s
+step  4700 | loss 3.9138 | lr 3.24e-04 | elapsed 629s
+step  4750 | loss 4.0006 | lr 3.22e-04 | elapsed 635s
+step  4800 | loss 4.0222 | lr 3.21e-04 | elapsed 642s
+step  4850 | loss 3.9776 | lr 3.19e-04 | elapsed 648s
+step  4900 | loss 3.9376 | lr 3.18e-04 | elapsed 654s
+step  4950 | loss 3.9476 | lr 3.16e-04 | elapsed 660s
+step  5000 | loss 3.9485 | lr 3.14e-04 | elapsed 667s
+  >> EVAL step 5000: train=3.9166, val=3.9457
+step  5050 | loss 3.8676 | lr 3.13e-04 | elapsed 677s
+step  5100 | loss 3.8814 | lr 3.11e-04 | elapsed 683s
+step  5150 | loss 3.8462 | lr 3.09e-04 | elapsed 690s
+step  5200 | loss 3.8269 | lr 3.08e-04 | elapsed 696s
+step  5250 | loss 3.8805 | lr 3.06e-04 | elapsed 702s
+step  5300 | loss 3.9219 | lr 3.04e-04 | elapsed 708s
+step  5350 | loss 3.8411 | lr 3.03e-04 | elapsed 714s
+step  5400 | loss 3.9136 | lr 3.01e-04 | elapsed 721s
+step  5450 | loss 3.8669 | lr 2.99e-04 | elapsed 727s
+step  5500 | loss 3.8309 | lr 2.98e-04 | elapsed 733s
+  >> EVAL step 5500: train=3.8761, val=3.8747
+step  5550 | loss 3.9243 | lr 2.96e-04 | elapsed 744s
+step  5600 | loss 3.8575 | lr 2.94e-04 | elapsed 750s
+step  5650 | loss 3.8036 | lr 2.92e-04 | elapsed 756s
+step  5700 | loss 3.7888 | lr 2.91e-04 | elapsed 762s
+step  5750 | loss 3.8457 | lr 2.89e-04 | elapsed 769s
+step  5800 | loss 3.7793 | lr 2.87e-04 | elapsed 775s
+step  5850 | loss 3.8399 | lr 2.85e-04 | elapsed 781s
+step  5900 | loss 3.7717 | lr 2.84e-04 | elapsed 787s
+step  5950 | loss 3.7601 | lr 2.82e-04 | elapsed 794s
+step  6000 | loss 3.8932 | lr 2.80e-04 | elapsed 800s
+  >> EVAL step 6000: train=3.7952, val=3.8245
+  >> Saved checkpoint: checkpoints\checkpoint_6000.pt
+step  6050 | loss 3.8553 | lr 2.78e-04 | elapsed 811s
+step  6100 | loss 3.8336 | lr 2.76e-04 | elapsed 817s
+step  6150 | loss 3.7689 | lr 2.75e-04 | elapsed 823s
+step  6200 | loss 3.8508 | lr 2.73e-04 | elapsed 829s
+step  6250 | loss 3.7641 | lr 2.71e-04 | elapsed 835s
+step  6300 | loss 3.7459 | lr 2.69e-04 | elapsed 842s
+step  6350 | loss 3.7478 | lr 2.67e-04 | elapsed 848s
+step  6400 | loss 3.8957 | lr 2.65e-04 | elapsed 854s
+step  6450 | loss 3.8046 | lr 2.64e-04 | elapsed 860s
+step  6500 | loss 3.6727 | lr 2.62e-04 | elapsed 867s
+  >> EVAL step 6500: train=3.7539, val=3.7784
+step  6550 | loss 3.8428 | lr 2.60e-04 | elapsed 877s
+step  6600 | loss 3.7559 | lr 2.58e-04 | elapsed 884s
+step  6650 | loss 3.7458 | lr 2.56e-04 | elapsed 890s
+step  6700 | loss 3.7899 | lr 2.54e-04 | elapsed 896s
+step  6750 | loss 3.6405 | lr 2.52e-04 | elapsed 902s
+step  6800 | loss 3.7262 | lr 2.50e-04 | elapsed 908s
+step  6850 | loss 3.7274 | lr 2.49e-04 | elapsed 914s
+step  6900 | loss 3.7481 | lr 2.47e-04 | elapsed 921s
+step  6950 | loss 3.8114 | lr 2.45e-04 | elapsed 927s
+step  7000 | loss 3.7995 | lr 2.43e-04 | elapsed 933s
+  >> EVAL step 7000: train=3.7054, val=3.7326
+step  7050 | loss 3.6462 | lr 2.41e-04 | elapsed 944s
+step  7100 | loss 3.7391 | lr 2.39e-04 | elapsed 950s
+step  7150 | loss 3.6869 | lr 2.37e-04 | elapsed 956s
+step  7200 | loss 3.7009 | lr 2.35e-04 | elapsed 962s
+step  7250 | loss 3.6439 | lr 2.33e-04 | elapsed 969s
+step  7300 | loss 3.6753 | lr 2.31e-04 | elapsed 975s
+step  7350 | loss 3.7412 | lr 2.30e-04 | elapsed 981s
+step  7400 | loss 3.6482 | lr 2.28e-04 | elapsed 988s
+step  7450 | loss 3.6346 | lr 2.26e-04 | elapsed 994s
+step  7500 | loss 3.6661 | lr 2.24e-04 | elapsed 1000s
+  >> EVAL step 7500: train=3.6700, val=3.6876
+step  7550 | loss 3.6471 | lr 2.22e-04 | elapsed 1011s
+step  7600 | loss 3.6631 | lr 2.20e-04 | elapsed 1017s
+step  7650 | loss 3.7255 | lr 2.18e-04 | elapsed 1023s
+step  7700 | loss 3.5783 | lr 2.16e-04 | elapsed 1029s
+step  7750 | loss 3.6712 | lr 2.14e-04 | elapsed 1035s
+step  7800 | loss 3.7116 | lr 2.12e-04 | elapsed 1042s
+step  7850 | loss 3.6174 | lr 2.10e-04 | elapsed 1048s
+step  7900 | loss 3.6593 | lr 2.09e-04 | elapsed 1054s
+step  7950 | loss 3.6623 | lr 2.07e-04 | elapsed 1060s
+step  8000 | loss 3.5747 | lr 2.05e-04 | elapsed 1067s
+  >> EVAL step 8000: train=3.6312, val=3.6452
+  >> Saved checkpoint: checkpoints\checkpoint_8000.pt
+step  8050 | loss 3.5871 | lr 2.03e-04 | elapsed 1077s
+step  8100 | loss 3.7058 | lr 2.01e-04 | elapsed 1084s
+step  8150 | loss 3.6609 | lr 1.99e-04 | elapsed 1090s
+step  8200 | loss 3.7006 | lr 1.97e-04 | elapsed 1096s
+step  8250 | loss 3.6475 | lr 1.95e-04 | elapsed 1102s
+step  8300 | loss 3.6197 | lr 1.93e-04 | elapsed 1109s
+step  8350 | loss 3.6163 | lr 1.91e-04 | elapsed 1115s
+step  8400 | loss 3.5749 | lr 1.90e-04 | elapsed 1121s
+step  8450 | loss 3.5793 | lr 1.88e-04 | elapsed 1127s
+step  8500 | loss 3.5459 | lr 1.86e-04 | elapsed 1134s
+  >> EVAL step 8500: train=3.5929, val=3.6282
+step  8550 | loss 3.5674 | lr 1.84e-04 | elapsed 1144s
+step  8600 | loss 3.6424 | lr 1.82e-04 | elapsed 1150s
+step  8650 | loss 3.6062 | lr 1.80e-04 | elapsed 1157s
+step  8700 | loss 3.5902 | lr 1.78e-04 | elapsed 1163s
+step  8750 | loss 3.5508 | lr 1.76e-04 | elapsed 1169s
+step  8800 | loss 3.5682 | lr 1.75e-04 | elapsed 1175s
+step  8850 | loss 3.5945 | lr 1.73e-04 | elapsed 1182s
+step  8900 | loss 3.5200 | lr 1.71e-04 | elapsed 1188s
+step  8950 | loss 3.6670 | lr 1.69e-04 | elapsed 1194s
+step  9000 | loss 3.5796 | lr 1.67e-04 | elapsed 1200s
+  >> EVAL step 9000: train=3.5688, val=3.5956
+step  9050 | loss 3.5833 | lr 1.65e-04 | elapsed 1211s
+step  9100 | loss 3.5628 | lr 1.64e-04 | elapsed 1217s
+step  9150 | loss 3.5792 | lr 1.62e-04 | elapsed 1223s
+step  9200 | loss 3.4802 | lr 1.60e-04 | elapsed 1230s
+step  9250 | loss 3.5757 | lr 1.58e-04 | elapsed 1236s
+step  9300 | loss 3.4884 | lr 1.56e-04 | elapsed 1242s
+step  9350 | loss 3.4777 | lr 1.55e-04 | elapsed 1248s
+step  9400 | loss 3.5957 | lr 1.53e-04 | elapsed 1254s
+step  9450 | loss 3.5663 | lr 1.51e-04 | elapsed 1261s
+step  9500 | loss 3.5407 | lr 1.49e-04 | elapsed 1267s
+  >> EVAL step 9500: train=3.5530, val=3.5588
+step  9550 | loss 3.5432 | lr 1.48e-04 | elapsed 1277s
+step  9600 | loss 3.4738 | lr 1.46e-04 | elapsed 1283s
+step  9650 | loss 3.5334 | lr 1.44e-04 | elapsed 1290s
+step  9700 | loss 3.6060 | lr 1.42e-04 | elapsed 1296s
+step  9750 | loss 3.6278 | lr 1.41e-04 | elapsed 1302s
+step  9800 | loss 3.4831 | lr 1.39e-04 | elapsed 1308s
+step  9850 | loss 3.5348 | lr 1.37e-04 | elapsed 1315s
+step  9900 | loss 3.5472 | lr 1.36e-04 | elapsed 1321s
+step  9950 | loss 3.4648 | lr 1.34e-04 | elapsed 1327s
+step 10000 | loss 3.5524 | lr 1.32e-04 | elapsed 1333s
+  >> EVAL step 10000: train=3.5241, val=3.5530
+  >> Saved checkpoint: checkpoints\checkpoint_10000.pt
+step 10050 | loss 3.5168 | lr 1.31e-04 | elapsed 1344s
+step 10100 | loss 3.5033 | lr 1.29e-04 | elapsed 1351s
+step 10150 | loss 3.4811 | lr 1.27e-04 | elapsed 1357s
+step 10200 | loss 3.5784 | lr 1.26e-04 | elapsed 1363s
+step 10250 | loss 3.5059 | lr 1.24e-04 | elapsed 1369s
+step 10300 | loss 3.4651 | lr 1.22e-04 | elapsed 1375s
+step 10350 | loss 3.4747 | lr 1.21e-04 | elapsed 1382s
+step 10400 | loss 3.5642 | lr 1.19e-04 | elapsed 1388s
+step 10450 | loss 3.5467 | lr 1.18e-04 | elapsed 1394s
+step 10500 | loss 3.4617 | lr 1.16e-04 | elapsed 1400s
+  >> EVAL step 10500: train=3.5010, val=3.5307
+step 10550 | loss 3.4621 | lr 1.15e-04 | elapsed 1411s
+step 10600 | loss 3.5252 | lr 1.13e-04 | elapsed 1417s
+step 10650 | loss 3.5093 | lr 1.11e-04 | elapsed 1424s
+step 10700 | loss 3.4315 | lr 1.10e-04 | elapsed 1430s
+step 10750 | loss 3.5129 | lr 1.08e-04 | elapsed 1436s
+step 10800 | loss 3.4922 | lr 1.07e-04 | elapsed 1443s
+step 10850 | loss 3.5228 | lr 1.05e-04 | elapsed 1449s
+step 10900 | loss 3.5187 | lr 1.04e-04 | elapsed 1455s
+step 10950 | loss 3.5415 | lr 1.03e-04 | elapsed 1461s
+step 11000 | loss 3.5316 | lr 1.01e-04 | elapsed 1468s
+  >> EVAL step 11000: train=3.4987, val=3.5123
+step 11050 | loss 3.4710 | lr 9.97e-05 | elapsed 1478s
+step 11100 | loss 3.4964 | lr 9.82e-05 | elapsed 1485s
+step 11150 | loss 3.4780 | lr 9.68e-05 | elapsed 1491s
+step 11200 | loss 3.3599 | lr 9.55e-05 | elapsed 1497s
+step 11250 | loss 3.6382 | lr 9.41e-05 | elapsed 1503s
+step 11300 | loss 3.4143 | lr 9.27e-05 | elapsed 1510s
+step 11350 | loss 3.4945 | lr 9.14e-05 | elapsed 1516s
+step 11400 | loss 3.4341 | lr 9.00e-05 | elapsed 1522s
+step 11450 | loss 3.5175 | lr 8.87e-05 | elapsed 1528s
+step 11500 | loss 3.4481 | lr 8.74e-05 | elapsed 1535s
+  >> EVAL step 11500: train=3.4666, val=3.5122
+step 11550 | loss 3.5105 | lr 8.61e-05 | elapsed 1545s
+step 11600 | loss 3.4625 | lr 8.49e-05 | elapsed 1552s
+step 11650 | loss 3.4427 | lr 8.36e-05 | elapsed 1558s
+step 11700 | loss 3.3957 | lr 8.24e-05 | elapsed 1564s
+step 11750 | loss 3.4395 | lr 8.12e-05 | elapsed 1570s
+step 11800 | loss 3.4479 | lr 8.00e-05 | elapsed 1577s
+step 11850 | loss 3.4596 | lr 7.88e-05 | elapsed 1583s
+step 11900 | loss 3.3979 | lr 7.76e-05 | elapsed 1589s
+step 11950 | loss 3.4940 | lr 7.64e-05 | elapsed 1596s
+step 12000 | loss 3.4564 | lr 7.53e-05 | elapsed 1604s
+  >> EVAL step 12000: train=3.4614, val=3.4775
+  >> Saved checkpoint: checkpoints\checkpoint_12000.pt
+step 12050 | loss 3.5120 | lr 7.42e-05 | elapsed 1617s
+step 12100 | loss 3.5155 | lr 7.30e-05 | elapsed 1624s
+step 12150 | loss 3.4808 | lr 7.19e-05 | elapsed 1632s
+step 12200 | loss 3.5662 | lr 7.09e-05 | elapsed 1639s
+step 12250 | loss 3.4298 | lr 6.98e-05 | elapsed 1646s
+step 12300 | loss 3.4345 | lr 6.88e-05 | elapsed 1653s
+step 12350 | loss 3.4792 | lr 6.77e-05 | elapsed 1661s
+step 12400 | loss 3.4245 | lr 6.67e-05 | elapsed 1668s
+step 12450 | loss 3.4051 | lr 6.57e-05 | elapsed 1675s
+step 12500 | loss 3.4680 | lr 6.48e-05 | elapsed 1683s
+  >> EVAL step 12500: train=3.4461, val=3.4720
+step 12550 | loss 3.4980 | lr 6.38e-05 | elapsed 1695s
+step 12600 | loss 3.5254 | lr 6.29e-05 | elapsed 1702s
+step 12650 | loss 3.5720 | lr 6.19e-05 | elapsed 1710s
+step 12700 | loss 3.4812 | lr 6.10e-05 | elapsed 1717s
+step 12750 | loss 3.4645 | lr 6.01e-05 | elapsed 1724s
+step 12800 | loss 3.5069 | lr 5.93e-05 | elapsed 1731s
+step 12850 | loss 3.4742 | lr 5.84e-05 | elapsed 1737s
+step 12900 | loss 3.4939 | lr 5.76e-05 | elapsed 1744s
+step 12950 | loss 3.4853 | lr 5.68e-05 | elapsed 1750s
+step 13000 | loss 3.3445 | lr 5.60e-05 | elapsed 1756s
+  >> EVAL step 13000: train=3.4353, val=3.4612
+step 13050 | loss 3.4178 | lr 5.52e-05 | elapsed 1767s
+step 13100 | loss 3.3704 | lr 5.44e-05 | elapsed 1773s
+step 13150 | loss 3.4435 | lr 5.37e-05 | elapsed 1779s
+step 13200 | loss 3.4877 | lr 5.30e-05 | elapsed 1786s
+step 13250 | loss 3.4588 | lr 5.23e-05 | elapsed 1792s
+step 13300 | loss 3.4234 | lr 5.16e-05 | elapsed 1798s
+step 13350 | loss 3.4666 | lr 5.09e-05 | elapsed 1804s
+step 13400 | loss 3.4019 | lr 5.03e-05 | elapsed 1810s
+step 13450 | loss 3.3358 | lr 4.97e-05 | elapsed 1817s
+step 13500 | loss 3.3556 | lr 4.90e-05 | elapsed 1823s
+  >> EVAL step 13500: train=3.4184, val=3.4463
+step 13550 | loss 3.3785 | lr 4.85e-05 | elapsed 1834s
+step 13600 | loss 3.5100 | lr 4.79e-05 | elapsed 1840s
+step 13650 | loss 3.3924 | lr 4.73e-05 | elapsed 1846s
+step 13700 | loss 3.3846 | lr 4.68e-05 | elapsed 1852s
+step 13750 | loss 3.4480 | lr 4.63e-05 | elapsed 1858s
+step 13800 | loss 3.3295 | lr 4.58e-05 | elapsed 1865s
+step 13850 | loss 3.3853 | lr 4.53e-05 | elapsed 1871s
+step 13900 | loss 3.4213 | lr 4.49e-05 | elapsed 1877s
+step 13950 | loss 3.3950 | lr 4.45e-05 | elapsed 1883s
+step 14000 | loss 3.4706 | lr 4.40e-05 | elapsed 1890s
+  >> EVAL step 14000: train=3.4203, val=3.4393
+  >> Saved checkpoint: checkpoints\checkpoint_14000.pt
+step 14050 | loss 3.5129 | lr 4.36e-05 | elapsed 1900s
+step 14100 | loss 3.4636 | lr 4.33e-05 | elapsed 1907s
+step 14150 | loss 3.5125 | lr 4.29e-05 | elapsed 1913s
+step 14200 | loss 3.3763 | lr 4.26e-05 | elapsed 1919s
+step 14250 | loss 3.3876 | lr 4.23e-05 | elapsed 1925s
+step 14300 | loss 3.4092 | lr 4.20e-05 | elapsed 1932s
+step 14350 | loss 3.4320 | lr 4.17e-05 | elapsed 1938s
+step 14400 | loss 3.4911 | lr 4.15e-05 | elapsed 1944s
+step 14450 | loss 3.4687 | lr 4.12e-05 | elapsed 1950s
+step 14500 | loss 3.3705 | lr 4.10e-05 | elapsed 1956s
+  >> EVAL step 14500: train=3.4092, val=3.4440
+step 14550 | loss 3.4133 | lr 4.08e-05 | elapsed 1967s
+step 14600 | loss 3.5008 | lr 4.06e-05 | elapsed 1973s
+step 14650 | loss 3.3395 | lr 4.05e-05 | elapsed 1980s
+step 14700 | loss 3.3734 | lr 4.04e-05 | elapsed 1986s
+step 14750 | loss 3.4784 | lr 4.03e-05 | elapsed 1992s
+step 14800 | loss 3.3934 | lr 4.02e-05 | elapsed 1998s
+step 14850 | loss 3.5275 | lr 4.01e-05 | elapsed 2005s
+step 14900 | loss 3.4069 | lr 4.00e-05 | elapsed 2011s
+step 14950 | loss 3.4964 | lr 4.00e-05 | elapsed 2017s
+Training complete! Final checkpoint: checkpoints/final.pt

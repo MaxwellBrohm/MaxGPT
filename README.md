@@ -17,6 +17,8 @@ This is my CS final project. The goal was not to beat ChatGPT (a 235M model neve
 
 Same architecture, scaled about 10x from the first model to the last. Total training was roughly **28 exaFLOPs**, all on a single RTX 5070. For perspective, GPT-3 used about **10,000x more** compute.
 
+**Download and run them:** all four are on Hugging Face under Apache-2.0 ([MaxGPT-1](https://huggingface.co/MaxMillion404/MaxGPT-1), [MaxGPT-2](https://huggingface.co/MaxMillion404/MaxGPT-2), [MaxGPT-3](https://huggingface.co/MaxMillion404/MaxGPT-3), [MaxGPT-3.5](https://huggingface.co/MaxMillion404/MaxGPT-3.5)), each with the code to run it. **Training curves:** every run's loss, plotted from its own log, with the logs, in [docs/training/](docs/training/).
+
 ---
 
 ## The Neo series
