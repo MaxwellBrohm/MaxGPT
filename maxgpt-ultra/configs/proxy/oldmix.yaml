@@ -1,0 +1,5 @@
+# Proxy A/B arm: the September 2026 data mix (same model and recipe; point --data at shards built with --mix pretrain-2026-09)
+extends: base.yaml
+name: ultra-proxy-oldmix
+train:
+  lr: 3.0e-4

@@ -1,0 +1,6 @@
+# Proxy A/B arm: ReLU-squared MLP at matched parameters (hidden 1.5x the SwiGLU width)
+extends: base.yaml
+name: ultra-proxy-relu2
+model:
+  mlp: relu2
+  mlp_hidden: 3072

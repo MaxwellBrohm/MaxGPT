@@ -1,0 +1,5 @@
+# Proxy A/B arm: learning rate 4.5e-4 (base is 3e-4)
+extends: base.yaml
+name: ultra-proxy-lr_4.5e-4
+train:
+  lr: 4.5e-4

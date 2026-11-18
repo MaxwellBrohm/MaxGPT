@@ -1,0 +1,40 @@
+# MaxGPT-Ultra on one 4x H100 80GB node (NAIRR Pilot: Purdue Anvil AI or SDSC Expanse AI).
+# The November 2026 restart from scratch. Same model as ultra.yaml, with the recipe the September
+# A/B chose (NorMuon, cautious weight decay, gated attention, value residual, depth-scaled norms)
+# and the changes of docs/research_2026-11-18_restart.md section 4. Launch with
+# slurm/pretrain_chain.sbatch; the whole procedure is in NAIRR.md.
+extends: ultra.yaml
+name: maxgpt-ultra
+model:
+  attn_gate: true
+  value_residual: true
+  norm_scaling: true
+  attn_fp32_layers: []        # if the gradient watch fires, list layers here and restart: their attention then runs in fp32
+train:
+  precision: auto             # resolves to bf16 on H100
+  gpus: auto                  # every GPU in the job, one process each (torchrun DDP)
+  optimizer: normuon
+  cautious_wd: true
+  lr: 3.0e-4                  # the evidence supports 3e-4 to 4e-4 at this batch; the proxy A/B's learning-rate arms settle it
+  weight_decay: 0.1
+  embed_weight_decay: 0.0     # no decay on the tied embedding (NorMuon's own 1.1B run, OLMo 2)
+  micro_batch: 8              # per GPU, 8 x 2048 tokens; scripts/find_micro_batch.py can test 16 on the real card
+  grad_accum: 64              # TOTAL across the 4 GPUs: 8 x 64 x 2048 = 1,048,576 tokens per step (September used 524,288)
+  warmup_tokens: 1.0e9
+  total_tokens: 1.0e11
+  decay_frac: 0.20            # September used 0.15
+  decay_shape: linear         # WSD with a linear decay to zero is the best-measured form at 1B (arXiv 2603.16127)
+  grad_checkpointing: false   # 80 GB holds the activations
+  optimizer_8bit: false
+  compile: true
+  compile_modes: [max-autotune-no-cudagraphs, default]
+  loss_chunk: 2048
+  milestone_tokens: 5.0e9     # a permanent full checkpoint every 5B tokens (far rollback points; about 15 GB each)
+  keep_decay_start: true      # and one at the last constant-rate step: checkpoints/decay_start.pt
+  grad_alert_factor: 10.0     # log a sustained 10x rise of the gradient norm over its floor
+  grad_halt_factor: 100.0     # stop cleanly on a sustained 100x rise (writes GRAD_HALT; see NAIRR.md)
+  anneal:
+    shards: data/shards_anneal
+    frac: 0.4
+    ramp_tokens: 1.0e9
+    start: decay

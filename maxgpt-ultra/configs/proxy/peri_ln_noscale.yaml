@@ -1,0 +1,6 @@
+# Proxy A/B arm: Peri-LN with the 1/sqrt(layer) norm scaling removed (the two target the same problem)
+extends: base.yaml
+name: ultra-proxy-peri_ln_noscale
+model:
+  peri_ln: true
+  norm_scaling: false

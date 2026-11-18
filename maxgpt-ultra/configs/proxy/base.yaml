@@ -1,0 +1,48 @@
+# Proxy model for the pre-run A/B (docs/research_2026-11-18_restart.md section 7; procedure in NAIRR.md).
+# Ultra's DEPTH (22 layers, because Peri-LN and the norm scaling are depth fixes) at a narrow width:
+# about 176M parameters, 3B tokens per run (about 3 GPU-hours on one H100). Same recipe as
+# configs/ultra_h100.yaml otherwise. Arms are the other files in this folder; each changes one thing.
+name: ultra-proxy
+model:
+  vocab_size: 49152
+  d_model: 768
+  n_layers: 22
+  n_heads: 6             # head size 128, as in Ultra
+  n_kv_heads: 2
+  mlp: swiglu
+  mlp_hidden: 2048
+  norm: rmsnorm
+  pos: rope
+  rope_theta: 10000
+  qk_norm: true
+  tie_embeddings: true
+  seq_len: 2048
+  attn_gate: true
+  value_residual: true
+  norm_scaling: true
+train:
+  precision: auto
+  gpus: 1
+  optimizer: normuon
+  cautious_wd: true
+  lr: 3.0e-4
+  betas: [0.9, 0.95]
+  weight_decay: 0.1
+  embed_weight_decay: 0.0
+  grad_clip: 1.0
+  schedule: wsd
+  warmup_tokens: 1.0e8
+  total_tokens: 3.0e9
+  decay_frac: 0.20
+  decay_shape: linear
+  z_loss: 1.0e-4
+  micro_batch: 16
+  grad_accum: 16         # 16 x 16 x 2048 = 524,288 tokens per step (about 5,700 steps)
+  grad_checkpointing: false
+  optimizer_8bit: false
+  compile: true
+  compile_modes: [max-autotune-no-cudagraphs, default]
+  loss_chunk: 2048
+  eval_every: 250
+  keep_decay_start: false
+  decay_weights_every: 0

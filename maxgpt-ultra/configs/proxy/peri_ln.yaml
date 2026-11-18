@@ -1,0 +1,5 @@
+# Proxy A/B arm: Peri-LN on top of the base (norm scaling kept)
+extends: base.yaml
+name: ultra-proxy-peri_ln
+model:
+  peri_ln: true
