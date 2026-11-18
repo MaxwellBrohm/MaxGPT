@@ -15,7 +15,10 @@ data/**/*.npy
 data/**/*.arrow
 data/raw/
 data/shards/
+data/shards_*/
+data/sources/
 data/processed/
+.hf_cache/
 checkpoints/
 runs/
 logs/

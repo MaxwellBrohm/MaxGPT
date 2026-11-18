@@ -1,5 +1,10 @@
 # MaxGPT-Ultra: training the 1.1B in WSL2
 
+> **November 2026:** Ultra is being restarted from scratch on the NAIRR H100 allocation. That
+> procedure is in [NAIRR.md](NAIRR.md), with the config `configs/ultra_h100.yaml`. This file is the
+> original single-GPU (RTX 5070, WSL2) procedure; its Phase G (post-training) still applies after any
+> pretraining run.
+
 The ordered steps to set up WSL2 and launch the real ~1.1B Ultra run.
 
 **Why WSL2:** the 1.1B does not fit in 12 GB on native Windows, the Linux-only memory features
@@ -12,14 +17,14 @@ commands run in the Ubuntu terminal from `~/MaxGPT/maxgpt-ultra` with the venv a
 
 ---
 
-## Phase A — WSL2 + GPU (one-time, mostly done)
+## Phase A: WSL2 + GPU (one-time, mostly done)
 - WSL is **version 2**: in PowerShell `wsl -l -v` shows VERSION `2` (if `1`: `wsl --set-version Ubuntu 2`).
 - `wsl --update` to get current GPU/CUDA passthrough.
 - GPU visible in Ubuntu: `nvidia-smi` shows the 5070 at ~12227 MiB.
 - `C:\Users\<you>\.wslconfig` has e.g. `memory=24GB`, `swap=8GB`, `vmIdleTimeout=-1` (system RAM, not VRAM;
   the full 12 GB VRAM is always available, WSL2 doesn't cap it).
 
-## Phase B — Project + deps in WSL2
+## Phase B: Project + deps in WSL2
 ```bash
 sudo apt update && sudo apt install -y python3-venv python3-pip git
 cd ~ && git clone https://github.com/MaxwellBrohm/MaxGPT.git && cd MaxGPT
@@ -37,11 +42,11 @@ python -c "import torch; m=torch.nn.Linear(8,8).cuda(); print(torch.compile(m)(t
 ```
 Want: `cuda True`, `paged True`, and a shape (compile just works on Linux, no MSVC).
 
-## Phase C — Storage check
+## Phase C: Storage check
 The 100B shards (~200 GB) live in the WSL2 filesystem, which sits on your **C: drive**. Make sure C:
 has **~250 GB free**. If not, relocate the WSL2 disk to a bigger drive first.
 
-## Phase D — Autotune micro_batch
+## Phase D: Autotune micro_batch
 ```bash
 cd ~/MaxGPT/maxgpt-ultra
 python scripts/find_micro_batch.py --config configs/ultra.yaml --compile
@@ -49,7 +54,7 @@ python scripts/find_micro_batch.py --config configs/ultra.yaml --compile
 With the paged optimizer + expandable_segments working, the 1.1B fits with headroom. Note the
 recommended `micro_batch` and `grad_accum`.
 
-## Phase E — Set the config
+## Phase E: Set the config
 Edit `configs/ultra.yaml` with the values from Phase D:
 ```yaml
   micro_batch: <from autotuner>
@@ -57,7 +62,7 @@ Edit `configs/ultra.yaml` with the values from Phase D:
 ```
 (`total_tokens: 1.0e11` stays, that's the 100B unique-token target, one epoch.)
 
-## Phase F — Run Ultra
+## Phase F: Run Ultra
 ```bash
 source ~/MaxGPT/venv/bin/activate    # if not already active
 cd ~/MaxGPT/maxgpt-ultra
@@ -71,7 +76,7 @@ Stages: **data** (retrains tokenizer, tokenizes the 100B mix, builds SFT+OASST +
   `data/shards/meta.json` exists.
 - When **pretrain** first starts, torch.compile warms up for a few minutes before steps appear.
 
-## Phase G — When Ultra finishes (weeks out)
+## Phase G: When Ultra finishes (weeks out)
 
 Post-training, in the order the research report (docs/research_2026-09-22.md section 3) argues
 for. Every step below is built and tested; none has run on the real model yet.

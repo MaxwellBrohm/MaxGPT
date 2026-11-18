@@ -285,7 +285,23 @@ Remaining (applied when we download + build the corpus on the 5070 box):
 - ☐ **Cosmopedia v2 / synthetic textbooks**: distilled quality for free
 - ☐ **Code + math mixing**: reasoning-structure transfer
 - ☐ **Dedup + quality filtering**: FineWeb-Edu / SmolLM-corpus are already deduped; add light exact-dedup
-- ☐ **Curriculum / final-phase annealing**: best data saved for the decay
+**The November 2026 mix (restart).**  ☑ (`data/prepare.py: PRETRAIN_MIX`, `scripts/test_data.py` [12]-[14])
+*What changed and why* (evidence in `docs/research_2026-11-18_restart.md` section 3):
+- Web text is now 60/40 FineWeb-Edu and DCLM-baseline. The two teach different things: in
+  SmolLM2's 1.7B ablation and in AI2's 1B models trained on exactly 100B tokens, FineWeb-Edu wins
+  the knowledge benchmarks (MMLU, ARC) and DCLM wins the commonsense ones (HellaSwag, CommonsenseQA).
+- Cosmopedia v2 drops from 22% to 5%. Its own makers measured it well below plain web text at 1.2B
+  and used it at 4% in SmolLM2.
+- Code comes from Common Pile's education-filtered Stack v2 (15 languages with file contents)
+  instead of Python-only codeparrot, keeping rows the education classifier scored 3 or higher.
+- Math comes from FineMath 3+ and InfiWebMath 3+ instead of OpenWebMath; Wikipedia from FineWiki.
+*Two pipeline lessons:* the code set stores one language per file, so reading it in order would
+feed the model one language at a time; its files are read in turn instead (`interleave_files`).
+And the decay-phase mix now continues the code and Wikipedia streams after the rows the main build
+consumed (`after` in a source spec, `rows_by_source` in `meta.json`), so the decay reads documents
+the model has not seen.
+
+- ☑ **Curriculum / final-phase annealing**: built (the decay-phase mix above, blended in over the last 20%)
 
 ## 4. Training & optimization  ◐ (loop in `train/`, verified by `scripts/test_train.py`)
 
@@ -424,6 +440,30 @@ full forward with all three on (`scripts/test_train.py` [10]).
   point Triton at a CUDA 11.8 ptxas instead (`cfg.configure_triton_ptxas`).
 - ☐ **Checkpoint averaging / model soup** (optional): average a few late checkpoints for a small, near-free final bump
 - ☑ **FlashAttention / SDPA**: used by the model (see the Attention kernel note in §1)
+
+**Restart recipe on H100 (November 2026).**  ☑ (`configs/ultra_h100.yaml`, `scripts/test_restart.py`)
+*What changed from the September run, and the evidence* (`docs/research_2026-11-18_restart.md` section 4):
+- **1,048,576 tokens per step** instead of 524,288. Three independent estimates put the best batch
+  at 100B tokens between 1M and 2M (a fit over AdamW runs from 111M to 3.3B, DeepSeek's fit, and
+  nanochat's measurement that 1M beat 0.5M near 0.9B parameters).
+- **No weight decay on the embedding matrix** (`embed_weight_decay: 0.0`), as in NorMuon's own 1.1B
+  run and OLMo 2. Hidden matrices keep cautious weight decay 0.1.
+- **A 20% linear decay to zero** instead of 15% cosine. At 1B on 350B tokens a warmup-stable-decay
+  schedule with a linear decay gave the best pretraining loss of the schedules compared.
+- **Milestone checkpoints** every 5B tokens and one at the last constant-rate step, none of them
+  pruned. The second exists because one study found that models pretrained without a decay did
+  better after SFT; keeping the branch point makes that test cheap later.
+*Insurance for a multi-day unattended bf16 run:* a gradient-norm watch that compares each step
+with the lowest level its running median has reached (so a slow rise is caught too), logs a
+sustained 10x rise and stops the run on a sustained 100x one; the largest attention score per
+layer in every eval row; and a per-layer fp32 attention switch (`model.attn_fp32_layers`). The
+reason is a 2026 report of fused bf16 attention gradients going wrong after 25B tokens with no
+NaN, in a model without QK-norm. Ultra's QK-norm bounds the quantity that grows there, so this is
+expected to stay silent.
+*Two options built for an A/B, off by default:* Peri-LN (`model.peri_ln`, a second RMSNorm on each
+sublayer's output) and a ReLU-squared MLP (`model.mlp: relu2`). Each has two independent positive
+results near 1B and no test on this stack yet; `slurm/proxy_ab.sbatch` and `scripts/proxy_verdict.py`
+decide by a rule fixed in advance.
 
 ## 5. Fitting 1B into 12GB (memory engineering)  ◐ (toggles wired in the trainer/model)
 
