@@ -144,6 +144,11 @@ def main() -> None:
         f.write(json.dumps({"step": 500, "event": "eval", "val_loss": 1.0, "suite": {"avg": 0.5}}) + "\n")
         f.write(json.dumps({"step": 1000, "event": "eval", "val_loss": 1.0}) + "\n")
     assert last_suite_step(mp) == 500 and last_suite_step("/tmp/does_not_exist.jsonl") is None
+    from eval.suite import subset                       # seeded subsets; n = 0 keeps the full set
+    pool = list(range(50))
+    assert subset(pool, 5, seed=0) == subset(pool, 5, seed=0) and len(subset(pool, 5, seed=0)) == 5
+    assert subset(pool, 5, seed=0) != subset(pool, 5, seed=1) and sorted(subset(pool, 0, seed=3)) == pool
+    assert subset(pool, 5, seed=0) == subset(pool, 0, seed=0)[:5], "a subset is the head of the same seeded order"
     import eval.suite as ES                            # acc vs acc_norm on a case where they disagree
     real_scorer = ES.score_continuations
     # choice 0: raw -1.0 over 2 bytes (-0.5 per byte); choice 1: raw -3.0 over 30 bytes (-0.1 per byte)

@@ -81,8 +81,15 @@ def fetch_task(task: str, n: int = 1000, seed: int = 0) -> list[dict]:
             rows.append({"context": ctx, "choices": [" " + _hs_clean(e) for e in ex["endings"]], "answer": int(ex["label"])})
     else:
         raise ValueError(f"unknown task {task!r}; known: {TASKS}")
+    return subset(rows, n, seed)
+
+
+def subset(rows: list, n: int, seed: int = 0) -> list:
+    """A seeded shuffle of `rows`, cut to the first n; n <= 0 keeps every example (the full test
+    set, for final numbers: a 1,000-example subset carries about 3 points of sampling noise)."""
+    rows = list(rows)
     random.Random(seed).shuffle(rows)
-    return rows[:n]
+    return rows if not n or n <= 0 else rows[:n]
 
 
 def write_suite(out_dir: str, suite: dict[str, list[dict]], seed: int = 0) -> None:

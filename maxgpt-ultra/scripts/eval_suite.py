@@ -42,7 +42,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--suite-dir", default="data/bench")
     ap.add_argument("--fetch", action="store_true", help="download a seeded subset of every task into --suite-dir")
-    ap.add_argument("--n", type=int, default=1000, help="examples per task when fetching")
+    ap.add_argument("--n", type=int, default=1000, help="examples per task when fetching; 0 = the full test sets (use another --suite-dir, e.g. data/bench_full)")
     ap.add_argument("--seed", type=int, default=0, help="subset seed when fetching")
     ap.add_argument("--tasks", default=",".join(__import__("eval.suite", fromlist=["TASKS"]).TASKS))
     ap.add_argument("--config", help="model YAML (scoring)")

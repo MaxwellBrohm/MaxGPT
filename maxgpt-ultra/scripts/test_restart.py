@@ -273,6 +273,23 @@ def main() -> None:
     assert "grad_alert" in events and "grad_halt" in events and events.index("grad_alert") < events.index("grad_halt")
     print(f"  stopped at step {t9.step} of 120 with grad_alert then grad_halt logged; GRAD_HALT written, no DONE ✓")
 
+    print("\n[10] the decay phase never starts without its data: missing anneal shards stop the run there")
+    out10 = OUT + "_noanneal"
+    shutil.rmtree(out10, ignore_errors=True)
+    tcfg10 = {**tcfg, "milestone_tokens": 0, "anneal": {"shards": "/tmp/maxgpt_no_such_anneal_shards", "frac": 0.4}}
+    t10 = Trainer(MaxGPTUltra(cfg7), PackedShardDataset(SHARDS, 16), tcfg10, device="cpu", out_dir=out10, seed=0)
+    t10.train()
+    assert t10.step == t10.decay_start_step == 16, (t10.step, t10.decay_start_step)
+    assert os.path.exists(os.path.join(out10, "ANNEAL_MISSING")) and not os.path.exists(os.path.join(out10, "DONE"))
+    assert json.load(open(os.path.join(out10, "ANNEAL_MISSING")))["step"] == 16
+    out10b = OUT + "_optanneal"
+    shutil.rmtree(out10b, ignore_errors=True)
+    tcfg10b = {**tcfg10, "anneal": {**tcfg10["anneal"], "optional": True}}
+    t10b = Trainer(MaxGPTUltra(cfg7), PackedShardDataset(SHARDS, 16), tcfg10b, device="cpu", out_dir=out10b, seed=0)
+    t10b.train()
+    assert t10b.step == 20 and os.path.exists(os.path.join(out10b, "DONE")) and not os.path.exists(os.path.join(out10b, "ANNEAL_MISSING"))
+    print("  stopped at step 16 of 20 with ANNEAL_MISSING and no DONE; anneal.optional lets a run finish without it ✓")
+
     print("\n" + "=" * 72)
     print("ALL CHECKS PASSED ✅")
     print("=" * 72)

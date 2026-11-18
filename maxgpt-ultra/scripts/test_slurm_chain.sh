@@ -58,5 +58,9 @@ echo "[6] a halt raised during the link exits 3"
 mkdir -p "$T/r6"; run r6 halt; rc=$?
 [ $rc -eq 3 ] && grep -q "stopped by the gradient watch" "$T/r6.log" || fail "halt: rc=$rc"
 
+echo "[7] a link that finds ANNEAL_MISSING refuses to train and exits 3"
+mkdir -p "$T/r7"; echo '{"step": 16}' > "$T/r7/ANNEAL_MISSING"; run r7 finish; rc=$?
+[ $rc -eq 3 ] && [ ! -f "$T/r7/LAUNCHED" ] || fail "anneal missing: rc=$rc launched=$(ls "$T/r7")"
+
 rm -rf "$T"
 echo "ALL CHECKS PASSED"

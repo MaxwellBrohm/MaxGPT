@@ -224,6 +224,7 @@ class Trainer:
         # Decay-phase data annealing (docs/research_2026-09-22.md 2.3): once the shards exist, blend
         # them in from the decay start (or an explicit step), ramping up over ramp_tokens.
         an = tcfg.get("anneal") or {}
+        self.anneal_missing = None      # set to the path when annealing is configured but its shards are absent
         if an.get("shards") and hasattr(data, "_read"):
             from data.loader import PackedShardDataset as _PSD, AnnealBlend
             adir = str(an["shards"])
@@ -237,8 +238,16 @@ class Trainer:
                 if self.is_main:
                     print(f"[train] annealing: {adir} blended in at {float(an.get('frac', 0.4)):.0%} of each step "
                           f"from step {start_step:,} (ramp over {data.ramp_steps:,} steps)", flush=True)
-            elif self.is_main:
-                print(f"[train] anneal shards not found at {adir}: annealing OFF", flush=True)
+            else:
+                # Training may start before the anneal shards are built (they are needed only from the
+                # decay on), but the decay phase happens once: reaching it without them stops the run
+                # (see train()) unless the config says anneal.optional: true.
+                if not bool(an.get("optional", False)):
+                    self.anneal_missing = adir
+                if self.is_main:
+                    print(f"[train] anneal shards not found at {adir}: annealing is OFF for now"
+                          + ("" if an.get("optional") else "; the run will stop at the decay start if they are still missing"),
+                          flush=True)
         if hasattr(data, "shard"):                          # each rank reads its own slice of every step
             if self.rank_shares:
                 data.shard(self.rank, self.world, shares=[n * self.micro_batch for n in self.rank_shares])
@@ -545,6 +554,16 @@ class Trainer:
         while self.step < target:
             if self._should_stop():        # GUI pause / Ctrl-C: save and exit cleanly
                 self._log({"step": self.step, "event": "paused"})
+                break
+            if self.anneal_missing and self.step >= self.decay_start_step:
+                # the one-shot decay phase must not run without its data: stop here, loudly
+                self._log({"step": self.step, "event": "anneal_missing", "shards": self.anneal_missing})
+                if self.is_main:
+                    with open(os.path.join(self.out_dir, "ANNEAL_MISSING"), "w", encoding="utf-8") as f:
+                        json.dump({"step": int(self.step), "shards": self.anneal_missing}, f)
+                    print(f"[train] STOPPING at the decay start (step {self.step:,}): the anneal shards are not at "
+                          f"{self.anneal_missing}. Build them (or fix train.anneal.shards), delete ANNEAL_MISSING, restart.",
+                          flush=True)
                 break
             rec = self.train_step()
             if self.step % 10 == 0:

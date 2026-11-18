@@ -44,6 +44,12 @@ if [ -f "$RUN/GRAD_HALT" ]; then
     exit 3
 fi
 
+if [ -f "$RUN/ANNEAL_MISSING" ]; then
+    say "ANNEAL_MISSING is present ($(cat "$RUN/ANNEAL_MISSING")): the run reached the decay phase without its data."
+    say "Build data/shards_anneal (slurm/data_build.sbatch), then delete $RUN/ANNEAL_MISSING to continue."
+    exit 3
+fi
+
 STOP="$RUN/STOP"
 rm -f "$STOP"                                   # a stop request left over from the previous link
 trap 'say "time limit near: asking the trainer to checkpoint and stop"; touch "$STOP"' USR1
@@ -67,6 +73,10 @@ if [ -f "$RUN/DONE" ]; then
 fi
 if [ -f "$RUN/GRAD_HALT" ]; then
     say "stopped by the gradient watch; see $RUN/GRAD_HALT and NAIRR.md"
+    exit 3
+fi
+if [ -f "$RUN/ANNEAL_MISSING" ]; then
+    say "stopped at the decay start: the anneal shards are missing; see $RUN/ANNEAL_MISSING and NAIRR.md"
     exit 3
 fi
 if [ "$RC" -ne 0 ]; then
