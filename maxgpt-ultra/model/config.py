@@ -35,6 +35,11 @@ class ModelConfig:
     value_residual: bool = False # normalized value residual: mix layer 1's values into every later layer (IMU-1 2026)
     norm_scaling: bool = False   # scale each block's pre-norm outputs by 1/sqrt(layer index) ("LayerNorm scaling", IMU-1)
 
+    # --- options for the November 2026 restart (docs/research_2026-11-18_restart.md); off = the September model ---
+    mlp: str = "swiglu"          # "swiglu" (3 matrices, hidden ~8/3 d) or "relu2" (2 matrices, relu(x)^2; set mlp_hidden to 1.5x the SwiGLU width to match parameters)
+    peri_ln: bool = False        # Peri-LN: also normalize each sublayer's OUTPUT and the embeddings (Gemma 2/3, OLMo 2); an A/B candidate
+    attn_fp32_layers: tuple = () # layers whose attention runs in fp32 even under bf16 autocast (the fix if bf16 attention gradients blow up late)
+
     @property
     def head_dim(self) -> int:
         assert self.d_model % self.n_heads == 0, "d_model must be divisible by n_heads"
@@ -44,6 +49,8 @@ class ModelConfig:
         assert self.n_heads % self.n_kv_heads == 0, \
             f"n_heads ({self.n_heads}) must be divisible by n_kv_heads ({self.n_kv_heads}) for GQA"
         assert self.head_dim % 2 == 0, "head_dim must be even for RoPE"
+        assert self.mlp in ("swiglu", "relu2"), f"unknown mlp {self.mlp!r}: swiglu | relu2"
+        self.attn_fp32_layers = tuple(int(i) for i in (self.attn_fp32_layers or ()))
 
     @classmethod
     def from_yaml(cls, path: str) -> "ModelConfig":
@@ -52,7 +59,9 @@ class ModelConfig:
         # These are design commitments, not knobs - assert the YAML agrees.
         assert m.pop("norm", "rmsnorm") == "rmsnorm", "this architecture is RMSNorm-only"
         assert m.pop("pos", "rope") == "rope", "this architecture is RoPE-only"
-        assert m.pop("mlp", "swiglu") == "swiglu", "this architecture is SwiGLU-only"
+        assert m.get("mlp", "swiglu") in ("swiglu", "relu2"), "mlp must be swiglu or relu2"
+        if "attn_fp32_layers" in m:
+            m["attn_fp32_layers"] = tuple(int(i) for i in (m["attn_fp32_layers"] or ()))
         valid = {f.name for f in dataclasses.fields(cls)}
         kwargs = {k: v for k, v in m.items() if k in valid}
         return cls(**kwargs)

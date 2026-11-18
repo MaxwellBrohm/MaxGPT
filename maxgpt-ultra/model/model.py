@@ -103,6 +103,10 @@ class Attention(nn.Module):
         if cfg.qk_norm:
             self.q_norm = RMSNorm(self.head_dim, cfg.rms_eps)
             self.k_norm = RMSNorm(self.head_dim, cfg.rms_eps)
+        # fp32 attention for this layer even under bf16 autocast: the documented fix when fused bf16
+        # attention gradients go wrong late in training (arXiv 2609.34272). Costs speed (the fp32
+        # path cannot use the flash kernel), so it is off unless the layer is listed in the config.
+        self.fp32_attn = layer_idx in set(cfg.attn_fp32_layers)
 
         # Gated attention: one sigmoid gate per head, computed from the block input, multiplies the
         # attention output. 2*sigmoid(0) = 1, and the projection is zero-initialized, so the model
@@ -119,6 +123,34 @@ class Attention(nn.Module):
             self.vr_scale = nn.Parameter(torch.ones(()))
             self.vr_alpha = nn.Parameter(torch.tensor([1.0, 0.0]))
 
+    def _qk(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor):
+        """Per-head queries and keys exactly as attention uses them: projected, QK-normalized,
+        rotated. Shapes (B, n_heads, T, hd) and (B, n_kv_heads, T, hd). One definition for the
+        forward pass and for the logit telemetry, so the telemetry cannot drift from the model."""
+        B, T, _ = x.shape
+        q = self.q_proj(x).view(B, T, self.n_heads, self.head_dim)
+        k = self.k_proj(x).view(B, T, self.n_kv_heads, self.head_dim)
+        # QK-norm: normalize each head's Q and K (over head_dim) before RoPE. Keeps
+        # the attention logits well-scaled so we can train at a higher learning rate.
+        if self.qk_norm:
+            q = self.q_norm(q)
+            k = self.k_norm(k)
+        # RoPE uses absolute positions; cos/sin are pre-sliced to this chunk's positions (offset
+        # past the cache during incremental decode), so new tokens rotate at the right angle.
+        q = apply_rope(q.transpose(1, 2), cos, sin)
+        k = apply_rope(k.transpose(1, 2), cos, sin)
+        return q, k
+
+    @torch.no_grad()
+    def max_logit(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> float:
+        """Largest |pre-softmax attention score| over the pairs causal attention can see, for this
+        input, computed in fp32. The number that grows before bf16 attention gradients fail."""
+        q, k = self._qk(x, cos, sin)
+        scores = (q.float() @ repeat_kv(k.float(), self.n_rep).transpose(-1, -2)) / math.sqrt(self.head_dim)
+        T = scores.size(-1)
+        causal = torch.ones(T, T, dtype=torch.bool, device=scores.device).tril()
+        return float(scores.abs().masked_fill(~causal, 0.0).max())
+
     def forward(self, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor,
                 past=None, use_cache: bool = False, v1: torch.Tensor | None = None,
                 mask: torch.Tensor | None = None):
@@ -127,28 +159,12 @@ class Attention(nn.Module):
         bool, True = may attend, replaces plain causal attention: the document mask for packed
         SFT batches (see MaxGPTUltra.doc_mask)."""
         B, T, _ = x.shape
-        q = self.q_proj(x).view(B, T, self.n_heads, self.head_dim)
-        k = self.k_proj(x).view(B, T, self.n_kv_heads, self.head_dim)
-        v = self.v_proj(x).view(B, T, self.n_kv_heads, self.head_dim)
-
-        # QK-norm: normalize each head's Q and K (over head_dim) before RoPE. Keeps
-        # the attention logits well-scaled so we can train at a higher learning rate.
-        if self.qk_norm:
-            q = self.q_norm(q)
-            k = self.k_norm(k)
-
-        q = q.transpose(1, 2)  # (B, n_heads,    T, hd)
-        k = k.transpose(1, 2)  # (B, n_kv_heads, T, hd)
-        v = v.transpose(1, 2)
+        q, k = self._qk(x, cos, sin)
+        v = self.v_proj(x).view(B, T, self.n_kv_heads, self.head_dim).transpose(1, 2)
         v_local = v
         if self.value_residual and v1 is not None:
             a1, a2 = self.vr_alpha[0], self.vr_alpha[1]
             v = self.vr_scale * (a1 * v + a2 * v1) * torch.rsqrt(a1 * a1 + a2 * a2)
-
-        # RoPE uses absolute positions; cos/sin are pre-sliced to this chunk's positions (offset
-        # past the cache during incremental decode), so new tokens rotate at the right angle.
-        q = apply_rope(q, cos, sin)
-        k = apply_rope(k, cos, sin)
 
         if past is not None:                       # prepend cached keys/values (post-RoPE, pre-GQA-repeat)
             pk, pv = past
@@ -158,7 +174,12 @@ class Attention(nn.Module):
 
         kr = repeat_kv(k, self.n_rep)
         vr = repeat_kv(v, self.n_rep)
-        if past is None and mask is not None:
+        if past is None and self.fp32_attn:                                   # this layer's attention in fp32
+            with torch.autocast(device_type=q.device.type, enabled=False):
+                out = F.scaled_dot_product_attention(q.float(), kr.float(), vr.float(),
+                                                     attn_mask=mask, is_causal=(mask is None))
+            out = out.to(vr.dtype)
+        elif past is None and mask is not None:
             out = F.scaled_dot_product_attention(q, kr, vr, attn_mask=mask)   # causal AND same document
         elif past is None:
             out = F.scaled_dot_product_attention(q, kr, vr, is_causal=True)   # prefill / training
@@ -194,6 +215,21 @@ class SwiGLU(nn.Module):
         return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
 
 
+class ReLU2MLP(nn.Module):
+    """FFN(x) = down( relu(up(x))^2 ). Two matrices instead of SwiGLU's three; at matched parameters
+    (hidden = 1.5x the SwiGLU width) it beat SwiGLU in nanochat at two sizes and in the 1.2B / 3B
+    replication (arXiv 2605.20798), and lost narrowly in one normalized-transformer study. An A/B
+    candidate for the restart, selected with model.mlp: relu2."""
+
+    def __init__(self, cfg: ModelConfig):
+        super().__init__()
+        self.up_proj = nn.Linear(cfg.d_model, cfg.mlp_hidden, bias=False)
+        self.down_proj = nn.Linear(cfg.mlp_hidden, cfg.d_model, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.down_proj(F.relu(self.up_proj(x)).square())
+
+
 # --------------------------------------------------------------------------- #
 # Transformer block (pre-norm)
 # --------------------------------------------------------------------------- #
@@ -203,7 +239,14 @@ class Block(nn.Module):
         self.attn_norm = RMSNorm(cfg.d_model, cfg.rms_eps)
         self.attn = Attention(cfg, layer_idx)
         self.mlp_norm = RMSNorm(cfg.d_model, cfg.rms_eps)
-        self.mlp = SwiGLU(cfg)
+        self.mlp = ReLU2MLP(cfg) if cfg.mlp == "relu2" else SwiGLU(cfg)
+        # Peri-LN: a second normalization on each sublayer's OUTPUT, before it joins the residual
+        # stream, so the stream's variance grows linearly with depth instead of exponentially
+        # (arXiv 2502.02732; Gemma 2/3, OLMo 2). Off by default; an A/B candidate.
+        self.peri_ln = cfg.peri_ln
+        if cfg.peri_ln:
+            self.attn_out_norm = RMSNorm(cfg.d_model, cfg.rms_eps)
+            self.mlp_out_norm = RMSNorm(cfg.d_model, cfg.rms_eps)
         # "LayerNorm scaling": deeper blocks see a 1/sqrt(depth)-scaled normalized input, which
         # keeps late layers from being drowned by the growing residual stream (IMU-1, 2026).
         self.norm_scale = (1.0 / math.sqrt(layer_idx + 1)) if cfg.norm_scaling else 1.0
@@ -217,11 +260,16 @@ class Block(nn.Module):
         if self.norm_scale != 1.0:
             h = h * self.norm_scale
         a, kv, v_local = self.attn(h, cos, sin, past, use_cache, v1, mask)
+        if self.peri_ln:
+            a = self.attn_out_norm(a)
         x = x + a
         h = self.mlp_norm(x)
         if self.norm_scale != 1.0:
             h = h * self.norm_scale
-        x = x + self.mlp(h)
+        m = self.mlp(h)
+        if self.peri_ln:
+            m = self.mlp_out_norm(m)
+        x = x + m
         return x, kv, v_local
 
 
@@ -242,6 +290,7 @@ class MaxGPTUltra(nn.Module):
         self.doc_mask = False
         self.doc_sep_id: int | None = None
         self.tok_emb = nn.Embedding(cfg.vocab_size, cfg.d_model)
+        self.emb_norm = RMSNorm(cfg.d_model, cfg.rms_eps) if cfg.peri_ln else None   # Peri-LN normalizes the embeddings too
         self.blocks = nn.ModuleList([Block(cfg, i) for i in range(cfg.n_layers)])
         self.norm = RMSNorm(cfg.d_model, cfg.rms_eps)
         self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
@@ -287,6 +336,8 @@ class MaxGPTUltra(nn.Module):
             f"sequence length {past_len + T} exceeds seq_len {self.cfg.seq_len}"
 
         x = self.tok_emb(idx)
+        if self.emb_norm is not None:
+            x = self.emb_norm(x)
         cos = self.rope_cos[past_len:past_len + T].to(x.dtype)     # positions offset past the cache
         sin = self.rope_sin[past_len:past_len + T].to(x.dtype)
         mask = self.document_mask(idx) if (self.doc_mask and past is None and not use_cache) else None

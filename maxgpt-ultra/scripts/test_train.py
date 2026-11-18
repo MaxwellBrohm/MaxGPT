@@ -71,7 +71,7 @@ def main() -> None:
     assert abs(wsd_lr(s_q, **kw, decay_shape="cosine") - 0.5 * (1 + math.cos(math.pi * 0.25))) < 1e-9
     assert wsd_lr(s_end, **kw, decay_shape="1-sqrt") < 0.04 and wsd_lr(s_end, **kw) < 0.04
     try:
-        wsd_lr(s_q, **kw, decay_shape="linear"); raise AssertionError("unknown shape must be rejected")
+        wsd_lr(s_q, **kw, decay_shape="sawtooth"); raise AssertionError("unknown shape must be rejected")
     except ValueError:
         pass
     print(f"  warmup {lr0:.2e} < stable {lr_mid:.2e} > decay {lr_end:.2e}; 1-sqrt = 0.5 at t=0.25 vs cosine {0.5 * (1 + math.cos(math.pi * 0.25)):.3f} ✓")

@@ -16,7 +16,7 @@ import math
 
 def wsd_lr(step: int, *, total_steps: int, warmup_steps: int, decay_frac: float,
            max_lr: float, min_lr_ratio: float = 0.0, decay_shape: str = "cosine") -> float:
-    """decay_shape: 'cosine' (the default) or '1-sqrt' (lr falls as 1 - sqrt(t), the shape IMU-1
+    """decay_shape: 'cosine' (the default), 'linear', or '1-sqrt' (lr falls as 1 - sqrt(t), the shape IMU-1
     uses and WSM derives; docs/research_2026-09-22.md 2.6 puts it at 0.005-0.015 nats over cosine
     together with a 20% decay). Both the shape and decay_frac must be chosen BEFORE the decay
     begins; changing either later would bend the curve in mid-flight."""
@@ -32,6 +32,8 @@ def wsd_lr(step: int, *, total_steps: int, warmup_steps: int, decay_frac: float,
     min_lr = max_lr * min_lr_ratio
     if decay_shape == "1-sqrt":
         return min_lr + (max_lr - min_lr) * (1.0 - math.sqrt(t))                 # 1-sqrt decay
+    if decay_shape == "linear":                                                  # the shape Yano et al. (2603.16127)
+        return min_lr + (max_lr - min_lr) * (1.0 - t)                            # and NorMuon's 1.1B run used
     if decay_shape != "cosine":
-        raise ValueError(f"unknown decay_shape {decay_shape!r}: cosine | 1-sqrt")
+        raise ValueError(f"unknown decay_shape {decay_shape!r}: cosine | linear | 1-sqrt")
     return min_lr + 0.5 * (max_lr - min_lr) * (1.0 + math.cos(math.pi * t))  # cosine decay

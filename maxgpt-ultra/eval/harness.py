@@ -53,9 +53,13 @@ def activation_stats(model, data, batch_size: int = 2, device: str = "cpu") -> d
     for attr in ("module", "_orig_mod", "module"):
         raw = getattr(raw, attr, raw)
     blocks = list(raw.blocks)
-    resid, mlp = [None] * len(blocks), [None] * len(blocks)
+    resid, mlp, logit = [None] * len(blocks), [None] * len(blocks), [None] * len(blocks)
     hooks = []
     for i, b in enumerate(blocks):
+        # largest pre-softmax attention score per layer, from the same queries and keys attention uses
+        # (first sequence only: the score matrix is heads x T x T). Args are (x, cos, sin, ...).
+        hooks.append(b.attn.register_forward_pre_hook(
+            lambda m, args, i=i: logit.__setitem__(i, m.max_logit(args[0][:1], args[1], args[2]))))
         hooks.append(b.register_forward_hook(
             lambda m, inp, out, i=i: resid.__setitem__(i, float(out[0].detach().float().abs().max()))))
         hooks.append(b.mlp.register_forward_hook(
@@ -65,14 +69,15 @@ def activation_stats(model, data, batch_size: int = 2, device: str = "cpu") -> d
         if hasattr(data, "pos"):
             data.pos, data.epoch, data._block_i = 0, 0, 0
         x, _ = data.next_batch(batch_size, device)
-        model(x)
+        raw(x)
     finally:
         for h in hooks:
             h.remove()
     resid = [round(v, 2) if v is not None else None for v in resid]
     mlp = [round(v, 2) if v is not None else None for v in mlp]
     vals = [v for v in resid + mlp if v is not None]
-    return {"act_max_resid": resid, "act_max_mlp": mlp, "act_max": max(vals) if vals else None}
+    return {"act_max_resid": resid, "act_max_mlp": mlp, "act_max": max(vals) if vals else None,
+            "act_max_logit": [round(v, 3) if v is not None else None for v in logit]}
 
 
 @torch.no_grad()

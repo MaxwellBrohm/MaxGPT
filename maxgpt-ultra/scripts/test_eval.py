@@ -180,6 +180,7 @@ def main() -> None:
     assert len(st["act_max_resid"]) == cfg.n_layers == len(st["act_max_mlp"]), st
     assert all(isinstance(v, float) and v > 0 for v in st["act_max_resid"] + st["act_max_mlp"]), st
     assert st["act_max"] == max(st["act_max_resid"] + st["act_max_mlp"])
+    assert len(st["act_max_logit"]) == cfg.n_layers and all(isinstance(v, float) and v > 0 for v in st["act_max_logit"]), st["act_max_logit"]
     ev = evaluate(model, tokenizer=tok, val_data=data, device="cpu")
     assert "act_max" in ev and "val_loss" in ev, list(ev)
     assert all(v is not None for v in ev["act_max_mlp"])

@@ -11,6 +11,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import shutil
 
 import torch
 
@@ -80,6 +81,21 @@ class CheckpointManager:
             except OSError:
                 pass
         return path
+
+    def keep_copy(self, name: str) -> str | None:
+        """A permanent copy of the latest full checkpoint as <name>.pt, which pruning never touches
+        (milestones for rolling far back, and the branch point at the start of the LR decay). A hard
+        link where the filesystem allows it, so it costs no extra space until the original is pruned."""
+        src = self.latest_path()
+        if not src:
+            return None
+        dst = os.path.join(self.dir, f"{name}.pt")
+        if not os.path.exists(dst):
+            try:
+                os.link(src, dst)
+            except OSError:
+                shutil.copy2(src, dst)
+        return dst
 
     def latest_path(self) -> str | None:
         p = os.path.join(self.dir, "latest.json")

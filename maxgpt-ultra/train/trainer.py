@@ -28,26 +28,31 @@ from .checkpoint import CheckpointManager, load_checkpoint
 from . import dist as D
 
 
-def make_optimizer(model, lr, betas, weight_decay, use_8bit=False, kind="adamw", muon_opts=None):
-    # weight decay on 2D+ tensors (matmuls/embeddings), none on 1D (norms/gains)
+def make_optimizer(model, lr, betas, weight_decay, use_8bit=False, kind="adamw", muon_opts=None, embed_wd=None):
+    # weight decay on 2D+ tensors (matmuls/embeddings), none on 1D (norms/gains).
+    # embed_wd: weight decay for the token embedding / LM head matrix. None = same as the other
+    # matrices (the original behaviour); 0.0 is what NorMuon's 1.1B run and OLMo 2 use (decay on
+    # the embedding shrinks its norm and buys nothing; docs/research_2026-11-18_restart.md section 4).
     decay, no_decay = [], []
     for p in model.parameters():
         if not p.requires_grad:
             continue
         (decay if p.dim() >= 2 else no_decay).append(p)
-    groups = [{"params": decay, "weight_decay": weight_decay},
+    emb = {id(p) for n, p in model.named_parameters()
+           if n.startswith(("tok_emb", "lm_head")) or n.endswith(("tok_emb.weight", "lm_head.weight"))}
+    mats = [p for p in decay if id(p) not in emb]
+    embs = [p for p in decay if id(p) in emb]
+    emb_wd = weight_decay if embed_wd is None else float(embed_wd)
+    groups = [{"params": mats, "weight_decay": weight_decay},
+              {"params": embs, "weight_decay": emb_wd},
               {"params": no_decay, "weight_decay": 0.0}]
     on_cuda = torch.cuda.is_available() and any(p.is_cuda for g in groups for p in g["params"])
     if kind in ("muon", "normuon"):
         from .muon import Muon
         opts = dict(muon_opts or {})
-        # Muon for the block matrices; AdamW (same lr / decay rules) for embeddings, head, and 1D
-        emb = {id(p) for n, p in model.named_parameters()
-               if n.startswith(("tok_emb", "lm_head")) or n.endswith(("tok_emb.weight", "lm_head.weight"))}
-        mats = [p for p in decay if id(p) not in emb]
-        embs = [p for p in decay if id(p) in emb]
+        # Muon for the block matrices; AdamW (same lr) for embeddings, head, and 1D
         groups = [{"params": mats, "weight_decay": weight_decay, "use_muon": True},
-                  {"params": embs, "weight_decay": weight_decay, "use_muon": False},
+                  {"params": embs, "weight_decay": emb_wd, "use_muon": False},
                   {"params": no_decay, "weight_decay": 0.0, "use_muon": False}]
         ns_dtype = None
         if on_cuda:
@@ -185,6 +190,21 @@ class Trainer:
         self.z_loss = float(tcfg.get("z_loss", 0.0))
         self.betas = tuple(tcfg.get("betas", [0.9, 0.95]))
         self.wd = float(tcfg.get("weight_decay", 0.1))
+        self.embed_wd = tcfg.get("embed_weight_decay")        # None = same as weight_decay; 0.0 = none on the embedding
+        self.out_dir = out_dir
+        # Permanent full checkpoints, never pruned: one every `milestone_tokens` (far rollback points
+        # for a multi-day unattended run) and one at the last constant-LR step (decay_start.pt, the
+        # branch point for comparing the decayed model with a constant-rate continuation after SFT).
+        self.decay_start_step = int(self.total_steps * (1.0 - self.decay_frac))
+        self.keep_decay_start = bool(tcfg.get("keep_decay_start", True))
+        self.milestone_steps = int(float(tcfg.get("milestone_tokens", 0)) // self.tokens_per_step)
+        # Gradient-norm watch (train/gradwatch.py): log a sustained 10x rise, stop cleanly on a 100x one.
+        from .gradwatch import GradWatch
+        self.gradwatch = GradWatch(alert_factor=float(tcfg.get("grad_alert_factor", 10.0)),
+                                   alert_patience=int(tcfg.get("grad_alert_patience", 20)),
+                                   halt_factor=float(tcfg.get("grad_halt_factor", 100.0)),
+                                   halt_patience=int(tcfg.get("grad_halt_patience", 200)))
+        self.gradwatch.seed_from_metrics(os.path.join(out_dir, "metrics.jsonl"))
         self.autosave_s = float(tcfg.get("autosave_minutes", 15)) * 60.0
         self.log_every = int(tcfg.get("log_every", 10))
         # weights-only snapshots through the decay phase (for end-of-run checkpoint averaging):
@@ -247,7 +267,8 @@ class Trainer:
                                         bool(tcfg.get("optimizer_8bit", False)),
                                         kind=str(tcfg.get("optimizer", "adamw")).lower(),
                                         muon_opts={"cautious_wd": tcfg.get("cautious_wd", False),
-                                                   "momentum": tcfg.get("muon_momentum", 0.95)})
+                                                   "momentum": tcfg.get("muon_momentum", 0.95)},
+                                        embed_wd=self.embed_wd)
         _enable_fast_math()
         self.net = D.wrap_ddp(self.model)                   # DDP wrapper (or the model itself)
         self._ddp = self.net is not self.model
@@ -553,11 +574,48 @@ class Trainer:
                     self._log({"step": self.step, "event": "eval", **self.eval_fn(self.model, self.step)})
                     self.model.train()  # eval_fn flips to eval(); restore train so chunked-loss/checkpoint stay active
                 D.barrier()
+            self._watch_gradients(rec)
+            self._maybe_milestone()
             if time.time() - self._last_save >= self.autosave_s:
                 self.save()
             self._maybe_save_weights()
         self.save()  # final checkpoint
         self._maybe_save_weights(force=(self.step >= self.total_steps))   # a snapshot at the true end, not at a pause
+        if self.is_main and self.step >= self.total_steps:                # tells a job chain there is nothing left to do
+            with open(os.path.join(self.out_dir, "DONE"), "w", encoding="utf-8") as f:
+                json.dump({"step": int(self.step), "total_steps": int(self.total_steps)}, f)
+
+    def _watch_gradients(self, rec: dict) -> None:
+        """Feed this step's gradient norm to the watch; log an alert, or stop cleanly on a halt."""
+        verdict = self.gradwatch.feed(float(rec.get("grad_norm", float("nan"))))
+        if not verdict:
+            return
+        info = {"step": self.step, "event": f"grad_{verdict}", "grad_norm": rec.get("grad_norm"),
+                "baseline": self.gradwatch.floor}
+        self._log(info)
+        if self.is_main:
+            print(f"[train] gradient norm {verdict}: {info['grad_norm']:.3g} against a baseline of "
+                  f"{info['baseline']:.3g} at step {self.step}" + ("; stopping (see GRAD_HALT)" if verdict == "halt" else ""),
+                  flush=True)
+        if verdict == "halt":
+            if self.is_main:
+                with open(os.path.join(self.out_dir, "GRAD_HALT"), "w", encoding="utf-8") as f:
+                    json.dump(info, f)
+            self.request_stop()
+
+    def _maybe_milestone(self) -> None:
+        """Save the permanent checkpoints described in __init__ when this step is one of theirs."""
+        names = []
+        if self.milestone_steps > 0 and self.step > 0 and self.step % self.milestone_steps == 0:
+            names.append(f"milestone_{self.step:08d}")
+        if self.keep_decay_start and self.step == self.decay_start_step and self.step > 0:
+            names.append("decay_start")
+        if not names:
+            return
+        self.save()
+        if self.is_main:
+            for name in names:
+                self.ckpt.keep_copy(name)
 
     def _maybe_save_weights(self, force: bool = False) -> None:
         """Rank 0 writes a weights-only snapshot on the decay-phase cadence (and at the very end)."""
