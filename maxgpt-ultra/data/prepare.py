@@ -13,6 +13,8 @@ Verify the dataset ids/fields on HF before the real run; they drift over time.
 """
 from __future__ import annotations
 
+import fnmatch
+import glob
 import itertools
 import json
 import os
@@ -23,16 +25,63 @@ import numpy as np
 
 DTYPE = np.uint16
 
-# Pretraining mix. Each `weight` is the source's share of TOKENS (MixedStream holds the blend in
-# tokens as it streams): ~55% web-edu, 22% textbook, 10% code, 8% math, 5% wiki.
-# History: the mixer used to pick *documents* by weight, and document length varies 10-100x by
-# source (code files and math pages are long; cosmopedia snippets are short), so the 100B shards
-# on the Lambda box were built with hand-calibrated doc-weights (0.55/0.32/0.037/0.039/0.048) and
-# landed at 54.9/22.7/10.6/8.4/3.3 (data/shards/meta.json). The token-weighted mixer makes that
-# calibration unnecessary; these weights now say what they mean. Existing shards are reused as-is.
-# Code note: smollm-corpus "python-edu" stores blob_ids (text lives on S3), not inline text, so
-# codeparrot-clean (inline `content`, no auth) supplies the code slice instead.
+# Pretraining mix, version 2: the restart on NAIRR H100s (docs/research_2026-11-18_restart.md, section 3).
+# Each `weight` is the source's share of TOKENS (MixedStream holds the blend in tokens as it streams).
+# What changed from the September mix (kept below as PRETRAIN_MIX_2026_09) and why:
+#   - Web: FineWeb-Edu alone -> 60/40 FineWeb-Edu / DCLM-baseline. The two cover different skills
+#     (FW-Edu wins MMLU and ARC, DCLM wins HellaSwag and CommonsenseQA) in SmolLM2's 1.7B ablation
+#     and, with 3 seeds, in AI2's DataDecide 1B models trained on exactly 100B tokens.
+#   - Cosmopedia v2: 22% -> 5%. Its own makers measured it well below plain web text at 1.2B
+#     (10.33 vs 13.77 on a 12-task average) and used it at 4% in SmolLM2.
+#   - Code: codeparrot (Python only) -> Common Pile's education-filtered Stack v2 (15 languages,
+#     openly licensed, file contents included). Its files hold one language after another, so
+#     they are read interleaved (`interleave_files`), and rows the education classifier scored
+#     below 3 are dropped (`min`), the threshold SmolLM2's Stack-Edu used.
+#   - Math: OpenWebMath -> FineMath 3+ and InfiWebMath 3+ (the filtered sets SmolLM2 moved to).
+#   - Wikipedia: the 2023 dump -> FineWiki (cleaned); only its `text` column is read.
+# Source spec keys: path / name (HF dataset id and config) or local (a jsonl file); text_field;
+# weight (token share); label (name used in meta.json, defaults to name or path); columns (parquet
+# columns to read); interleave_files (glob: read the repo's files in turn, one row each);
+# min / exclude (row filters); epochs (passes over a small source); render ("chatml");
+# after (label of a pretraining source whose stream this one continues, see apply_continuation);
+# fetch ("all": scripts/fetch_sources.py downloads the whole source, not just its share).
 PRETRAIN_MIX = [
+    {"path": "HuggingFaceTB/smollm-corpus", "name": "fineweb-edu-dedup", "text_field": "text", "weight": 0.42},
+    {"path": "mlfoundations/dclm-baseline-1.0-parquet", "label": "dclm-baseline", "text_field": "text", "weight": 0.28},
+    {"path": "HuggingFaceTB/smollm-corpus", "name": "cosmopedia-v2", "text_field": "text", "weight": 0.05,
+     "bytes_per_token": 6.0},      # its parquet carries prompt columns: about 4.4 compressed bytes per token
+    {"path": "common-pile/stackv2_edu_filtered", "label": "stack-edu-code", "text_field": "text",
+     "interleave_files": "*.json.gz", "min": {"int_score": 3}, "weight": 0.12},
+    {"path": "HuggingFaceTB/finemath", "name": "finemath-3plus", "text_field": "text", "weight": 0.04},
+    {"path": "HuggingFaceTB/finemath", "name": "infiwebmath-3plus", "text_field": "text", "weight": 0.04},
+    {"path": "HuggingFaceFW/finewiki", "name": "en", "label": "finewiki-en", "text_field": "text",
+     "columns": ["text"], "fetch": "all", "weight": 0.05},
+]
+
+# The same mix with NVIDIA's Nemotron-CC-v2 taking 30% of the tokens out of the web share. Best
+# independent result found (LAION / Juelich, 1.7B on 1T tokens: average 0.66 vs 0.57 DCLM and 0.56
+# FW-Edu), but the repository is GATED (manual approval, NVIDIA data agreement), so its config
+# names and text field below are UNVERIFIED: run scripts/probe_sources.py --mix pretrain-nemotron
+# once access exists, and fix them here before building.
+PRETRAIN_MIX_NEMOTRON = [
+    {"path": "nvidia/Nemotron-CC-v2", "name": "High-Quality", "label": "nemotron-hq", "text_field": "text", "weight": 0.16},
+    {"path": "nvidia/Nemotron-CC-v2", "name": "High-Quality-Synthetic", "label": "nemotron-hq-synth", "text_field": "text", "weight": 0.10},
+    {"path": "nvidia/Nemotron-CC-v2", "name": "Diverse-QA", "label": "nemotron-diverse-qa", "text_field": "text", "weight": 0.04},
+    {"path": "HuggingFaceTB/smollm-corpus", "name": "fineweb-edu-dedup", "text_field": "text", "weight": 0.28},
+    {"path": "mlfoundations/dclm-baseline-1.0-parquet", "label": "dclm-baseline", "text_field": "text", "weight": 0.14},
+    {"path": "HuggingFaceTB/smollm-corpus", "name": "cosmopedia-v2", "text_field": "text", "weight": 0.03,
+     "bytes_per_token": 6.0},
+    {"path": "common-pile/stackv2_edu_filtered", "label": "stack-edu-code", "text_field": "text",
+     "interleave_files": "*.json.gz", "min": {"int_score": 3}, "weight": 0.12},
+    {"path": "HuggingFaceTB/finemath", "name": "finemath-3plus", "text_field": "text", "weight": 0.04},
+    {"path": "HuggingFaceTB/finemath", "name": "infiwebmath-3plus", "text_field": "text", "weight": 0.04},
+    {"path": "HuggingFaceFW/finewiki", "name": "en", "label": "finewiki-en", "text_field": "text",
+     "columns": ["text"], "fetch": "all", "weight": 0.05},
+]
+
+# The mix of the September 2026 run (the 4x TITAN RTX attempt). Kept so the proxy A/B can measure
+# the new mix against it. ~55% web-edu, 22% textbook, 10% Python code, 8% math, 5% wiki.
+PRETRAIN_MIX_2026_09 = [
     {"path": "HuggingFaceTB/smollm-corpus", "name": "fineweb-edu-dedup", "text_field": "text",    "weight": 0.55},
     {"path": "HuggingFaceTB/smollm-corpus", "name": "cosmopedia-v2",     "text_field": "text",    "weight": 0.22},
     {"path": "codeparrot/codeparrot-clean",                              "text_field": "content", "weight": 0.10},
@@ -40,32 +89,41 @@ PRETRAIN_MIX = [
     {"path": "wikimedia/wikipedia",          "name": "20231101.en",      "text_field": "text",    "weight": 0.05},
 ]
 
-# Decay-phase annealing mix (the research sweep's biggest remaining lever, docs/research_2026-09-22.md
-# section 2.3): high-quality math, code in languages the 100B did NOT contain (its code is Python
-# only), and the chat data rendered in the ChatML template the SFT stage uses. Blended into the last
-# 15% of pretraining at ~40% of each step (see train.anneal in the config); the other 60% keeps
-# reading the original mix, so it is replay of unseen original data, not repetition.
-# Code: the-stack-smol-xl (permissively licensed files across ~300 languages; Python excluded so it
-# stays disjoint from the pretraining's Python-only code) plus CodeSearchNet functions in five
-# non-Python languages. github-code-clean / Stack-Edu would have been better but one is a
-# script-based dataset (unsupported by datasets >= 4) and the other ships no file contents.
+# Decay-phase annealing mix: blended into the last 20% of pretraining at ~40% of each step (see
+# train.anneal in the config); the other 60% keeps reading the stable mix. Higher-quality math
+# (the 4+ sets), more code, more Wikipedia, and chat rendered in the ChatML template the SFT stage
+# uses. Code and Wikipedia CONTINUE the pretraining streams (`after`): the build skips the rows the
+# pretraining build consumed, so the decay phase reads documents the model has not seen. The chat
+# file is small next to its share, so it is repeated (`epochs`).
 ANNEAL_MIX = [
-    {"path": "HuggingFaceTB/finemath",           "name": "finemath-4plus",    "text_field": "text", "weight": 0.40},
-    {"path": "HuggingFaceTB/finemath",           "name": "infiwebmath-4plus", "text_field": "text", "weight": 0.12},
-    {"path": "bigcode/the-stack-smol-xl",        "name": None, "label": "stack-smol-xl-nonpython",
-     "text_field": "content", "exclude": {"lang": ["Python", "Jupyter Notebook"]},               "weight": 0.20},
-    {"path": "code-search-net/code_search_net",  "name": "javascript", "label": "csn-javascript", "text_field": "whole_func_string", "weight": 0.04, "epochs": 2},
-    {"path": "code-search-net/code_search_net",  "name": "java",       "label": "csn-java",       "text_field": "whole_func_string", "weight": 0.04, "epochs": 2},
-    {"path": "code-search-net/code_search_net",  "name": "go",         "label": "csn-go",         "text_field": "whole_func_string", "weight": 0.03, "epochs": 2},
-    {"path": "code-search-net/code_search_net",  "name": "php",        "label": "csn-php",        "text_field": "whole_func_string", "weight": 0.02, "epochs": 2},
-    {"path": "code-search-net/code_search_net",  "name": "ruby",       "label": "csn-ruby",       "text_field": "whole_func_string", "weight": 0.02, "epochs": 2},
-    {"local": "data/sft.jsonl",                   "name": "chat-sft",   "render": "chatml",        "weight": 0.13, "epochs": 3},
+    {"path": "HuggingFaceTB/finemath", "name": "finemath-4plus",    "text_field": "text", "weight": 0.27},
+    {"path": "HuggingFaceTB/finemath", "name": "infiwebmath-4plus", "text_field": "text", "weight": 0.09},
+    {"path": "common-pile/stackv2_edu_filtered", "label": "stack-edu-code", "text_field": "text",
+     "interleave_files": "*.json.gz", "min": {"int_score": 3}, "after": "stack-edu-code", "weight": 0.38},
+    {"path": "HuggingFaceFW/finewiki", "name": "en", "label": "finewiki-en", "text_field": "text",
+     "columns": ["text"], "fetch": "all", "after": "finewiki-en", "weight": 0.14},
+    {"local": "data/sft.jsonl", "name": "chat-sft", "render": "chatml", "weight": 0.12, "epochs": 4},
 ]
-# "epochs": the small sources are far smaller than their share of a 6B-token build (the SFT chat is
-# 127M tokens = 2.1%, all of CodeSearchNet ~280M = 4.7%), so with one pass they run dry early and the
-# big three absorb the difference (v2 build: 52/26/16 math/code/webmath, 2% chat). Repeating them a
-# few times costs little (repeated data is near-free up to ~4 epochs) and lifts chat to ~6% and the
-# CodeSearchNet languages to ~9%; the remaining shortfall still goes to the big sources by ratio.
+
+MIXES = {"pretrain": PRETRAIN_MIX, "pretrain-nemotron": PRETRAIN_MIX_NEMOTRON,
+         "pretrain-2026-09": PRETRAIN_MIX_2026_09, "anneal": ANNEAL_MIX}
+
+
+def apply_continuation(specs: list, rows_by_source: dict) -> list:
+    """Copies of `specs` where every source with `after: <label>` starts after the rows the earlier
+    build drew from that label (meta.json's rows_by_source). A source whose label is missing there
+    is left to start from the beginning, and says so."""
+    out = []
+    for s in specs:
+        s = dict(s)
+        if s.get("after"):
+            if s["after"] in rows_by_source:
+                s["skip"] = int(rows_by_source[s["after"]])
+            else:
+                print(f"[data] WARNING: {source_name(s)} continues '{s['after']}' but the earlier build has no "
+                      f"such source; it will start from the beginning (repeated documents)", flush=True)
+        out.append(s)
+    return out
 
 
 def source_name(spec: dict) -> str:
@@ -75,11 +133,19 @@ def source_name(spec: dict) -> str:
     return spec.get("label") or spec.get("name") or spec.get("path") or spec.get("local")
 
 
-def _row_ok(row, exclude) -> bool:
-    """Optional per-source row filter: exclude={"lang": ["Python"]} drops rows whose `lang` is listed."""
-    if not exclude or not isinstance(row, dict):
+def _row_ok(row, exclude=None, minimum=None) -> bool:
+    """Optional per-source row filters: exclude={"lang": ["Python"]} drops rows whose `lang` is
+    listed; minimum={"int_score": 3} drops rows whose `int_score` is missing or below 3."""
+    if not isinstance(row, dict):
         return True
-    return all(row.get(k) not in set(vals) for k, vals in exclude.items())
+    if exclude and not all(row.get(k) not in set(vals) for k, vals in exclude.items()):
+        return False
+    if minimum:
+        for k, v in minimum.items():
+            x = row.get(k)
+            if x is None or x < v:
+                return False
+    return True
 
 
 class LocalJsonlSource:
@@ -88,10 +154,11 @@ class LocalJsonlSource:
     {"messages": [...]} rows into the ChatML text the SFT stage trains on; otherwise the row's
     `text_field` is used."""
 
-    def __init__(self, path: str, render: str | None = None, text_field: str = "text"):
+    def __init__(self, path: str, render: str | None = None, text_field: str = "text", start: int = 0):
         self.path, self.render, self.field = path, render, text_field
-        self.i = 0                      # next line to yield
-        self._resume = 0
+        self.i = int(start)             # next line to yield (start > 0: continue after an earlier build)
+        self._resume = int(start)
+        self.end = None                 # line count, known once a pass has reached the end of the file
 
     def _render(self, row: dict):
         if self.render == "chatml":
@@ -116,6 +183,7 @@ class LocalJsonlSource:
                     continue
                 if text:
                     yield {"text": text}
+        self.end = self.i                  # the whole file has been read at least once
         self._resume = self.i = 0          # pass finished: the next pass (another epoch) starts at line 0
 
     def state_dict(self) -> dict:
@@ -124,6 +192,99 @@ class LocalJsonlSource:
     def load_state_dict(self, s: dict) -> None:
         self._resume = int(s.get("line", 0))
         self.i = self._resume
+
+
+class RoundRobinSource:
+    """Several streams read one row at a time in turn, so a dataset stored one language (or one
+    topic) per file comes out mixed instead of in long single-language runs. `parts` are streaming
+    datasets (anything iterable with state_dict() / load_state_dict()). A part that runs dry drops
+    out; the stream ends when all have (a single pass: it does not restart). The first `skip` rows
+    are drawn and discarded (used to continue after the rows an earlier build consumed).
+    Resumable: the state is whose turn it is, which parts are alive, and each part's position."""
+
+    def __init__(self, parts: list, skip: int = 0):
+        self.parts = list(parts)
+        self.alive = [True] * len(self.parts)
+        self.turn = 0
+        self.to_skip = int(skip)
+
+    def __iter__(self):
+        its = [iter(p) if a else None for p, a in zip(self.parts, self.alive)]
+        n = len(self.parts)
+        while any(self.alive):
+            i = self.turn % n
+            self.turn = (i + 1) % n                 # advance first: a saved state names the NEXT part
+            if not self.alive[i]:
+                continue
+            try:
+                row = next(its[i])
+            except StopIteration:
+                self.alive[i] = False
+                continue
+            if self.to_skip > 0:
+                self.to_skip -= 1
+                continue
+            yield row
+
+    def state_dict(self) -> dict:
+        return {"turn": int(self.turn), "alive": list(self.alive), "to_skip": int(self.to_skip),
+                "parts": [p.state_dict() if a else None for p, a in zip(self.parts, self.alive)]}
+
+    def load_state_dict(self, s: dict) -> None:
+        self.turn, self.to_skip = int(s["turn"]), int(s.get("to_skip", 0))
+        self.alive = [bool(a) for a in s["alive"]]
+        for p, st in zip(self.parts, s["parts"]):
+            if st is not None:
+                p.load_state_dict(st)
+
+
+_DATA_EXTS = ("parquet", "json.gz", "jsonl.gz", "jsonl", "json")
+
+
+def local_source_dir(spec: dict, root: str) -> str:
+    """Where scripts/fetch_sources.py puts a source's files: <root>/<dataset id>/<config or 'default'>."""
+    return os.path.join(root, spec["path"], spec.get("name") or "default")
+
+
+def _local_files(spec: dict, root: str | None) -> list[str]:
+    """This source's data files under the local sources root, or [] if it was not fetched there."""
+    if not root or not spec.get("path"):
+        return []
+    d = local_source_dir(spec, root)
+    files = []
+    for ext in _DATA_EXTS:
+        files += glob.glob(os.path.join(d, "**", f"*.{ext}"), recursive=True)
+    return sorted(set(files))
+
+
+def _builder_for(path: str) -> str:
+    return "parquet" if path.endswith(".parquet") else "json"
+
+
+def open_hf_source(spec: dict, root: str | None = None):
+    """Open one HuggingFace source as a streaming dataset: from the local sources root when its
+    files were fetched there (the cluster path: download first, tokenize from disk), else straight
+    from the hub. Honors `columns`, `interleave_files` and `skip`."""
+    from datasets import load_dataset
+    kw = {"columns": list(spec["columns"])} if spec.get("columns") else {}
+    files = _local_files(spec, root)
+    pattern = spec.get("interleave_files")
+    skip = int(spec.get("skip", 0) or 0)
+    if pattern:
+        if not files:                               # list the repo's files on the hub
+            from huggingface_hub import HfApi
+            names = sorted(f for f in HfApi().list_repo_files(spec["path"], repo_type="dataset")
+                           if fnmatch.fnmatch(os.path.basename(f), pattern))
+            files = [f"hf://datasets/{spec['path']}/{f}" for f in names]
+        if not files:
+            raise FileNotFoundError(f"no files matching {pattern!r} for {spec['path']}")
+        parts = [load_dataset(_builder_for(f), data_files=f, split="train", streaming=True, **kw) for f in files]
+        return RoundRobinSource(parts, skip=skip)
+    if files:
+        ds = load_dataset(_builder_for(files[0]), data_files=files, split="train", streaming=True, **kw)
+    else:
+        ds = load_dataset(spec["path"], spec.get("name"), split=spec.get("split", "train"), streaming=True, **kw)
+    return ds.skip(skip) if skip else ds
 
 
 def _rng_state_to_json(rng: random.Random):
@@ -152,8 +313,11 @@ class MixedStream:
     (completed shards are skipped without re-downloading). It is iterable, so
     `for text, src in MixedStream(...)` works like the old generator did."""
 
-    def __init__(self, specs=PRETRAIN_MIX, seed: int = 0, chars_per_token: float = 4.0):
+    def __init__(self, specs=PRETRAIN_MIX, seed: int = 0, chars_per_token: float = 4.0,
+                 sources_root: str | None = None, strict: bool = False):
         self.specs = specs
+        self.sources_root = sources_root or os.environ.get("MAXGPT_SOURCES_ROOT") or None
+        self.strict = bool(strict)      # True: a source that cannot be opened is an error, not a skipped source
         self._rng = random.Random(seed)
         self._cpt0 = float(chars_per_token)
         self._sources = None         # opened lazily on first iteration / state call
@@ -194,18 +358,22 @@ class MixedStream:
         for s in self.specs:
             name = source_name(s)
             if s.get("local"):                      # a local jsonl (e.g. the SFT chat data) as a source
-                ds = LocalJsonlSource(s["local"], render=s.get("render"), text_field=s.get("text_field", "text"))
+                ds = LocalJsonlSource(s["local"], render=s.get("render"), text_field=s.get("text_field", "text"),
+                                      start=int(s.get("skip", 0) or 0))
                 srcs.append({"name": name, "ds": ds, "w": float(s["weight"]), "field": "text", "alive": True,
+                             "exclude": s.get("exclude"), "min": s.get("min"), "rows": 0,
                              "epochs": max(1, int(s.get("epochs", 1))), "epoch": 0})
                 continue
-            from datasets import load_dataset
             try:
-                ds = load_dataset(s["path"], s.get("name"), split=s.get("split", "train"), streaming=True)
-            except Exception as e:                  # one bad source must not kill the whole prep
+                ds = open_hf_source(s, self.sources_root)
+            except Exception as e:
+                if self.strict:                     # a real build must not quietly train without a source
+                    raise RuntimeError(f"could not open data source {name}: {type(e).__name__}: {e}") from e
                 print(f"[data] WARNING: could not open {name}: {type(e).__name__}: {e}. Skipping it.")
                 continue
             srcs.append({"name": name, "ds": ds, "w": float(s["weight"]),
                          "field": s.get("text_field", "text"), "alive": True, "exclude": s.get("exclude"),
+                         "min": s.get("min"), "rows": 0,
                          "epochs": max(1, int(s.get("epochs", 1))), "epoch": 0})
         if not srcs:
             raise RuntimeError("no data sources could be opened (check network / dataset ids)")
@@ -225,6 +393,7 @@ class MixedStream:
                 continue
             e["alive"] = d["alive"]
             e["epoch"] = int(d.get("epoch", 0))
+            e["rows"] = int(d.get("rows", 0))
             if d.get("ds") is not None:
                 try:
                     e["ds"].load_state_dict(d["ds"])
@@ -258,7 +427,8 @@ class MixedStream:
                     e["alive"] = False
                 continue
             fails[e["name"]] = 0
-            if not _row_ok(ex, e.get("exclude")):
+            e["rows"] = e.get("rows", 0) + 1           # rows drawn, before any filter (see positions())
+            if not _row_ok(ex, e.get("exclude"), e.get("min")):
                 continue
             text = ex.get(e["field"]) if isinstance(ex, dict) else None
             if text:
@@ -269,9 +439,21 @@ class MixedStream:
         self._open()
         return {"rng": _rng_state_to_json(self._rng),
                 "chars": dict(self._chars), "rep_chars": dict(self._rep_chars), "rep_tokens": dict(self._rep_tokens),
-                "sources": [{"name": e["name"], "alive": e["alive"], "epoch": e["epoch"],
+                "sources": [{"name": e["name"], "alive": e["alive"], "epoch": e["epoch"], "rows": e.get("rows", 0),
                              "ds": (e["ds"].state_dict() if e["alive"] else None)}
                             for e in self._sources]}
+
+    def positions(self) -> dict:
+        """Where each source's stream stands: rows drawn so far (for a local file, its line index).
+        tokenize_to_shards writes this to meta.json as rows_by_source, so a later build (the anneal
+        mix) can continue a source after the documents this build consumed (`after` in its spec).
+        It can run up to one encode chunk ahead of what was written; the few skipped documents
+        that costs are harmless."""
+        self._open()
+        def local_pos(ds):                               # a file read to its end counts as fully consumed
+            return ds.end if ds.end is not None else ds.i
+        return {e["name"]: int(local_pos(e["ds"]) if isinstance(e["ds"], LocalJsonlSource) else e.get("rows", 0))
+                for e in self._sources}
 
     def exhausted(self) -> list[tuple[str, int]]:
         """(name, passes) of every source that ran dry, so a build can report which shares fell short."""
@@ -295,10 +477,10 @@ class MixedStream:
                 e["it"] = iter(e["ds"])
 
 
-def stream_mixed(specs=PRETRAIN_MIX, seed: int = 0) -> MixedStream:
+def stream_mixed(specs=PRETRAIN_MIX, seed: int = 0, **kw) -> MixedStream:
     """Weighted, streamed, resumable blend of the sources. Returns a MixedStream (iterable), so
     existing callers (`for text, src in stream_mixed(...)`) keep working unchanged."""
-    return MixedStream(specs, seed)
+    return MixedStream(specs, seed, **kw)
 
 
 def tokenize_to_shards(items, tokenizer, out_dir: str, shard_size: int = 100_000_000,
@@ -424,6 +606,8 @@ def tokenize_to_shards(items, tokenizer, out_dir: str, shard_size: int = 100_000
     meta = {"dtype": "uint16", "shard_size": int(shard_size), "total_tokens": int(total),
             "eot_id": int(eot_id), "shards": shards,
             "by_source": {str(k): int(v) for k, v in by_source.items()}}
+    if hasattr(items, "positions"):                     # lets a later build continue these streams
+        meta["rows_by_source"] = items.positions()
     with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2)
     if os.path.exists(prog_path):                       # finished cleanly -> drop the checkpoint

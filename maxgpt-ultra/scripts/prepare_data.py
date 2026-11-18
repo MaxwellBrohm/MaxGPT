@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 
 from model import ModelConfig, load_yaml
 from tokenizer.tokenizer import train_tokenizer, UltraTokenizer
-from data.prepare import tokenize_to_shards, stream_mixed, source_name, PRETRAIN_MIX, ANNEAL_MIX
+from data.prepare import tokenize_to_shards, stream_mixed, source_name, apply_continuation, MIXES, PRETRAIN_MIX
 from posttrain.sft_data import build_sft_jsonl, build_sft_jsonl_smoltalk2, append_oasst_jsonl, Decontaminator
 from posttrain.dpo import build_pref_jsonl, PREF_SOURCES
 
@@ -93,11 +93,23 @@ def main() -> None:
     ap.add_argument("--pref-examples", type=int, default=60_000)
     ap.add_argument("--skip-posttrain", action="store_true", help="only build the pretrain corpus")
     ap.add_argument("--smoke", action="store_true", help="tiny local dry-run, no network")
-    ap.add_argument("--mix", choices=["pretrain", "anneal"], default="pretrain",
-                    help="anneal = the decay-phase mix (math, non-Python code, ChatML chat); pair with "
-                         "--shards-out data/shards_anneal --max-tokens 6e9 --skip-posttrain")
+    ap.add_argument("--mix", choices=sorted(MIXES), default="pretrain",
+                    help="which source mix (data/prepare.py MIXES). anneal = the decay-phase mix; pair it with "
+                         "--shards-out data/shards_anneal --max-tokens 8e9 --skip-posttrain --continue-from data/shards/meta.json")
+    ap.add_argument("--sources-root", default=os.environ.get("MAXGPT_SOURCES_ROOT"),
+                    help="read sources from local files fetched by scripts/fetch_sources.py (cluster path); "
+                         "a source not found there is streamed from the hub")
+    ap.add_argument("--continue-from", default=None,
+                    help="meta.json of an earlier build: sources with `after` skip the rows that build consumed")
+    ap.add_argument("--allow-missing-sources", action="store_true",
+                    help="skip a source that cannot be opened instead of stopping (the mix then differs from the plan)")
     args = ap.parse_args()
-    MIX = ANNEAL_MIX if args.mix == "anneal" else PRETRAIN_MIX
+    MIX = MIXES[args.mix]
+    if args.continue_from:
+        with open(args.continue_from, encoding="utf-8") as f:
+            MIX = apply_continuation(MIX, json.load(f).get("rows_by_source", {}))
+    TOK_MIX = MIX if args.mix.startswith("pretrain") else PRETRAIN_MIX   # the tokenizer is trained on a pretraining mix
+    stream_kw = {"sources_root": args.sources_root, "strict": not args.allow_missing_sources}
 
     raw = load_yaml(args.config)
     mcfg = ModelConfig.from_yaml(args.config)
@@ -113,14 +125,14 @@ def main() -> None:
         sample_docs, shard_size = args.tokenizer_sample_docs, args.shard_size
 
     def text_stream(limit=None):                      # plain text, for tokenizer training
-        it = iter(SMOKE_DOCS) if args.smoke else (t for t, _ in stream_mixed(PRETRAIN_MIX))
+        it = iter(SMOKE_DOCS) if args.smoke else (t for t, _ in stream_mixed(TOK_MIX, **stream_kw))
         return itertools.islice(it, limit) if limit else it
 
     mixed = None
 
     def tagged_stream(limit=None):                    # (text, source), for sharding
         nonlocal mixed
-        mixed = (((d, "smoke") for d in SMOKE_DOCS)) if args.smoke else stream_mixed(MIX)
+        mixed = (((d, "smoke") for d in SMOKE_DOCS)) if args.smoke else stream_mixed(MIX, **stream_kw)
         return itertools.islice(mixed, limit) if limit else mixed
 
     if not args.smoke and not (os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")):
@@ -146,8 +158,12 @@ def main() -> None:
         on_progress(meta["total_tokens"], force=True)   # final 100% point
     tot = meta["total_tokens"]
     print(f"[prepare] pretrain: {tot:,} tokens in {len(meta['shards'])} shard(s). mix:")
+    target = {source_name(s): float(s["weight"]) for s in MIX}
     for src, n in sorted(meta["by_source"].items(), key=lambda kv: -kv[1]):
-        print(f"           {src:<26} {n:>14,}  ({100*n/max(1,tot):4.1f}%)")
+        got = 100 * n / max(1, tot)
+        want = 100 * target[src] if src in target else None
+        off = "" if want is None or abs(got - want) <= 2.0 else "   <-- WARNING: more than 2 points off its target"
+        print(f"           {src:<26} {n:>14,}  ({got:4.1f}%" + (f", target {want:4.1f}%)" if want is not None else ")") + off)
     if not args.smoke:   # loudly flag any configured source that contributed nothing
         missing = [source_name(s) for s in MIX if source_name(s) not in meta["by_source"]]
         if missing:

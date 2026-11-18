@@ -292,6 +292,107 @@ def main() -> None:
     assert not anneal_check(SHARDS + "_no_such_dir", 5.9e9, 4.0, 6.0)[0]
     print("  v2-like shares rejected (chat 2.1%, csn 4.7%); v3-like accepted; short budget + missing meta rejected ✓")
 
+    print("\n[12] files read in turn + score filter + local sources root: mixed languages, low scores dropped, exact resume")
+    import data.prepare as DP
+    root12 = SHARDS + "_srcroot"
+    shutil.rmtree(root12, ignore_errors=True)
+    d12 = os.path.join(root12, "fake", "code", "default"); os.makedirs(d12)
+    layout = {"part-0.jsonl": [("A0", 3), ("A1", 2), ("A2", 4)],          # one "language" per file, like the real set
+              "part-1.jsonl": [("B0", 2), ("B1", 3)],
+              "part-2.jsonl": [("C0", 3), ("C1", 3), ("C2", 3), ("C3", 2)]}
+    for fn, rows in layout.items():
+        with open(os.path.join(d12, fn), "w") as f:
+            for name, score in rows:
+                f.write(_json.dumps({"text": name + " body", "int_score": score}) + "\n")
+    spec12 = [{"path": "fake/code", "label": "code", "interleave_files": "*.jsonl", "min": {"int_score": 3}, "weight": 1.0}]
+    ms12 = MixedStream(spec12, seed=0, sources_root=root12, strict=True)
+    got12 = [t.split()[0] for t, _ in ms12]
+    # raw turn order: A0 B0 C0 A1 B1 C1 A2 (B dry) C2 (A dry) C3; rows scored 2 (B0, A1, C3) are dropped
+    assert got12 == ["A0", "C0", "B1", "C1", "A2", "C2"], got12
+    assert ms12.positions() == {"code": 9}, ms12.positions()           # rows DRAWN, filtered ones included
+    ms12b = MixedStream(spec12, seed=0, sources_root=root12, strict=True)
+    it12 = iter(ms12b)
+    head12 = [next(it12)[0].split()[0] for _ in range(3)]
+    st12 = ms12b.state_dict()
+    ms12c = MixedStream(spec12, seed=0, sources_root=root12, strict=True)
+    ms12c.load_state_dict(st12)
+    assert head12 + [t.split()[0] for t, _ in ms12c] == got12, "resume inside the interleaved stream changed it"
+    real_open = DP.open_hf_source
+    DP.open_hf_source = lambda spec, root=None: (_ for _ in ()).throw(ConnectionError("no network in this test"))
+    try:
+        bad_spec = [{"path": "fake/missing", "weight": 0.5}, {"local": cj, "name": "chat", "render": "chatml", "weight": 0.5}]
+        try:
+            list(MixedStream(bad_spec, seed=0, strict=True))
+            raise AssertionError("strict mode must refuse to build without a source")
+        except RuntimeError as e:
+            assert "fake/missing" in str(e), e
+        assert len(list(MixedStream(bad_spec, seed=0, strict=False))) == 30, "non-strict mode skips the source and carries on"
+    finally:
+        DP.open_hf_source = real_open
+    print(f"  order {got12}; 9 rows drawn; resume after 3 identical; strict refuses a missing source ✓")
+
+    print("\n[13] a later build continues each stream after the rows the first build drew (no document twice)")
+    wj = SHARDS + "_wiki.jsonl"
+    with open(wj, "w") as f:
+        for i in range(12):
+            f.write(_json.dumps({"text": f"W{i:02d} wiki body"}) + "\n")
+    main13 = [{"local": wj, "name": "wiki", "weight": 0.5},
+              {"path": "fake/code", "label": "code", "interleave_files": "*.jsonl", "weight": 0.5}]
+
+    class Recording(MixedStream):                    # remembers every document it hands out
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k); self.seen = []
+
+        def __iter__(self):
+            for item in super().__iter__():
+                self.seen.append(item[0].split()[0])
+                yield item
+
+    out13 = SHARDS + "_cont_main"; shutil.rmtree(out13, ignore_errors=True)
+    rec = Recording(main13, seed=0, sources_root=root12, strict=True)
+    m13 = tokenize_to_shards(rec, fake, out13, shard_size=5000, batch_docs=2, max_tokens=14)
+    assert 0 < len(rec.seen) < 21, f"the first build must stop partway ({len(rec.seen)} of 21 docs drawn)"
+    assert set(m13["rows_by_source"]) == {"wiki", "code"} and sum(m13["rows_by_source"].values()) == len(rec.seen), m13["rows_by_source"]
+    later = DP.apply_continuation([{"local": wj, "name": "wiki2", "after": "wiki", "weight": 0.5},
+                                   {"path": "fake/code", "label": "code2", "interleave_files": "*.jsonl", "after": "code", "weight": 0.5}],
+                                  m13["rows_by_source"])
+    rest13 = [t.split()[0] for t, _ in MixedStream(later, seed=1, sources_root=root12, strict=True)]
+    everything = {f"W{i:02d}" for i in range(12)} | {n for rows in layout.values() for n, _ in rows}
+    assert not set(rest13) & set(rec.seen), f"repeated documents: {sorted(set(rest13) & set(rec.seen))}"
+    assert set(rest13) | set(rec.seen) == everything and len(rest13) + len(rec.seen) == 21, "a document was lost or doubled"
+    assert DP.apply_continuation([{"local": wj, "name": "x", "after": "nope", "weight": 1.0}], m13["rows_by_source"])[0].get("skip") is None
+    # the row counts survive a crash and resume of the first build (they ride in progress.json)
+    ref13, crash13 = SHARDS + "_cont_ref", SHARDS + "_cont_crash"
+    shutil.rmtree(ref13, ignore_errors=True); shutil.rmtree(crash13, ignore_errors=True)
+    mk13 = lambda cls=MixedStream, **k: cls(main13, seed=0, sources_root=root12, strict=True, **k)
+    whole = tokenize_to_shards(mk13(), fake, ref13, shard_size=6, batch_docs=2)
+    try:
+        tokenize_to_shards(mk13(CrashingStream, crash_after=11), fake, crash13, shard_size=6, batch_docs=2)
+        raise AssertionError("the simulated crash did not fire")
+    except RuntimeError:
+        pass
+    assert os.path.exists(os.path.join(crash13, "progress.json")), "the crashed build should have checkpointed"
+    again = tokenize_to_shards(mk13(), fake, crash13, shard_size=6, batch_docs=2)
+    assert again["rows_by_source"] == whole["rows_by_source"] == {"wiki": 12, "code": 9}, (again["rows_by_source"], whole["rows_by_source"])
+    print(f"  first build drew {len(rec.seen)} docs ({m13['rows_by_source']}); the continuation read the other {len(rest13)}, none twice ✓")
+
+    print("\n[14] download planning: enough files for a source's share, everything for interleaved sources")
+    from scripts.fetch_sources import choose_files, need_bytes
+    files14 = [("a", 40), ("b", 40), ("c", 40), ("d", 40)]
+    assert choose_files(files14, 1) == files14[:1] and choose_files(files14, 80) == files14[:2]
+    assert choose_files(files14, 81) == files14[:3] and choose_files(files14, 10**9) == files14
+    assert choose_files(files14, None) == files14 and choose_files([], 50) == []
+    assert need_bytes({"weight": 0.25}, 1000, bytes_per_token=2.0, margin=1.5) == 750.0
+    assert need_bytes({"weight": 0.25, "bytes_per_token": 4.0}, 1000, bytes_per_token=2.0, margin=1.5) == 1500.0
+    assert need_bytes({"weight": 0.1, "interleave_files": "*.gz"}, 1000) is None and need_bytes({"weight": 0.1, "fetch": "all"}, 1000) is None
+    for mix_name, mix in DP.MIXES.items():
+        assert abs(sum(x["weight"] for x in mix) - 1.0) < 1e-9, mix_name
+        labels = [DP.source_name(x) for x in mix]
+        assert len(labels) == len(set(labels)), f"{mix_name}: two sources share a label {labels}"
+    pre_labels = {DP.source_name(x) for x in DP.PRETRAIN_MIX}
+    assert all(x["after"] in pre_labels for x in DP.ANNEAL_MIX if x.get("after")), "an anneal source continues a label the pretrain mix does not have"
+    print("  file prefixes, per-source allowances, mix weights sum to 1, labels unique, anneal continues real labels ✓")
+
     print("\n" + "=" * 72)
     print("ALL CHECKS PASSED ✅")
     print("=" * 72)
