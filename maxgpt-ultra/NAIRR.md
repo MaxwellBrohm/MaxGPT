@@ -118,6 +118,12 @@ If access to the gated `nvidia/Nemotron-CC-v2` is granted in time: run
 `PRETRAIN_MIX_NEMOTRON` if the probe says so (they are unverified), and build with
 `--mix pretrain-nemotron`. Decide before step 4; the two mixes cannot be switched mid-run.
 
+That set comes under the NVIDIA Data Agreement for Model Training (read 2026-11-18, version of
+August 15, 2025). It allows training and leaves the trained model with whoever trained it, but the
+data itself may not be passed on. In practice: `chmod 700` its folder under `data/sources` and any
+shards built from a mix that contains it, never upload those shards anywhere, delete them if the
+agreement ends, and name the set and its share in the final report.
+
 ## 3 and 5. Proxy A/B and its verdict
 
 ```bash
@@ -247,8 +253,8 @@ In order: skip the proxy A/B (30), skip the old-data arm, stop Ultra at 50B toke
 ## Unknown until login
 
 Compute-node internet access; installed PyTorch and CUDA versions; how CPU cores on a 1-GPU job are
-billed; whether a zero-GPU job is allowed on `ai`; whether processes may share a GPU; whether an
-account can be issued to a student under 18. Measured throughput replaces every estimate above.
+billed; whether a zero-GPU job is allowed on `ai`; whether processes may share a GPU. Measured
+throughput replaces every estimate above.
 
 One more, worth asking the help desk on day one: does a job that is waiting on a dependency gain
 queue priority while it waits? On a default Slurm setup it does not, so each of the five links would
