@@ -10,6 +10,7 @@ import glob
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -289,6 +290,43 @@ def main() -> None:
     t10b.train()
     assert t10b.step == 20 and os.path.exists(os.path.join(out10b, "DONE")) and not os.path.exists(os.path.join(out10b, "ANNEAL_MISSING"))
     print("  stopped at step 16 of 20 with ANNEAL_MISSING and no DONE; anneal.optional lets a run finish without it ✓")
+
+    print("\n[11] --anneal-data: the job script says where the decay-phase shards are, the config only that they are used")
+    from scripts.train import with_anneal_data
+    t11 = {"lr": 1.0, "anneal": {"shards": "data/shards_anneal", "frac": 0.4}}
+    moved = with_anneal_data(t11, "/big/shards_anneal")
+    assert moved["anneal"] == {"shards": "/big/shards_anneal", "frac": 0.4} and moved["lr"] == 1.0
+    assert t11["anneal"]["shards"] == "data/shards_anneal", "the loaded config must not be edited in place"
+    assert with_anneal_data(t11, None) == t11
+    assert with_anneal_data({"lr": 1.0}, "/big/shards_anneal") == {"lr": 1.0}, "the flag must not switch annealing on"
+    anneal11 = SHARDS + "_anneal"
+    shutil.rmtree(anneal11, ignore_errors=True)
+    tokenize_to_shards(DOCS[::-1], tok, anneal11, shard_size=2048)
+    cfg11 = os.path.join(d, "tiny_anneal.yaml")          # JSON is valid YAML
+    with open(cfg11, "w") as f:
+        json.dump({"model": {"vocab_size": tok.vocab_size, "d_model": 64, "n_layers": 2, "n_heads": 4, "n_kv_heads": 2,
+                             "mlp_hidden": 128, "seq_len": 16},
+                   "train": {**tcfg, "milestone_tokens": 0, "compile": False,
+                             "anneal": {"shards": "/tmp/maxgpt_no_such_anneal_shards", "frac": 0.4, "ramp_tokens": tps * 2}}}, f)
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def launch(out, *extra):                              # the real entry point, as the job script runs it
+        shutil.rmtree(out, ignore_errors=True)
+        r = subprocess.run([sys.executable, os.path.join(root, "scripts", "train.py"), "--config", cfg11, "--data", SHARDS,
+                            "--out", out, "--device", "cpu", *extra], cwd=root, capture_output=True, text=True, timeout=600)
+        assert r.returncode == 0, (r.stdout + r.stderr)[-2000:]
+        rows = [json.loads(l) for l in open(os.path.join(out, "metrics.jsonl"))]
+        return r.stdout, max((x.get("anneal_frac", 0.0) for x in rows), default=0.0)
+
+    out11 = OUT + "_cli_moved"
+    text, top = launch(out11, "--anneal-data", anneal11)
+    assert os.path.exists(os.path.join(out11, "DONE")) and not os.path.exists(os.path.join(out11, "ANNEAL_MISSING")), text[-1500:]
+    assert f"annealing: {anneal11}" in text and abs(top - 0.4) < 1e-9, (top, text[-1500:])
+    out11b = OUT + "_cli_config_path"
+    text, top = launch(out11b)
+    assert os.path.exists(os.path.join(out11b, "ANNEAL_MISSING")) and not os.path.exists(os.path.join(out11b, "DONE")), text[-1500:]
+    assert top == 0.0 and json.load(open(os.path.join(out11b, "ANNEAL_MISSING")))["shards"] == "/tmp/maxgpt_no_such_anneal_shards"
+    print("  with the flag the run blends the moved shards at 40% and finishes; without it the config's missing path stops it ✓")
 
     print("\n" + "=" * 72)
     print("ALL CHECKS PASSED ✅")

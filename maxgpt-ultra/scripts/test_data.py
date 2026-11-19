@@ -7,6 +7,7 @@ EOT separators present, and exact resume from a saved position.
 Run from maxgpt-ultra/:  ../venv/bin/python scripts/test_data.py
 """
 import os
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # maxgpt-ultra/
@@ -305,6 +306,8 @@ def main() -> None:
             for name, score in rows:
                 f.write(_json.dumps({"text": name + " body", "int_score": score}) + "\n")
     spec12 = [{"path": "fake/code", "label": "code", "interleave_files": "*.jsonl", "min": {"int_score": 3}, "weight": 1.0}]
+    # the record a finished download leaves; a strict build refuses a folder without one (see [15])
+    DP.write_fetch_record(spec12[0], root12, [(fn, os.path.getsize(os.path.join(d12, fn))) for fn in layout])
     ms12 = MixedStream(spec12, seed=0, sources_root=root12, strict=True)
     got12 = [t.split()[0] for t, _ in ms12]
     # raw turn order: A0 B0 C0 A1 B1 C1 A2 (B dry) C2 (A dry) C3; rows scored 2 (B0, A1, C3) are dropped
@@ -318,7 +321,7 @@ def main() -> None:
     ms12c.load_state_dict(st12)
     assert head12 + [t.split()[0] for t, _ in ms12c] == got12, "resume inside the interleaved stream changed it"
     real_open = DP.open_hf_source
-    DP.open_hf_source = lambda spec, root=None: (_ for _ in ()).throw(ConnectionError("no network in this test"))
+    DP.open_hf_source = lambda spec, root=None, **kw: (_ for _ in ()).throw(ConnectionError("no network in this test"))
     try:
         bad_spec = [{"path": "fake/missing", "weight": 0.5}, {"local": cj, "name": "chat", "render": "chatml", "weight": 0.5}]
         try:
@@ -392,6 +395,140 @@ def main() -> None:
     pre_labels = {DP.source_name(x) for x in DP.PRETRAIN_MIX}
     assert all(x["after"] in pre_labels for x in DP.ANNEAL_MIX if x.get("after")), "an anneal source continues a label the pretrain mix does not have"
     print("  file prefixes, per-source allowances, mix weights sum to 1, labels unique, anneal continues real labels ✓")
+
+    print("\n[15] a downloaded source is read only if its download finished and the folder still matches the record")
+    from scripts.fetch_sources import record_downloads
+    root15 = SHARDS + "_srcroot15"
+    shutil.rmtree(root15, ignore_errors=True)
+    spec15 = {"path": "fake/web", "name": "cfg", "label": "web15", "weight": 0.5}
+    d15 = DP.local_source_dir(spec15, root15)
+    os.makedirs(os.path.join(d15, "sub"))
+
+    def put(rel, n):
+        with open(os.path.join(d15, rel), "w") as f:
+            for i in range(n):
+                f.write(_json.dumps({"text": f"{rel} row {i}"}) + "\n")
+        return os.path.getsize(os.path.join(d15, rel))
+
+    def refused(fn, kind, *needles):
+        try:
+            fn()
+        except kind as e:
+            assert all(n in str(e) for n in needles), (needles, str(e))
+            return True
+        return False
+
+    size = {rel: put(rel, n) for rel, n in (("sub/a.jsonl", 3), ("sub/b.jsonl", 2), ("sub/c.jsonl", 4))}
+    whole15 = [(rel, size[rel]) for rel in sorted(size)]
+    only15 = [{**spec15, "weight": 1.0}]
+    read15 = lambda strict=True: [t for t, _ in MixedStream(only15, seed=0, sources_root=root15, strict=strict)]
+    # files but no record: the download has not finished. A strict build refuses, a lenient read takes what is there
+    assert len(DP._local_files(spec15, root15)) == 3 and len(read15(strict=False)) == 9
+    assert refused(lambda: DP._local_files(spec15, root15, strict=True), FileNotFoundError, "did not finish")
+    assert refused(read15, RuntimeError, "web15", "did not finish")
+    # the download finishes: a two-file prefix, sized for 500 tokens of this source (hub size 0 = not known)
+    record_downloads([(spec15, "rev1", [("sub/a.jsonl", size["sub/a.jsonl"]), ("sub/b.jsonl", 0)], False)], root15, 1000)
+    rec15 = DP.read_fetch_record(spec15, root15)
+    assert rec15["files"] == [["sub/a.jsonl", size["sub/a.jsonl"]], ["sub/b.jsonl", size["sub/b.jsonl"]]], rec15
+    assert rec15["source_tokens"] == 500.0 and rec15["revision"] == "rev1" and rec15["repo"] == "fake/web"
+    got15 = read15()
+    assert len(got15) == 5 and not any("c.jsonl" in t for t in got15), f"only the recorded files may be read: {got15}"
+    assert refused(lambda: record_downloads([(spec15, "rev1", [("sub/a.jsonl", size["sub/a.jsonl"] + 1)], False)], root15, 1000),
+                   SystemExit, "on the hub"), "a file whose size differs from the hub's must stop the fetch"
+    # a build that takes more of the source than was downloaded is caught before it starts
+    assert DP.short_downloads([spec15], root15, 1000) == [] and DP.short_downloads([spec15], None, 4000) == []
+    short15 = DP.short_downloads([spec15], root15, 4000)
+    assert len(short15) == 1 and "web15" in short15[0] and "500" in short15[0] and "2e+03" in short15[0], short15
+    # records only grow within a revision; a whole-source download is never short; a new revision replaces
+    DP.write_fetch_record(spec15, root15, whole15[:1], revision="rev1", source_tokens=100.0)
+    rec15 = DP.read_fetch_record(spec15, root15)
+    assert len(rec15["files"]) == 2 and rec15["source_tokens"] == 500.0, rec15
+    record_downloads([(spec15, "rev1", whole15, True)], root15, 1000)
+    DP.write_fetch_record(spec15, root15, whole15[:1], revision="rev1", source_tokens=100.0)
+    rec15 = DP.read_fetch_record(spec15, root15)
+    assert len(rec15["files"]) == 3 and rec15["source_tokens"] is None and DP.short_downloads([spec15], root15, 1e12) == [], rec15
+    DP.write_fetch_record(spec15, root15, whole15[:1], revision="rev2", source_tokens=100.0)
+    rec15 = DP.read_fetch_record(spec15, root15)
+    assert len(rec15["files"]) == 1 and rec15["source_tokens"] == 100.0 and rec15["revision"] == "rev2", rec15
+    # a recorded file that goes missing or changes size is an error, strict or not; put back, it reads again
+    DP.write_fetch_record(spec15, root15, whole15, revision="rev3", source_tokens=None)
+    assert len(read15()) == 9
+    os.remove(os.path.join(d15, "sub/b.jsonl"))
+    for strict in (False, True):
+        assert refused(lambda: DP._local_files(spec15, root15, strict=strict), FileNotFoundError, "sub/b.jsonl (missing)", "1 of the 3")
+    assert refused(read15, RuntimeError, "web15", "missing or changed")
+    assert put("sub/b.jsonl", 2) == size["sub/b.jsonl"] and len(read15()) == 9
+    with open(os.path.join(d15, "sub/c.jsonl"), "r+") as f:
+        f.truncate(10)
+    assert refused(lambda: DP._local_files(spec15, root15), FileNotFoundError, "sub/c.jsonl (10 bytes", "recorded")
+    # the pre-build probe applies the same rule
+    from scripts.probe_sources import probe
+    assert refused(lambda: probe(spec15, root15, 5), FileNotFoundError, "missing or changed")
+    assert put("sub/c.jsonl", 4) == size["sub/c.jsonl"] and probe(spec15, root15, 5)["where"] == "local files (3)"
+    os.remove(os.path.join(d15, DP.FETCH_RECORD))
+    assert refused(lambda: probe(spec15, root15, 5), FileNotFoundError, "did not finish")
+    # the download script end to end with a stand-in for the hub: plan, download, then record
+    import huggingface_hub
+    import scripts.fetch_sources as FS
+    root15c = SHARDS + "_srcroot15c"
+    shutil.rmtree(root15c, ignore_errors=True)
+    hub15 = {"fake/big": [("x/0.jsonl", 40), ("x/1.jsonl", 40), ("x/2.jsonl", 40)], "fake/all": [("y/0.jsonl", 30), ("y/1.jsonl", 30)]}
+    big15 = {"path": "fake/big", "label": "big15", "weight": 0.5}
+    all15 = {"path": "fake/all", "label": "all15", "fetch": "all", "weight": 0.5}
+
+    fetched15 = []
+
+    def fake_download(repo, path, repo_type=None, revision=None, local_dir=None):
+        target = os.path.join(local_dir, path)
+        if os.path.exists(target):                   # like the real library: a file that is there is trusted
+            return target
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w") as f:
+            f.write("x" * dict(hub15[repo])[path])
+        fetched15.append(path)
+        return target
+
+    saved15 = (FS.remote_files, huggingface_hub.hf_hub_download, sys.argv)
+    FS.remote_files = lambda spec: (hub15[spec["path"]], "revX")
+    huggingface_hub.hf_hub_download = fake_download
+    DP.MIXES["test15"] = [big15, all15]
+    try:
+        sys.argv = ["fetch_sources.py", "--mix", "test15", "--root", root15c, "--tokens", "10", "--workers", "2", "--dry-run"]
+        FS.main()
+        assert not os.path.exists(root15c), "a dry run must not download or record anything"
+        sys.argv = sys.argv[:-1]
+        FS.main()
+        assert sorted(fetched15) == ["x/0.jsonl", "y/0.jsonl", "y/1.jsonl"], fetched15
+        # run again after one file was cut short: only that file is fetched again, and it is whole afterwards
+        with open(os.path.join(DP.local_source_dir(all15, root15c), "y/1.jsonl"), "r+") as f:
+            f.truncate(7)
+        assert refused(lambda: DP._local_files(all15, root15c), FileNotFoundError, "y/1.jsonl (7 bytes")
+        del fetched15[:]
+        FS.main()
+        assert fetched15 == ["y/1.jsonl"] and len(DP._local_files(all15, root15c, strict=True)) == 2, fetched15
+    finally:
+        FS.remote_files, huggingface_hub.hf_hub_download, sys.argv = saved15
+        del DP.MIXES["test15"]
+    recb, reca = DP.read_fetch_record(big15, root15c), DP.read_fetch_record(all15, root15c)
+    assert recb["files"] == [["x/0.jsonl", 40]] and recb["source_tokens"] == 5.0 and recb["revision"] == "revX", recb
+    assert reca["files"] == [["y/0.jsonl", 30], ["y/1.jsonl", 30]] and reca["source_tokens"] is None, reca
+    assert not os.path.exists(os.path.join(DP.local_source_dir(big15, root15c), "x/1.jsonl")), "only its share of a source is downloaded"
+    # the build script runs the size check before anything else (offline: it must not get as far as the hub)
+    root15b = SHARDS + "_srcroot15b"
+    shutil.rmtree(root15b, ignore_errors=True)
+    fwe = next(s for s in DP.PRETRAIN_MIX if DP.source_name(s) == "fineweb-edu-dedup")
+    DP.write_fetch_record(fwe, root15b, [], revision="r", source_tokens=1.0e6)
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    r15 = subprocess.run([sys.executable, os.path.join(here, "scripts", "prepare_data.py"), "--config", os.path.join(here, "configs", "ultra.yaml"),
+                          "--mix", "pretrain", "--sources-root", root15b, "--max-tokens", "1e9", "--skip-posttrain",
+                          "--tokenizer-out", SHARDS + "_tok15.json", "--shards-out", SHARDS + "_out15"],
+                         cwd=here, capture_output=True, text=True, timeout=300,
+                         env={**os.environ, "HF_HUB_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1"})
+    text15 = r15.stdout + r15.stderr
+    assert r15.returncode != 0 and "downloaded for a smaller build" in text15 and "fineweb-edu-dedup" in text15, text15[-1500:]
+    assert "--tokens 1e+09" in text15 and not os.path.exists(SHARDS + "_tok15.json"), text15[-1500:]
+    assert "[prepare] training" not in text15, "the build must stop at the size check, before it opens any source"
+    print("  no record: strict refuses; record: exactly its files are read; lost, cut or short downloads stop the build ✓")
 
     print("\n" + "=" * 72)
     print("ALL CHECKS PASSED ✅")

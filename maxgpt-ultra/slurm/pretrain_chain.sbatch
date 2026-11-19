@@ -21,6 +21,12 @@
 # limit Slurm sends USR1 to this script, which asks the trainer to checkpoint and exit cleanly.
 # SDSC Expanse AI: add `-p nairr-gpu` (and its GPU request form) on the sbatch command line.
 # Everything below runs the same under plain bash, which is how scripts/test_slurm_chain.sh tests it.
+#
+# Settings come from the environment (slurm/env.sh, or in front of sbatch): MAXGPT_RUN, MAXGPT_CONFIG,
+# MAXGPT_DATA (the folder holding shards_train/, shards_val_ultra/ and shards_anneal/), or each of
+# those three on its own (MAXGPT_TRAIN_SHARDS, MAXGPT_VAL_SHARDS, MAXGPT_ANNEAL_SHARDS), and
+# MAXGPT_EVAL_EVERY / MAXGPT_SUITE_EVERY. The launch test in NAIRR.md uses these to run this same
+# script for an hour on the proxy shards before the real chain is queued.
 
 set -uo pipefail
 ROOT="${MAXGPT_ROOT:-${SLURM_SUBMIT_DIR:-$PWD}}"
@@ -29,6 +35,11 @@ cd "$ROOT" || { echo "[chain] cannot cd to $ROOT"; exit 1; }
 RUN="${MAXGPT_RUN:-runs/pretrain}"
 CONFIG="${MAXGPT_CONFIG:-configs/ultra_h100.yaml}"
 DATA="${MAXGPT_DATA:-data}"
+TRAIN="${MAXGPT_TRAIN_SHARDS:-$DATA/shards_train}"
+VAL="${MAXGPT_VAL_SHARDS:-$DATA/shards_val_ultra}"
+ANNEAL="${MAXGPT_ANNEAL_SHARDS:-$DATA/shards_anneal}"   # handed to the trainer, so it follows MAXGPT_DATA like the others
+EVAL_EVERY="${MAXGPT_EVAL_EVERY:-500}"
+SUITE_EVERY="${MAXGPT_SUITE_EVERY:-10000}"
 GPUS="${MAXGPT_GPUS:-4}"
 LAUNCH="${MAXGPT_LAUNCH:-python -m torch.distributed.run --nnodes=1 --rdzv-backend=c10d --rdzv-endpoint=127.0.0.1:0 --nproc_per_node=$GPUS}"
 mkdir -p "$RUN" logs
@@ -40,13 +51,13 @@ if [ -f "$RUN/DONE" ]; then
 fi
 if [ -f "$RUN/GRAD_HALT" ]; then
     say "GRAD_HALT is present ($(cat "$RUN/GRAD_HALT")): the gradient watch stopped the run. Not training."
-    say "Read NAIRR.md, 'If the gradient watch halts', then delete $RUN/GRAD_HALT to continue."
+    say "Read NAIRR.md, 'If the gradient watch speaks', then delete $RUN/GRAD_HALT to continue."
     exit 3
 fi
 
 if [ -f "$RUN/ANNEAL_MISSING" ]; then
     say "ANNEAL_MISSING is present ($(cat "$RUN/ANNEAL_MISSING")): the run reached the decay phase without its data."
-    say "Build data/shards_anneal (slurm/data_build.sbatch), then delete $RUN/ANNEAL_MISSING to continue."
+    say "Build $ANNEAL (slurm/data_build.sbatch), then delete $RUN/ANNEAL_MISSING to continue."
     exit 3
 fi
 
@@ -56,9 +67,10 @@ trap 'say "time limit near: asking the trainer to checkpoint and stop"; touch "$
 trap 'say "TERM received: asking the trainer to checkpoint and stop"; touch "$STOP"' TERM
 
 say "starting on $(hostname) with $GPUS GPU(s), config $CONFIG, commit $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+say "shards: train $TRAIN, validation $VAL, decay phase $ANNEAL; eval every $EVAL_EVERY steps, benchmarks every $SUITE_EVERY"
 $LAUNCH scripts/train.py --config "$CONFIG" \
-    --data "$DATA/shards_train" --eval-data "$DATA/shards_val_ultra" --eval-every 500 \
-    --tokenizer tokenizer/maxgpt-ultra.tokenizer.json --suite-dir data/bench --suite-every 10000 \
+    --data "$TRAIN" --eval-data "$VAL" --anneal-data "$ANNEAL" --eval-every "$EVAL_EVERY" \
+    --tokenizer tokenizer/maxgpt-ultra.tokenizer.json --suite-dir data/bench --suite-every "$SUITE_EVERY" \
     --out "$RUN" --stop-file "$STOP" &
 PID=$!
 RC=0

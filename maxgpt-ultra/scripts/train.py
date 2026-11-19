@@ -23,10 +23,24 @@ from train.trainer import Trainer
 from train import dist as D
 
 
+def with_anneal_data(tcfg: dict, path: "str | None") -> dict:
+    """--anneal-data: read the decay-phase shards from `path` instead of train.anneal.shards.
+
+    The job scripts pass it so that the anneal shards live beside --data wherever that is (the config's
+    path is relative to the repository). It moves the data, it does not switch the blend on: a config
+    with no anneal block stays without one.
+    """
+    if path and tcfg.get("anneal"):
+        return {**tcfg, "anneal": {**tcfg["anneal"], "shards": path}}
+    return tcfg
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True, help="model+train YAML (e.g. configs/ultra.yaml)")
     ap.add_argument("--data", required=True, help="shard directory containing meta.json")
+    ap.add_argument("--anneal-data", default=None,
+                    help="decay-phase shard directory; overrides train.anneal.shards when the config has an anneal block")
     ap.add_argument("--out", default="runs/ultra", help="output dir (checkpoints + metrics)")
     ap.add_argument("--device", default=None)
     ap.add_argument("--max-steps", type=int, default=None, help="optional cap (for testing)")
@@ -45,7 +59,7 @@ def main() -> None:
     dinfo = D.init_distributed(device)    # multi-GPU when launched by torchrun; else a no-op
     raw = load_yaml(args.config)
     mcfg = ModelConfig.from_yaml(args.config)
-    tcfg = raw["train"]
+    tcfg = with_anneal_data(raw["train"], args.anneal_data)
 
     torch.manual_seed(args.seed)
 

@@ -246,28 +246,105 @@ def local_source_dir(spec: dict, root: str) -> str:
     return os.path.join(root, spec["path"], spec.get("name") or "default")
 
 
-def _local_files(spec: dict, root: str | None) -> list[str]:
-    """This source's data files under the local sources root, or [] if it was not fetched there."""
+FETCH_RECORD = ".maxgpt_fetch.json"      # left in a source's folder by scripts/fetch_sources.py when its download finished
+
+
+def read_fetch_record(spec: dict, root: str | None) -> dict | None:
+    """The record of this source's finished download, or None if there is none."""
+    if not root or not spec.get("path"):
+        return None
+    p = os.path.join(local_source_dir(spec, root), FETCH_RECORD)
+    if not os.path.exists(p):
+        return None
+    with open(p, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def write_fetch_record(spec: dict, root: str, files: list, revision: str | None = None,
+                       source_tokens: float | None = None) -> dict:
+    """Record a finished download: the files (path inside the source's folder, bytes on disk) and
+    the number of tokens of this source it was sized for (None: the whole source was taken).
+
+    A download takes a prefix of the source's file list, so a later, smaller download of the same
+    revision never shrinks the record; a different revision replaces it."""
+    rec = {"repo": spec["path"], "config": spec.get("name"), "revision": revision,
+           "source_tokens": None if source_tokens is None else float(source_tokens),
+           "files": [[str(p), int(s)] for p, s in files]}
+    old = read_fetch_record(spec, root)
+    if old and old.get("revision") == revision:
+        if len(old.get("files") or []) > len(rec["files"]):
+            rec["files"] = old["files"]
+        a, b = old.get("source_tokens", 0.0), rec["source_tokens"]
+        rec["source_tokens"] = None if a is None or b is None else max(float(a), float(b))
+    d = local_source_dir(spec, root)
+    os.makedirs(d, exist_ok=True)
+    tmp = os.path.join(d, FETCH_RECORD + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(rec, f)
+    os.replace(tmp, os.path.join(d, FETCH_RECORD))
+    return rec
+
+
+def short_downloads(specs: list, root: str | None, total_tokens: float) -> list[str]:
+    """Sources whose local download was sized for fewer tokens than a build of `total_tokens` takes
+    from them, so that build would run them dry. Whole-source downloads and sources streamed from
+    the hub are never listed."""
+    out = []
+    for s in specs:
+        rec = read_fetch_record(s, root)
+        if not rec or rec.get("source_tokens") is None:
+            continue
+        need = float(s["weight"]) * float(total_tokens)
+        if float(rec["source_tokens"]) < 0.999 * need:
+            out.append(f"{source_name(s)}: downloaded for {float(rec['source_tokens']):.3g} tokens, this build takes {need:.3g}")
+    return out
+
+
+def _local_files(spec: dict, root: str | None, strict: bool = False) -> list[str]:
+    """This source's data files under the local sources root, or [] if it was not fetched there.
+
+    With a download record, exactly the recorded files are read, after checking that each is present
+    at its recorded size: a folder that lost files or holds half of one is an error, never a silently
+    shorter source. Data files with no record (a download that did not finish, or files placed by
+    hand) are an error when `strict` and are read as found otherwise."""
     if not root or not spec.get("path"):
         return []
     d = local_source_dir(spec, root)
+    rec = read_fetch_record(spec, root)
+    if rec is not None:
+        bad = []
+        for p, size in rec["files"]:
+            fp = os.path.join(d, p)
+            if not os.path.isfile(fp):
+                bad.append(f"{p} (missing)")
+            elif os.path.getsize(fp) != int(size):
+                bad.append(f"{p} ({os.path.getsize(fp):,} bytes, {int(size):,} recorded)")
+        if bad:
+            raise FileNotFoundError(f"{len(bad)} of the {len(rec['files'])} downloaded files of {source_name(spec)} are missing "
+                                    f"or changed under {d}, first: {bad[0]}. Run scripts/fetch_sources.py again.")
+        return sorted(os.path.join(d, p) for p, _ in rec["files"])
     files = []
     for ext in _DATA_EXTS:
         files += glob.glob(os.path.join(d, "**", f"*.{ext}"), recursive=True)
-    return sorted(set(files))
+    files = sorted(set(files))
+    if files and strict:
+        raise FileNotFoundError(f"{d} holds {len(files)} data file(s) but no download record ({FETCH_RECORD}): the download "
+                                f"did not finish. Run scripts/fetch_sources.py again.")
+    return files
 
 
 def _builder_for(path: str) -> str:
     return "parquet" if path.endswith(".parquet") else "json"
 
 
-def open_hf_source(spec: dict, root: str | None = None):
+def open_hf_source(spec: dict, root: str | None = None, strict: bool = False):
     """Open one HuggingFace source as a streaming dataset: from the local sources root when its
     files were fetched there (the cluster path: download first, tokenize from disk), else straight
-    from the hub. Honors `columns`, `interleave_files` and `skip`."""
+    from the hub. Honors `columns`, `interleave_files` and `skip`. A local folder is checked against
+    its download record first (see _local_files); `strict` also refuses a folder that has none."""
     from datasets import load_dataset
     kw = {"columns": list(spec["columns"])} if spec.get("columns") else {}
-    files = _local_files(spec, root)
+    files = _local_files(spec, root, strict=strict)
     pattern = spec.get("interleave_files")
     skip = int(spec.get("skip", 0) or 0)
     if pattern:
@@ -365,7 +442,7 @@ class MixedStream:
                              "epochs": max(1, int(s.get("epochs", 1))), "epoch": 0})
                 continue
             try:
-                ds = open_hf_source(s, self.sources_root)
+                ds = open_hf_source(s, self.sources_root, strict=self.strict)
             except Exception as e:
                 if self.strict:                     # a real build must not quietly train without a source
                     raise RuntimeError(f"could not open data source {name}: {type(e).__name__}: {e}") from e

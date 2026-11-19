@@ -7,6 +7,7 @@ echo "== queue =="; squeue -u "$USER" -o "%.10i %.14j %.8T %.10M %.10l %.20S %R"
 echo "== run: $RUN =="
 [ -f "$RUN/DONE" ] && echo "DONE: $(cat "$RUN/DONE")"
 [ -f "$RUN/GRAD_HALT" ] && echo "GRAD_HALT: $(cat "$RUN/GRAD_HALT")  (see NAIRR.md)"
+[ -f "$RUN/ANNEAL_MISSING" ] && echo "ANNEAL_MISSING: $(cat "$RUN/ANNEAL_MISSING")  (the decay-phase shards were not found; see NAIRR.md)"
 python3 - "$RUN/metrics.jsonl" <<'PY'
 import json, os, sys
 p = sys.argv[1]

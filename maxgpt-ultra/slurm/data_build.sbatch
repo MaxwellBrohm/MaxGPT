@@ -6,12 +6,17 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=64
 #SBATCH --time=24:00:00
+#SBATCH --dependency=singleton
 #SBATCH --output=logs/%x-%j.out
 #
 # Build every dataset the run needs, in order, on CPU cores (the GPU is requested only because the
 # NAIRR H100 partitions are GPU allocations; ask the site whether a zero-GPU job is allowed).
+# `--dependency=singleton`: two of these never run at once, however many are queued. They write the
+# same downloads, tokenizer and shards, so a second copy starting beside the first would corrupt them.
 #     sbatch -A <allocation> slurm/data_build.sbatch            # everything
-#     STAGE=proxy sbatch -A <allocation> slurm/data_build.sbatch   # only the small proxy shards (about 30 min)
+#     STAGE=proxy sbatch -A <allocation> -t 08:00:00 slurm/data_build.sbatch   # stop after the small proxy shards
+# The proxy stage still downloads every source first (about 500 GB: the code and Wikipedia sets are
+# read whole, and the full build needs the rest anyway); its own tokenizing is about half an hour.
 # Every step skips itself when its output exists and resumes when interrupted, so resubmitting is safe.
 # Needs outbound internet for the downloads; if compute nodes have none, run the fetch_sources.py
 # lines on a login node first (they only download) and resubmit this.

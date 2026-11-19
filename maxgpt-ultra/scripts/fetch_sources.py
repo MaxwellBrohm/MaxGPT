@@ -13,6 +13,12 @@ which is where data/prepare.py looks (local_source_dir).
 How much of each source: its token share x the token budget x a generous bytes-per-token allowance, taken in
 the repository's own file order (the order streaming reads them). Sources that are read interleaved across
 all their files, or marked "fetch": "all", are downloaded whole. Local jsonl sources are skipped.
+
+Safe to run again: files already there are kept, except one whose size differs from the hub's (cut short
+or damaged), which is downloaded afresh. Only when every file is down does each source
+get its download record (.maxgpt_fetch.json in its folder); the token build reads exactly the recorded files
+and refuses a folder without a record or one that no longer matches it. Do not run two of these at once on
+the same root, and not while a build is reading it.
 """
 from __future__ import annotations
 
@@ -24,7 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # maxgpt-ultra/
 
-from data.prepare import MIXES, local_source_dir, source_name
+from data.prepare import MIXES, local_source_dir, source_name, write_fetch_record
 
 # Compressed bytes allowed per training token. Parquet / gzip text is about 1.2 to 2 bytes per token for
 # these sources; 3.5 with a 1.3 margin leaves room for row filters and metadata columns, so a source does
@@ -82,6 +88,25 @@ def remote_files(spec: dict) -> tuple[list[tuple[str, int]], str | None]:
     return [(p, sizes.get(p, 0)) for p in paths], rev
 
 
+def record_downloads(plans: list, root: str, total_tokens: float) -> None:
+    """Once every file is on disk, leave each source's download record. data/prepare.py reads exactly the
+    recorded files and refuses a folder that does not match its record, so a download that stopped
+    halfway (no record yet) or lost files later can never pass for the whole source.
+
+    plans: (spec, revision, [(path, size on the hub), ...], whole source taken?) per source."""
+    for spec, rev, take, whole in plans:
+        d = local_source_dir(spec, root)
+        files = []
+        for path, hub_size in take:
+            size = os.path.getsize(os.path.join(d, path))
+            if hub_size and size != int(hub_size):
+                raise SystemExit(f"[fetch] {source_name(spec)}: {path} is {size:,} bytes on disk but {int(hub_size):,} "
+                                 f"on the hub. Delete it and run this again.")
+            files.append((path, size))
+        write_fetch_record(spec, root, files, revision=rev,
+                           source_tokens=None if whole else float(spec["weight"]) * float(total_tokens))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--mix", choices=sorted(MIXES), default="pretrain")
@@ -106,7 +131,7 @@ def main() -> None:
         why = "all files" if len(take) == len(files) else "share %.2f of %.3g tokens" % (spec["weight"], args.tokens)
         print(f"[fetch] {name:<22} {len(take):>6} of {len(files):>6} files  {gb:8.1f} GB  ({why})"
               f" -> {local_source_dir(spec, args.root)}", flush=True)
-        plans.append((spec, rev, take))
+        plans.append((spec, rev, take, len(take) == len(files)))
     print(f"[fetch] total {total_gb:.1f} GB" + (" (dry run, nothing downloaded)" if args.dry_run else ""), flush=True)
     if args.dry_run:
         return
@@ -116,18 +141,23 @@ def main() -> None:
     from huggingface_hub import hf_hub_download
 
     def get(job):
-        spec, rev, path = job
-        return hf_hub_download(spec["path"], path, repo_type="dataset", revision=rev,
-                               local_dir=local_source_dir(spec, args.root))
+        spec, rev, path, hub_size = job
+        d = local_source_dir(spec, args.root)
+        fp = os.path.join(d, path)
+        if hub_size and os.path.isfile(fp) and os.path.getsize(fp) != int(hub_size):
+            os.remove(fp)        # cut short or damaged: the hub library trusts its own notes and would keep it
+        return hf_hub_download(spec["path"], path, repo_type="dataset", revision=rev, local_dir=d)
 
-    jobs = [(spec, rev, p) for spec, rev, take in plans for p, _ in take]
+    jobs = [(spec, rev, p, sz) for spec, rev, take, _ in plans for p, sz in take]
     done = 0
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         for _ in pool.map(get, jobs):
             done += 1
             if done % 25 == 0 or done == len(jobs):
                 print(f"[fetch] {done}/{len(jobs)} files", flush=True)
-    print(f"[fetch] done. next: MAXGPT_SOURCES_ROOT={args.root} python scripts/prepare_data.py --mix {args.mix} ...")
+    record_downloads(plans, args.root, args.tokens)
+    print(f"[fetch] done, every file checked and recorded. next: MAXGPT_SOURCES_ROOT={args.root} "
+          f"python scripts/prepare_data.py --mix {args.mix} ...")
 
 
 if __name__ == "__main__":

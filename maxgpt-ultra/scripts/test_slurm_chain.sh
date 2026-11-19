@@ -10,12 +10,13 @@ fail() { echo "FAIL: $*"; exit 1; }
 # The stand-in launcher: finds --out and --stop-file in its arguments and acts out FAKE_MODE.
 cat > "$T/fake_launch.sh" <<'FAKE'
 #!/bin/bash
-out=""; stop=""
+out=""; stop=""; all=" $* "
 while [ $# -gt 0 ]; do
     case "$1" in --out) out="$2"; shift;; --stop-file) stop="$2"; shift;; esac
     shift
 done
 echo "invoked" >> "$out/LAUNCHED"
+echo "$all" > "$out/ARGS"
 [ -e "$stop" ] && echo "stale" >> "$out/STALE_STOP_SEEN"
 case "${FAKE_MODE:-finish}" in
     finish) echo '{"step": 5, "total_steps": 5}' > "$out/DONE"; exit 0;;
@@ -41,7 +42,10 @@ mkdir -p "$T/r3"; echo '{"event": "grad_halt"}' > "$T/r3/GRAD_HALT"; run r3 fini
 
 echo "[4] a stale STOP is cleared, and USR1 makes the trainer stop cleanly (exit 0, no DONE)"
 mkdir -p "$T/r4"; touch "$T/r4/STOP"
-( cd "$T" && MAXGPT_ROOT="$T" MAXGPT_RUN=r4 MAXGPT_LAUNCH="$T/fake_launch.sh" FAKE_MODE=pause bash "$SCRIPT" ) > "$T/r4.log" 2>&1 &
+# `exec` makes the background process the job script itself, so $! is the process Slurm would signal.
+# Without it some bash versions keep a wrapper subshell there (3.2 does, 5.3 does not), and USR1 kills
+# the wrapper instead of reaching the script's trap: this case then fails for a reason of its own.
+( cd "$T" && MAXGPT_ROOT="$T" MAXGPT_RUN=r4 MAXGPT_LAUNCH="$T/fake_launch.sh" FAKE_MODE=pause exec bash "$SCRIPT" ) > "$T/r4.log" 2>&1 &
 pid=$!
 for _ in $(seq 1 100); do [ -f "$T/r4/LAUNCHED" ] && break; sleep 0.1; done
 [ -f "$T/r4/LAUNCHED" ] || fail "the trainer never started: $(cat "$T/r4.log")"
@@ -61,6 +65,18 @@ mkdir -p "$T/r6"; run r6 halt; rc=$?
 echo "[7] a link that finds ANNEAL_MISSING refuses to train and exits 3"
 mkdir -p "$T/r7"; echo '{"step": 16}' > "$T/r7/ANNEAL_MISSING"; run r7 finish; rc=$?
 [ $rc -eq 3 ] && [ ! -f "$T/r7/LAUNCHED" ] || fail "anneal missing: rc=$rc launched=$(ls "$T/r7")"
+
+echo "[8] the trainer is told where all three shard folders are: under MAXGPT_DATA by default, or each on its own"
+has() { grep -q -F -- " $2 " "$T/$1/ARGS" || fail "$1: expected '$2' in the trainer's arguments, got:$(cat "$T/$1/ARGS")"; }
+runwith() { ( cd "$T" && export MAXGPT_ROOT="$T" MAXGPT_RUN="$1" MAXGPT_LAUNCH="$T/fake_launch.sh" FAKE_MODE=finish && shift && export "$@" && bash "$SCRIPT" ) > "$T/$1.log" 2>&1; }
+mkdir -p "$T/r8a"; run r8a finish
+has r8a "--data data/shards_train"; has r8a "--eval-data data/shards_val_ultra"; has r8a "--anneal-data data/shards_anneal"
+has r8a "--eval-every 500"; has r8a "--suite-every 10000"
+mkdir -p "$T/r8b"; runwith r8b MAXGPT_DATA=/big/store
+has r8b "--data /big/store/shards_train"; has r8b "--eval-data /big/store/shards_val_ultra"; has r8b "--anneal-data /big/store/shards_anneal"
+mkdir -p "$T/r8c"; runwith r8c MAXGPT_DATA=/big/store MAXGPT_TRAIN_SHARDS=p/train MAXGPT_VAL_SHARDS=p/val MAXGPT_ANNEAL_SHARDS=p/anneal MAXGPT_EVAL_EVERY=50 MAXGPT_SUITE_EVERY=100
+has r8c "--data p/train"; has r8c "--eval-data p/val"; has r8c "--anneal-data p/anneal"; has r8c "--eval-every 50"; has r8c "--suite-every 100"
+grep -q "decay phase p/anneal" "$T/r8c.log" || fail "the link's log should name the shard folders it used: $(cat "$T/r8c.log")"
 
 rm -rf "$T"
 echo "ALL CHECKS PASSED"

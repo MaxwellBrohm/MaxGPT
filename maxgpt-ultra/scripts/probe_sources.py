@@ -7,7 +7,8 @@
 For each source it prints where it was read from (local files or the hub), the row fields, how many of the
 rows drawn pass the source's filters and carry text, the median text length and the start of the first
 text. It exits non-zero if any source cannot be opened or yields no usable text, so a wrong dataset id,
-config or field name is caught here and not 11 hours into the build.
+config or field name is caught here and not 11 hours into the build. A source read from local files is
+also checked against the record its download left: a missing or cut-short file fails here.
 """
 from __future__ import annotations
 
@@ -27,8 +28,9 @@ def probe(spec: dict, root: str | None, rows: int) -> dict:
         ds, where, field = LocalJsonlSource(spec["local"], render=spec.get("render"),
                                             text_field=spec.get("text_field", "text")), "local file", "text"
     else:
-        ds = open_hf_source(spec, root)
-        where = f"local files ({len(_local_files(spec, root))})" if _local_files(spec, root) else "hub"
+        local = _local_files(spec, root, strict=True)      # a local folder must match its download record
+        ds = open_hf_source(spec, root, strict=True)
+        where = f"local files ({len(local)})" if local else "hub"
         field = spec.get("text_field", "text")
     drawn, kept, lengths, first, fields = 0, 0, [], None, None
     for row in ds:
@@ -69,7 +71,7 @@ def main() -> None:
         else:
             bad.append(name)
     if bad:
-        print(f"[probe] PROBLEM with: {bad}. Fix the spec in data/prepare.py before building.")
+        print(f"[probe] PROBLEM with: {bad}. Fix the spec in data/prepare.py, or finish the download, before building.")
         sys.exit(1)
     print("[probe] every source opened and yielded text")
 

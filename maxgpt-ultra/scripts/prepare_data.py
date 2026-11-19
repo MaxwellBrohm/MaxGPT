@@ -23,7 +23,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 
 from model import ModelConfig, load_yaml
 from tokenizer.tokenizer import train_tokenizer, UltraTokenizer
-from data.prepare import tokenize_to_shards, stream_mixed, source_name, apply_continuation, MIXES, PRETRAIN_MIX
+from data.prepare import (tokenize_to_shards, stream_mixed, source_name, apply_continuation, short_downloads,
+                          MIXES, PRETRAIN_MIX)
 from posttrain.sft_data import build_sft_jsonl, build_sft_jsonl_smoltalk2, append_oasst_jsonl, Decontaminator
 from posttrain.dpo import build_pref_jsonl, PREF_SOURCES
 
@@ -123,6 +124,15 @@ def main() -> None:
         vocab, sample_docs, shard_size, max_tokens = 2000, 5000, 4096, 20000
     else:
         sample_docs, shard_size = args.tokenizer_sample_docs, args.shard_size
+
+    # A source downloaded for a smaller build would run dry partway through this one: stop now, not hours in.
+    short = [] if args.smoke else short_downloads(MIX, args.sources_root, max_tokens)
+    if short:
+        msg = ("[prepare] these sources were downloaded for a smaller build than this one:\n  " + "\n  ".join(short)
+               + f"\n  Fix: python scripts/fetch_sources.py --mix {args.mix} --root {args.sources_root} --tokens {max_tokens:.3g}")
+        if not args.allow_missing_sources:
+            raise SystemExit(msg)
+        print(msg + "\n  (continuing: --allow-missing-sources)", flush=True)
 
     def text_stream(limit=None):                      # plain text, for tokenizer training
         it = iter(SMOKE_DOCS) if args.smoke else (t for t, _ in stream_mixed(TOK_MIX, **stream_kw))
