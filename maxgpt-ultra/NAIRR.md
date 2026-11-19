@@ -124,6 +124,13 @@ data itself may not be passed on. In practice: `chmod 700` its folder under `dat
 shards built from a mix that contains it, never upload those shards anywhere, delete them if the
 agreement ends, and name the set and its share in the final report.
 
+The model can still be published. The dataset card states that the agreement covers models released
+under proprietary or open source licenses, and the ownership clause outlives the agreement. The card
+also warns that a released model may fall under the Qwen and DeepSeek license terms because of
+model-written text in this dataset family; its own table for Nemotron-CC-v2 lists two writers,
+Mistral-Nemo-12B-Instruct and Qwen3-30B-A3B, both Apache-2.0 (checked 2026-11-18). Re-read the card
+before a release, and list the training data in the model card.
+
 ## 3 and 5. Proxy A/B and its verdict
 
 ```bash
