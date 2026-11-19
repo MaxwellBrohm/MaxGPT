@@ -196,3 +196,22 @@ The two-week start clock runs from the award, so these should exist first. Rough
 4. Telemetry and the safety switch: per-layer attention-logit maxima, gradient-norm alert, fp32 attention for selected layers, permanent checkpoint at the decay start.
 5. Proxy config (22 layers, narrow) and the A/B arms: Peri-LN and ReLU-squared as options behind flags, with tests.
 6. Full-test-set evaluation mode and the CLIMB task additions.
+
+---
+
+## 12. Known gaps (added 19 Nov 2026)
+
+This report is one pass of five lanes. It is not a complete survey, and there is direct evidence of that: a deeper search run the same day for a sister project (two extra rounds aimed at venues the first lanes never swept) turned up optimizer papers that none of these lanes saw. Two apply to Ultra. Only their abstracts have been read so far:
+
+- **AF-Muon** (arXiv 2610.01395, 1 Oct 2026): replaces the auxiliary AdamW on the tied vocabulary table and the 1D parameters with Muon-style updates. The authors report lower validation loss than Muon plus AdamW on decoder-only models from 124M to 1B. Ultra uses the Muon plus AdamW arrangement it is compared against.
+- **MuonGS** (arXiv 2610.37647, 27 Oct 2026): removes the radial part of each Muon update instead of fixing or decaying the weight norm. Tested by its authors on 160M and 400M dense models.
+
+Left undone from this report itself:
+
+- **FinePhrase.** Section 3 says "a proxy A/B arm at most". The arm was not built. The data lane had proposed it at about 10% of the mix.
+- **Nemotron-CC-v2.** Access can be requested by the project owner directly, so it is a candidate arm once granted.
+- **Attention plus Gated DeltaNet hybrid.** One reason given in section 5 was that it contradicts the request's description. The owner has since said the request does not bind the design. The other reasons stand: one author-only result, and new low-level kernels before a run that cannot be repeated.
+- **Sources never searched:** ICLR 2027 submissions, NeurIPS 2026 and COLM 2026 main tracks, EMNLP 2026, the arXiv listings as such (the lanes searched by keyword), and optimizer or data results after mid October.
+- **Post-training** was only checked for changes since 22 September. It gets its own pass while pretraining runs.
+
+Plan: one gap sweep scoped to a 1B dense model on 100B tokens, then every survivor becomes an arm of the section 7 proxy A/B (about 3 GPU-hours each) under the same fixed decision rule. Nothing is adopted into the long run on a paper's word alone.
